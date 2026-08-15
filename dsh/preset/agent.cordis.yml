@@ -95,7 +95,7 @@
           → ~5.9k token（↓83%，实测推导）；机械 = 只读/检索/核对，无需判断
           或写文件，否则不算机械；
         - `subagent`（deepseek high，64K 帽）→ 普通分派；
-        - `subagent_zhipu`（glm-5.3 跨厂商，64K 帽）→ 高难/跨厂商验证；
+        - `subagent_cross`（kix-route 自动取反厂商，64K 帽）→ 高难/跨厂商验证；
         - `subagent_thinker`（deepseek max，128K 帽）→ 同族深度思考的高难任务。
         默认 lite，命中高风险信号（外部语义/安全/并发/平台行为/跨模块契约）才升级。
       - 分派预算：每个子代理 prompt 显式标注 `[EFFORT: low|medium|high|max]` +
@@ -118,7 +118,7 @@
       ## DSH 适配（触发句常驻；机制细节一律查 `DSH-ADAPTATION.md`（preset 根））
       - **权威映射**：kix 文档中的 Copilot 工具名/机制与本文件冲突时**以本文件为准**；工具名翻译表（run_in_terminal→pwsh、vscode_askQuestions→ask_user_question、runSubagent→subagent 等）见 DSH-ADAPTATION.md §1。
       - **分派**：`runSubagent agentName: "kixpower-xxx"` = `subagent`（无 agentName）+ 把 `agents/kixpower-xxx.agent.md` 角色 body 注入 prompt + [CONTEXT]/[TASK]/[CONSTRAINTS] 任务段（§3）；`subagent_fork` 用于需继承本会话上下文的子代理。
-      - **跨厂商观察者**：三通道观察/最高置信 claim/平台库语义断言 → **`subagent_zhipu`**（GLM-5.3，跨厂商取反）；普通分派用 `subagent`（继承主模型）；`workflow` 的 `agent(prompt, {provider, model})` 可逐调用覆盖（§3）。
+      - **跨厂商观察者**：三通道观察/最高置信 claim/平台库语义断言 → **`subagent_cross`**（kix-route 按父厂商自动取反路由，运行时解析可用模型）；普通分派用 `subagent`（继承主模型）；`workflow` 的 `agent(prompt, {provider, model})` 可逐调用覆盖（§3）。
       - **识图**：主模型无视觉，`read_image` 会被路线门禁拒。看图（截图/报错图/图表/UI/OCR）→ 把图片路径 + 问题交 **`subagent_vision`**（GLM-4.6V；§3）。
       - **UI 发图**：profile 插件 `dsh-vision-bridge` 在点发送时把图片转文本描述，消息以 `📷 [图片自动识别]` 前缀进入会话——**是插件产物不是用户原话**；描述不足时请用户给图片路径用 `subagent_vision` 细看（§3）。
       - **机械门禁**：`plugins/kix-guards.js` 已自动挂载（tools/pre-execute 拦截破坏性 git/SQL/控制平面/未知执行工具；§2）；sandbox + approval 栈是常驻机械层。
@@ -318,7 +318,7 @@
     #   其他部署可自行改本行的 provider/model 指向自家廉价模型。8K 预算帽防跑飞。
     #   机械判定：只读/检索/核对，无需判断、无需写文件；否则用 `subagent`。
     # 普通分派 → `subagent`（继承主模型，high，64K 帽）；
-    # 高难/跨厂商验证 → `subagent_zhipu`（glm-5.3，64K 帽）；
+    # 高难/跨厂商验证 → `subagent_cross`（自动取反厂商，64K 帽）；
     # 需 max 深度思考的同族任务 → `subagent_thinker`（deepseek max，128K 帽，
     #   由 plugins/kix-cost.js 按预算帽判别注入 max）。
     # vision 由模型配置 4096 封顶。子代理思考强度由 plugins/kix-cost.js 统一注入。
@@ -341,9 +341,11 @@
           maxTokens: 8192
 
     # ── max 深度思考档（v5.8）：该用 max 的任务仍用 max ──────────────────
-    # 与 `subagent` 同族（deepseek-v4-flash），但预算帽抬到 128K ——
-    # kix-cost 插件据此判别并注入 reasoningEffort: max。用于需要同族
-    # 深度思考的高难任务；跨厂商正交验证仍用 `subagent_zhipu`（GLM-5.3）。
+    # 同族深度思考档：kix-route 哨兵 `kix-route:thinker` 在首次请求时解析到
+    # deepseek-official 最新可用模型（首选 deepseek-v4-flash，目录序兜底），
+    # deepseek 不可用则回退环境默认路由并告警；kix-route/kix-cost 按预算帽
+    # （128K → max）注入 reasoningEffort。用于需要同族深度思考的高难任务；
+    # 跨厂商正交验证用 `subagent_cross`（自动取反厂商）。
     - id: tool-subagent-thinker
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -351,38 +353,37 @@
         toolName: subagent_thinker
         backgroundMode: continuable
         agentOptions:
-          provider: deepseek-official
-          model: deepseek-v4-flash
+          model: kix-route:thinker
           maxTokens: 131072
 
     # ── 跨厂商观察者（kixparadigm 三通道验证的 DSH 落点）────────────────────
-    # 主模型「自动选择可用模型」= 按需选工具：三通道观察/最高置信 claim 用
-    # `subagent_zhipu`（GLM）做跨厂商正交验证，普通分派用 `subagent`（继承主模型
-    # 路由 deepseek-official）。`agentOptions.provider/model` 覆盖子代理的 LLM 路由
-    # （已实证：resolveChildAgentOptions 中 requested 覆盖父模型）。
-    # DSH 机制约束：子代理路由必须是精确 (provider, model) 对——省略 model 会继承
-    # 父模型（deepseek-v4-flash）导致 UNKNOWN_MODEL，没有「auto」模型。因此本行钉值
-    # = settings.yaml `llm-pi-ai:` 段 zai-coding-cn.models 的当前最新可用模型
-    # （2026-08-15 起 glm-5.3，1M 窗口）；模型线升级时同步 settings 清单 + 本行。
+    # 命名钉角色不钉厂商（cross = 主厂商取反者），路由也不钉厂商：
+    # agentOptions.model = `kix-route:cross` 哨兵，由 plugins/kix-route.js 在
+    # 子代理首次请求时按运行时目录（llm.listProviders/listModels）解析成
+    # 「与父模型不同厂商」的第一个可用模型（父 GLM → deepseek 系；父
+    # DeepSeek → zai 系；偏好序见插件 MODEL_PREFERENCE）。主模型换厂商、
+    # 模型线升级、分发到其他部署都不需要改本行；无异厂商可用时回退环境
+    # 默认路由并告警（同厂商降级，正交验证失效 → 宁可看见）。
+    # 插件缺失时哨兵名直达适配器 → UNKNOWN_MODEL 响亮失败，不静默降级。
     # v5.8：maxTokens 64K 兜底帽。
-    - id: tool-subagent-zhipu
+    - id: tool-subagent-cross
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
         provider: spawn
-        toolName: subagent_zhipu
+        toolName: subagent_cross
         backgroundMode: continuable
         agentOptions:
-          provider: zai-coding-cn
-          model: glm-5.3
+          model: kix-route:cross
           maxTokens: 65536
 
-    # ── 识图补充（视觉子代理，GLM-4.6V @ Coding Plan）────────────────────
-    # 主模型 deepseek-v4-flash 不声明 image 输入，read_image 的路线门禁会拒绝
-    # 直接看图。需要识图时把图片路径 + 具体问题交给 subagent_vision（智谱
-    # Coding Plan 订阅端点 api/coding/paas/v4，ZAI_CODING_CN_API_KEY 已实测
-    # 识图通过：订阅内 glm-4.6v 可用，无免费池 429 限流；glm-4.6v-flash /
-    # glm-4.5v 备选，glm-5v-turbo 当前订阅未开放）；child 路由声明 image 输入
-    # → read_image 放行。
+    # ── 识图补充（视觉子代理，自动路由到 image 模型）────────────────────
+    # 主模型不声明 image 输入时，read_image 的路线门禁会拒绝直接看图。
+    # 需要识图时把图片路径 + 具体问题交给 subagent_vision。路由不再钉值：
+    # agentOptions.model = `kix-route:vision` 哨兵，由 plugins/kix-route.js
+    # 在子代理首次请求时解析到第一个「inputModalities 声明 image」的可用
+    # 模型（zai-vision 偏好序：glm-4.6v → glm-4.6v-flash → glm-4.5v，其余
+    # provider 兜底）；门禁读 waterfall 后的真实路由（requestHeader 配置）
+    # → 改写后放行。无视觉模型可用 → 回退环境默认（read_image 将按门禁拒）。
     - id: tool-subagent-vision
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -390,8 +391,7 @@
         toolName: subagent_vision
         backgroundMode: continuable
         agentOptions:
-          provider: zai-vision
-          model: glm-4.6v
+          model: kix-route:vision
 
     - id: tool-subagent-fork
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -474,6 +474,17 @@
 # 见 plugins/kix-cost.js 头部注释；单元测试：node plugins/kix-cost.test.js。
 - id: kix-cost
   name: ./plugins/kix-cost.js
+
+# ── kix-route（子代理路由层）：哨兵模型名 → 运行时可用路由自动解析 ─────────
+# 工具行不再钉死 (provider, model)：cross/vision/thinker 三行只钉
+# `kix-route:<tier>` 哨兵，本插件在子代理首次请求的 agent/request waterfall
+# 里按 llm 实时目录解析——cross = 父厂商取反、vision = 首个声明 image 输入
+# 的模型、thinker = deepseek 首选；全不可用回退环境默认并告警；插件缺失时
+# 哨兵直达适配器响亮失败（不静默同厂商降级）。与 kix-cost 顺序无关协作
+# （effort 规则同源复用）。见 plugins/kix-route.js 头部注释；
+# 单元测试：node plugins/kix-route.test.js。
+- id: kix-route
+  name: ./plugins/kix-route.js
 
 # ── presentation（PTC/Code Mode 融入）───────────────────────────────────────
 # `both` = native 工具 schema 与 Code Mode SDK（run_code + tools.* 绑定）并存，

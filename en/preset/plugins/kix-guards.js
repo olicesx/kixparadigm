@@ -220,7 +220,7 @@ module.exports = {
     const KNOWN_SAFE_TOOLS = new Set([
       'read', 'grep', 'glob', 'web_search', 'skill', 'ask_user_question',
       'todo_write', 'job_output', 'job_list', 'job_kill', 'subagent',
-      'subagent_fork', 'subagent_zhipu', 'send_message', 'list_agents',
+      'subagent_fork', 'subagent_cross', 'send_message', 'list_agents',
       'read_image', 'get_goal', 'create_goal', 'update_goal',
       'workflow', 'ralph', 'plan', 'exit_plan_mode', 'interrupt_agent',
       'cordis_inspect_list', 'cordis_inspect_query', 'cordis_inspect_self',

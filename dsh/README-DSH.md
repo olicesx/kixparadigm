@@ -38,7 +38,7 @@ pwsh -File .\scripts\sync-dsh-preset.ps1 -Force
 
 1. **`~/.dsh/settings.yaml`**：`llm-pi-ai.providers` 需含 `zai-vision` profile
    （GLM-4.6V 视觉，`api/coding/paas/v4` 订阅端点）与 `zai-coding-cn`（GLM-5.2 跨厂商观察者）。
-   缺失时 preset 的 `subagent_zhipu` / `subagent_vision` 工具行无法路由。
+   缺失时 preset 的 `subagent_cross` / `subagent_vision` 工具行无法路由。
 2. **vision-bridge（UI 无缝发图）**：`~/.dsh/profiles/web/` 的 profile 插件，
    与 preset 无关。恢复：`pwsh -File .\scripts\ensure-vision-bridge.ps1`（幂等自检自愈，
    见根 README「无缝发图插件 dsh-vision-bridge」）。

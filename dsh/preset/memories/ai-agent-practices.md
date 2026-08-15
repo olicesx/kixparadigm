@@ -204,7 +204,7 @@ PR#26 教训是"没取证"。PR#2984 是**升级版失败**：取了证，但**�
 - **临时默认**：继续实证——每次合适 claim 跑跨厂商，累积 2-3 次实证后再定"全量 vs 按 claim 类型"策略
 - **确切 model 字符串（2026-08-05 实测）**：`GLM-5.2 (CodingPlan) (gcmp.zhipu)` / `DeepSeek-V4-Flash (gcmp.deepseek)`——按主 agent 厂商取反；技能中 model 字符串必须实测后写死，报错时以错误返回的 `Available models` 列表为准
 - **论文支撑**（机制详见 SKILL.md「跨厂商模型」）：cross-family 验证收益 > intra-family > self（Correlated Errors ICML 2026 2506.07962 + NYU 2512.02304）；verifier gain = precision − solver accuracy
-- **DSH 钉值同步（2026-08-15 实证）**：「模型自动选择可用模型」在 DSH 的落点是两层：主模型按需**选工具**（`subagent_zhipu` = 跨厂商观察者）+ 工具行 `agentOptions` **钉住精确 (provider, model) 对**（省略 model 会继承父模型 deepseek-v4-flash → UNKNOWN_MODEL，无「auto」模型——已读源码 resolveChildAgentOptions/pi-ai getModel 实证）。可用模型清单 = settings.yaml `llm-pi-ai.providers.zai-coding-cn.models`（pi-ai 内置目录之外的模型必须在此声明，如 glm-5.3）。模型线升级（glm-5.2 → glm-5.3，2026-08-15）时同步两处：settings 清单 + preset `tool-subagent-zhipu` 钉值；报错时以 `Available models` / settings 清单为准
+- **DSH 钉值同步（2026-08-15 实证）**：「模型自动选择可用模型」在 DSH 的落点是两层：主模型按需**选工具**（`subagent_cross` = 跨厂商观察者）+ 工具行 `agentOptions` **钉住精确 (provider, model) 对**（省略 model 会继承父模型 deepseek-v4-flash → UNKNOWN_MODEL，无「auto」模型——已读源码 resolveChildAgentOptions/pi-ai getModel 实证）。可用模型清单 = settings.yaml `llm-pi-ai.providers.zai-coding-cn.models`（pi-ai 内置目录之外的模型必须在此声明，如 glm-5.3）。模型线升级（glm-5.2 → glm-5.3，2026-08-15）时同步两处：settings 清单 + preset `tool-subagent-cross` 钉值；报错时以 `Available models` / settings 清单为准
 
 ## 机制事实 ≠ finding 成立（2026-08-07 私有项目 C PR#24）
 

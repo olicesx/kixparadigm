@@ -104,7 +104,12 @@ window.__ModuleLoader__.load({
 					if (ids.length === 0 || !conversation) return "failed";
 					const attachments = conversation.draftImages(ids);
 					const files = attachments.map((a) => a.file).filter((f) => f != null);
-					if (files.length === 0) return "failed";
+					if (files.length === 0) {
+						// 2026-08-15：图片附件尚未就绪（典型：粘贴后立即发送，上传仍在途）。
+						// 旧实现此处静默 return，用户侧表现是「点了发送毫无反应」——被当成插件坏了。
+						flash("图片尚未上传完成，未发送；稍候片刻再点发送（图片已保留）", 6000);
+						return "failed";
+					}
 					const big = files.find((f) => f.size > MAX_SINGLE_IMAGE_BYTES);
 					if (big) {
 						flash("单张图片超过 8MB，自动识别不支持；图片保留，可改走 subagent_vision 看路径", 6000);

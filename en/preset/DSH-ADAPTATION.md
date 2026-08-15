@@ -7,7 +7,7 @@
 | kix docs (Copilot) | DSH equivalent | Notes |
 |---|---|---|
 | `runSubagent agentName: "kixpower-xxx"` | `subagent` (no agentName) + role body of `agents/kixpower-xxx.agent.md` injected into the prompt + [CONTEXT]/[TASK]/[CONSTRAINTS] block | `subagent_fork` when the child must inherit this session's context |
-| subagent tiers (v5.8 cost discipline) | `subagent_lite` (mechanical: glm-4.7 slim composition, 8K cap) / `subagent` (ordinary, high, 64K cap) / `subagent_thinker` (deepseek max, 128K cap) / `subagent_zhipu` (glm-5.3 cross-vendor, 64K cap) / `subagent_vision` (GLM-4.6V) | effort normalized by `plugins/kix-cost.js`; lite route auto-probes and falls back to the environment default |
+| subagent tiers (v5.8 cost discipline) | `subagent_lite` (mechanical: glm-4.7 slim composition, 8K cap) / `subagent` (ordinary, high, 64K cap) / `subagent_thinker` (deepseek max, 128K cap) / `subagent_cross` (glm-5.3 cross-vendor, 64K cap) / `subagent_vision` (GLM-4.6V) | effort normalized by `plugins/kix-cost.js`; lite route auto-probes and falls back to the environment default |
 | `vscode_askQuestions` | `ask_user_question` | user-owned choices / material ambiguity |
 | `read_file` / `grep_search` | `read` / `grep` | same semantics |
 | `replace_string_in_file` | `edit` | literal old_string/new_string |
@@ -23,12 +23,12 @@
 
 ## §3 Delegation, cost tiers & vision
 
-- **Cross-vendor observer**: three-channel observation / highest-confidence claims / platform-library semantics assertions → `subagent_zhipu` (GLM-5.3, cross-vendor contradiction). Ordinary dispatch → `subagent` (inherits the main model). `workflow`'s `agent(prompt, {provider, model})` overrides per call. The subagent route must be an exact (provider, model) pair — omitting `model` inherits the parent model (deepseek-v4-flash → UNKNOWN_MODEL); there is no "auto" model. The pinned value tracks the newest available model in the `zai-coding-cn.models` list of `settings.yaml` (glm-5.3 since 2026-08-15).
+- **Cross-vendor observer**: three-channel observation / highest-confidence claims / platform-library semantics assertions → `subagent_cross` (GLM-5.3, cross-vendor contradiction). Ordinary dispatch → `subagent` (inherits the main model). `workflow`'s `agent(prompt, {provider, model})` overrides per call. The subagent route must be an exact (provider, model) pair — omitting `model` inherits the parent model (deepseek-v4-flash → UNKNOWN_MODEL); there is no "auto" model. The pinned value tracks the newest available model in the `zai-coding-cn.models` list of `settings.yaml` (glm-5.3 since 2026-08-15).
 - **Cost tiers (v5.8)**: `subagent_lite` = slim composition (mechanical persona ~60 tokens shadows the ~17k resident persona; `toolFilter` trims 82 tools / 17.2k tokens down to read/grep/glob/pwsh / 1.6k tokens) → per-step fixed overhead ~34.3k → ~5.9k tokens (↓83%, measured). Preferred route `zai-coding-cn/glm-4.7` is **auto-probed** by `plugins/kix-cost.js` on the child's first request (`llm.listProviders` + `resolveModelInfo`); when unavailable (other environments) it falls back to the environment default route (`agentDefaultModel.currentSelection()`). `subagent_thinker` (deepseek-v4-flash, 128K cap) is the same-family max-effort tier.
 - **Effort normalization (`plugins/kix-cost.js`)**: deepseek children without an explicit effort get `reasoningEffort` injected by budget cap — `subagent_thinker` (≥98K) → `max`, others (64K) → `high` (the adapter default is high/256K; the 64K cap is the runaway guard). GLM children are adapter-managed; the main session (explicit effort from `settings.yaml` `agent-default-model.reasoningEffort`, default `high`) and any explicit per-session selection are never touched. Runs on the `agent/request` waterfall; unit tests: `node plugins/kix-cost.test.js`.
 - **Vision**: the main model declares no image input, so `read_image` is rejected by the routing gate. To inspect images (screenshots / error images / charts / UI / OCR) → pass the image path + question to `subagent_vision` (GLM-4.6V).
 - **UI image upload**: the profile plugin `dsh-vision-bridge` (installed by the npm package) converts pasted/dropped images to text descriptions at send time; messages arrive prefixed `📷 [图片自动识别]` — plugin output, not the user's words. If the description is insufficient, ask the user for the image path and use `subagent_vision`.
-- Both `subagent_zhipu` and `subagent_vision` route through `llm-pi-ai.providers` in `settings.yaml` — see §Settings.
+- Both `subagent_cross` and `subagent_vision` route through `llm-pi-ai.providers` in `settings.yaml` — see §Settings.
 
 ## §4 Settings.yaml (host plane — the preset cannot install it)
 
@@ -37,7 +37,7 @@
 - `zai-vision`: GLM-4.6V vision provider — `api: openai-completions`, `baseURL: https://open.bigmodel.cn/api/coding/paas/v4`, models `glm-4.6v` / `glm-4.6v-flash` / `glm-4.5v` each with `input: [text, image]`; API key via env `ZAI_CODING_CN_API_KEY` or `~/.dsh/.credentials.yaml`.
 - `zai-coding-cn`: GLM-5.3 cross-vendor observer (text) — `models` list declares glm-5.3 / glm-5.2 / glm-5.1 / glm-5-turbo / glm-4.7 / glm-4.5-air.
 
-Without these, `subagent_zhipu` / `subagent_vision` cannot route. The installer (`kixparadigm-en`) reports this checklist; `kixparadigm-en doctor` re-checks it.
+Without these, `subagent_cross` / `subagent_vision` cannot route. The installer (`kixparadigm-en`) reports this checklist; `kixparadigm-en doctor` re-checks it.
 
 ## §5 Native orchestration
 

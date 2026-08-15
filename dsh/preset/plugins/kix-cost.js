@@ -22,7 +22,10 @@
 //
 // 不干预的路径：
 //   - 主会话：options 无 subagentDepth 标记 → 跳过；且其请求配置已带显式 effort；
-//   - zai-coding-cn / zai-vision 子代理（lite 可用时 / zhipu / vision）：
+//   - kix-route 哨兵子代理（model 形如 kix-route:<tier>，即 cross/vision/
+//     thinker 档）：路由与 effort 由 kix-route 全权处理（deepseek 改写后复用
+//     本文件的 decideEffort，规则同源不复制）；
+//   - zai-coding-cn / zai-vision 子代理（lite 可用时 / 回退后的 cross 等）：
 //     GLM 思考由适配器管理，不注入 effort；
 //   - 会话级已显式选择 effort 的任何 agent：已存在 reasoningEffort → 跳过。
 //
@@ -92,6 +95,11 @@ module.exports = {
       const opts = agent.options ?? {}
       // 只作用于子代理
       if (!isSubagentChild(opts)) return resolved
+      // kix-route 哨兵子代理（model 形如 kix-route:<tier>）由 kix-route 全权
+      // 解析路由并注入 effort（deepseek 改写后复用本文件导出的 decideEffort）。
+      // 此处跳过，保证两个监听器在任意 waterfall 注册顺序下结果一致：
+      // 本插件先见哨兵 → 跳过；后见改写结果 → effort 已存在同样跳过。
+      if (typeof resolved.model === 'string' && resolved.model.startsWith('kix-route:')) return resolved
 
       let config = resolved
       const llm = ctx.get('llm')

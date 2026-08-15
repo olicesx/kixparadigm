@@ -87,7 +87,7 @@
       - Role tiers (static layering before dynamic estimation):
         - `subagent_lite` (glm-4.7 + slim composition: mechanical persona + read-only 4 tools + 8K cap) → mechanical reading / format checks / simple lookups / low-risk claim observation; per-step fixed overhead ~34.3k → ~5.9k tokens (↓83%, measured); mechanical = read/retrieve/verify only — no judgment, no file writes, otherwise it is not mechanical;
         - `subagent` (deepseek high, 64K cap) → ordinary dispatch;
-        - `subagent_zhipu` (glm-5.3 cross-vendor, 64K cap) → hard / cross-vendor verification;
+        - `subagent_cross` (kix-route auto inverted-vendor routing, 64K cap) → hard / cross-vendor verification;
         - `subagent_thinker` (deepseek max, 128K cap) → same-family deep-thinking hard tasks.
         Default to lite; escalate only on high-risk signals (external semantics / security / concurrency / platform behavior / cross-module contracts).
       - Dispatch budget: every subagent prompt carries explicit `[EFFORT: low|medium|high|max]` + `[BUDGET: ≤N tokens]`; the subagent self-limits thinking and output length (s1 budget forcing).
@@ -101,8 +101,8 @@
       ## DSH Adaptation (trigger phrases resident; mechanism details always in `DSH-ADAPTATION.md` at the preset root)
       - **Authoritative mapping**: when kix docs' Copilot tool names/mechanisms conflict with this file, THIS FILE wins; the tool-name translation table (run_in_terminal→pwsh, vscode_askQuestions→ask_user_question, runSubagent→subagent, etc.) is in DSH-ADAPTATION.md §1.
       - **Dispatch**: `runSubagent agentName: "kixpower-xxx"` = `subagent` (no agentName) + inject the role body of `agents/kixpower-xxx.agent.md` into the prompt + a [CONTEXT]/[TASK]/[CONSTRAINTS] task block (§3); `subagent_fork` for subagents that must inherit this session's context.
-      - **Cross-vendor observer**: three-channel observation / highest-confidence claims / platform-library semantics assertions → **`subagent_zhipu`** (GLM-5.3, cross-vendor contradiction); ordinary dispatch uses `subagent` (inherits the main model); `workflow`'s `agent(prompt, {provider, model})` can override per call (§3).
-      - **Vision**: the main model has no vision; `read_image` is rejected by the routing gate. To look at images (screenshots / error images / charts / UI / OCR) → hand the image path + question to **`subagent_vision`** (GLM-4.6V; §3).
+      - **Cross-vendor observer**: three-channel observation / highest-confidence claims / platform-library semantics assertions → **`subagent_cross`** (kix-route auto-routes to a vendor inverted from the parent's, resolved from live catalogs); ordinary dispatch uses `subagent` (inherits the main model); `workflow`'s `agent(prompt, {provider, model})` can override per call (§3).
+      - **Vision**: the main model has no vision; `read_image` is rejected by the routing gate. To look at images (screenshots / error images / charts / UI / OCR) → hand the image path + question to **`subagent_vision`** (auto-routed to the first image-capable model; §3).
       - **UI image upload**: the profile plugin `dsh-vision-bridge` converts images to text descriptions at send time; messages enter the session prefixed `📷 [图片自动识别]` — that is plugin output, not the user's words; when the description is insufficient, ask the user for the image path and inspect with `subagent_vision` (§3).
       - **Mechanical guards**: `plugins/kix-guards.js` is auto-mounted (tools/pre-execute interception of destructive git/SQL/control-plane/unknown-exec tools; §2); the sandbox + approval stack is the resident mechanical layer.
       - **Slash commands (registered)**: the 5 `/kixpower-*` commands are registered by `plugins/kix-commands.js` — type `/` in the UI to see candidates, zero-token trigger, the handler injects the body of `prompts/kixpower-*.prompt.md` as a user message (same semantics as `/plan`); when the user voices the matching intent, read the same prompt file and execute.
@@ -304,7 +304,7 @@
     # to their own cheap model. 8K cap prevents runaways. Mechanical = read/
     # retrieve/verify only — no judgment, no file writes; otherwise use `subagent`.
     # Ordinary dispatch → `subagent` (inherits main model, high, 64K cap);
-    # hard/cross-vendor verification → `subagent_zhipu` (glm-5.3, 64K cap);
+    # hard/cross-vendor verification → `subagent_cross` (auto inverted-vendor, 64K cap);
     # same-family max deep thinking → `subagent_thinker` (deepseek max, 128K cap,
     # injected by plugins/kix-cost.js via the budget-cap discriminator).
     # Vision is capped at 4096 by the model config. Subagent effort is normalized
@@ -328,10 +328,13 @@
           maxTokens: 8192
 
     # ── max deep-thinking tier (v5.8): tasks that need max still get max ──────
-    # Same family as `subagent` (deepseek-v4-flash), but the budget cap is raised
-    # to 128K — kix-cost uses the cap as the discriminator and injects
-    # reasoningEffort: max. For same-family deep-thinking hard tasks; cross-vendor
-    # orthogonal verification still uses `subagent_zhipu` (GLM-5.3).
+    # Same-family deep thinking: the `kix-route:thinker` sentinel resolves to
+    # the newest usable deepseek-official model at the child's first request
+    # (deepseek-v4-flash preferred, catalog order as backup); when deepseek is
+    # unavailable it falls back to the environment default route with a warning.
+    # kix-route/kix-cost inject reasoningEffort by budget cap (128K → max).
+    # For same-family deep-thinking hard tasks; cross-vendor orthogonal
+    # verification uses `subagent_cross` (auto inverted-vendor routing).
     - id: tool-subagent-thinker
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -339,38 +342,44 @@
         toolName: subagent_thinker
         backgroundMode: continuable
         agentOptions:
-          provider: deepseek-official
-          model: deepseek-v4-flash
+          model: kix-route:thinker
           maxTokens: 131072
 
-    # ── 跨厂商观察者（kixparadigm 三通道验证的 DSH 落点）────────────────────
-    # 主模型「自动选择可用模型」= 按需选工具：三通道观察/最高置信 claim 用
-    # `subagent_zhipu`（GLM）做跨厂商正交验证，普通分派用 `subagent`（继承主模型
-    # 路由 deepseek-official）。`agentOptions.provider/model` 覆盖子代理的 LLM 路由
-    # （已实证：resolveChildAgentOptions 中 requested 覆盖父模型）。
-    # DSH 机制约束：子代理路由必须是精确 (provider, model) 对——省略 model 会继承
-    # 父模型（deepseek-v4-flash）导致 UNKNOWN_MODEL，没有「auto」模型。因此本行钉值
-    # = settings.yaml `llm-pi-ai:` 段 zai-coding-cn.models 的当前最新可用模型
-    # （2026-08-15 起 glm-5.3，1M 窗口）；模型线升级时同步 settings 清单 + 本行。
+    # ── Cross-vendor observer (the DSH landing of kixparadigm three-channel verification) ──
+    # Naming pins the ROLE, not the vendor — and so does the route:
+    # agentOptions.model is the `kix-route:cross` sentinel, resolved by
+    # plugins/kix-route.js at the child's first request against the live catalog
+    # (llm.listProviders/listModels) into the first usable model from a vendor
+    # DIFFERENT from the parent's (parent GLM → deepseek family; parent
+    # DeepSeek → zai family; preference order in the plugin's MODEL_PREFERENCE).
+    # Main-model vendor switches, model-line upgrades, and distribution to other
+    # deployments all need zero edits here; with no foreign vendor available it
+    # falls back to the environment default route with a warning (same-vendor
+    # degradation, orthogonal verification void — better visible than silent).
+    # If the plugin is missing, the sentinel reaches the adapter verbatim and
+    # fails LOUD with UNKNOWN_MODEL; never silently degrades to same-vendor.
     # v5.8: 64K safety cap.
-    - id: tool-subagent-zhipu
+    - id: tool-subagent-cross
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
         provider: spawn
-        toolName: subagent_zhipu
+        toolName: subagent_cross
         backgroundMode: continuable
         agentOptions:
-          provider: zai-coding-cn
-          model: glm-5.3
+          model: kix-route:cross
           maxTokens: 65536
 
-    # ── 识图补充（视觉子代理，GLM-4.6V @ Coding Plan）────────────────────
-    # 主模型 deepseek-v4-flash 不声明 image 输入，read_image 的路线门禁会拒绝
-    # 直接看图。需要识图时把图片路径 + 具体问题交给 subagent_vision（智谱
-    # Coding Plan 订阅端点 api/coding/paas/v4，ZAI_CODING_CN_API_KEY 已实测
-    # 识图通过：订阅内 glm-4.6v 可用，无免费池 429 限流；glm-4.6v-flash /
-    # glm-4.5v 备选，glm-5v-turbo 当前订阅未开放）；child 路由声明 image 输入
-    # → read_image 放行。
+    # ── Vision supplement (vision subagent, auto-routed to an image model) ────
+    # When the main model declares no image input, the read_image routing gate
+    # refuses direct image reads. Hand the image path + concrete question to
+    # subagent_vision. The route is no longer pinned: agentOptions.model is the
+    # `kix-route:vision` sentinel, resolved by plugins/kix-route.js at the
+    # child's first request to the first usable model whose inputModalities
+    # declares image (zai-vision preference: glm-4.6v → glm-4.6v-flash →
+    # glm-4.5v, then any other provider). The gate reads the POST-waterfall real
+    # route (requestHeader config), so it passes after the rewrite. With no
+    # vision model available it falls back to the environment default (the
+    # read_image gate will then refuse image reads).
     - id: tool-subagent-vision
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -378,8 +387,7 @@
         toolName: subagent_vision
         backgroundMode: continuable
         agentOptions:
-          provider: zai-vision
-          model: glm-4.6v
+          model: kix-route:vision
 
     - id: tool-subagent-fork
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -464,6 +472,19 @@
 # unit tests: node plugins/kix-cost.test.js.
 - id: kix-cost
   name: ./plugins/kix-cost.js
+
+# ── kix-route (subagent routing layer): sentinel model name → live-route resolution ──
+# Tool rows no longer pin (provider, model): the cross/vision/thinker rows pin
+# only a `kix-route:<tier>` sentinel; this plugin resolves it in the child's
+# first agent/request waterfall against the live llm catalog — cross = vendor
+# inverted from the parent, vision = first model declaring image input,
+# thinker = deepseek preferred; falls back to the environment default with a
+# warning when nothing resolves; a missing plugin fails LOUD on the sentinel
+# (never silently degrades to same-vendor). Cooperates with kix-cost under any
+# waterfall order (effort rule reused from the same source). See
+# plugins/kix-route.js; unit tests: node plugins/kix-route.test.js.
+- id: kix-route
+  name: ./plugins/kix-route.js
 
 # ── presentation（PTC/Code Mode 融入）───────────────────────────────────────
 # `both` = native 工具 schema 与 Code Mode SDK（run_code + tools.* 绑定）并存，

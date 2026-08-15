@@ -4,7 +4,7 @@ user-invocable: false
 description: "Kixpower — AI 多智能体协作编排（v5.7）。采用 DAG 动态拓扑与跨 Sprint 演进。4 个 slash command 触发：/kixpower-new（新项目）/kixpower-import（导入）/kixpower-continue（继续）/kixpower-review（PR 审查）。本文件为路由入口，完整规则见 TEAM_CONVENTIONS.md / USAGE_MANUAL.md。"
 ---
 
-> **DSH 适配注记**：本文件从 VS Code Copilot 导入。工具名/机制映射（runSubagent→subagent、run_in_terminal→pwsh、vscode_askQuestions→ask_user_question、hooks 不自动触发（已由 kix-guards 原生替代）、跨厂商模型字符串不适用（用 `subagent_zhipu` 工具行）、slash command 已注册为 DSH 原生命令）见 preset 根 `DSH-ADAPTATION.md`，冲突时以该文件为准。
+> **DSH 适配注记**：本文件从 VS Code Copilot 导入。工具名/机制映射（runSubagent→subagent、run_in_terminal→pwsh、vscode_askQuestions→ask_user_question、hooks 不自动触发（已由 kix-guards 原生替代）、跨厂商模型字符串不适用（用 `subagent_cross` 工具行）、slash command 已注册为 DSH 原生命令）见 preset 根 `DSH-ADAPTATION.md`，冲突时以该文件为准。
 
 # Kixpower — Skill 入口（路由索引）
 
@@ -77,7 +77,7 @@ description: "Kixpower — AI 多智能体协作编排（v5.7）。采用 DAG �
 | ⑭ | 机械档精简组合（`subagent_lite`：机械 persona ~60 token + 只读 4 工具 + 8K 帽；每步固定开销 34.3k → ~5.9k，↓83%） | agent.cordis.yml `tool-subagent-lite` 行 |
 | ⑮ | lite 首选路由（zai/glm-4.7）首次请求自动探测，不可用回退环境默认路由（跨环境分发不挂） | `plugins/kix-cost.js` |
 | ⑯ | 思考强度归一化：`subagent_thinker`（≥98K 帽）→ max；其余 deepseek 子代理 → high（适配器默认 high/256K，64K 帽是跑飞防线） | `plugins/kix-cost.js`（agent/request waterfall） |
-| ⑰ | per-role 预算帽：subagent/zhipu/fork 64K、thinker 128K、lite 8K | 各工具行 `agentOptions.maxTokens` |
+| ⑰ | per-role 预算帽：subagent/cross/fork 64K、thinker 128K、lite 8K | 各工具行 `agentOptions.maxTokens` |
 | ⑱ | 禁轮询空转 / 观察者门控（1→分歧+1，并发≤3）/ [EFFORT]+[BUDGET] 标注 / outputSchema 回流 / 跨会话结论复用 / 同会话去重 | persona「成本纪律」节（agent.cordis.yml） |
 | ⑲ | 等待步骤零思考：job_output/list_agents 等待是检查点不是思考点；后台任务运行期间做其他独立工作（实测：单次 job_output 等待烧 12,998 思考） | persona「成本纪律」节（agent.cordis.yml） |
 | ⑳ | review 流程阶段 2 取证分工：orchestrator 判断 + `subagent_lite` 并行机械取证（只读/检索/核对/枚举走 lite，禁止 orchestrator 逐文件通读 diff） | `prompts/kixpower-review.prompt.md` 阶段 2 |

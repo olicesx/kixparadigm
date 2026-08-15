@@ -93,9 +93,9 @@ async function main() {
   r = await dispatch({ agent: { options: { provider: 'deepseek-official', model: 'deepseek-v4-flash', subagentDepth: 1 } }, signal: new AbortController().signal }, { provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'max' })
   check('显式 effort max → 原样保留', r.reasoningEffort === 'max')
 
-  // 5. zhipu 子代理（zai 64K）：不注入
+  // 5. cross 子代理（zai 64K）：不注入
   r = await dispatch({ agent: { options: { provider: 'zai-coding-cn', model: 'glm-5.3', maxTokens: 65536, subagentDepth: 1 } }, signal: new AbortController().signal }, { provider: 'zai-coding-cn', model: 'glm-5.3', maxTokens: 65536 })
-  check('zhipu 子代理 → 不注入 effort', r.reasoningEffort === undefined && r.provider === 'zai-coding-cn')
+  check('cross 子代理 → 不注入 effort', r.reasoningEffort === undefined && r.provider === 'zai-coding-cn')
 
   // 6. lite 子代理（zai 8K），路由可用 → 保留 + 不注入
   const liteOkAgent = { options: { provider: 'zai-coding-cn', model: 'glm-4.7', maxTokens: 8192, subagentDepth: 1 } }
