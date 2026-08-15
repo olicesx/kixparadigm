@@ -61,6 +61,7 @@
 | P2 | 11：团队编排 workflow script 化 | ✅ 已落地 | 同上模板：Producer→Dev(pipeline)→QA(schema 强制)→汇总；含失败纪律/边界/陷阱 |
 | P3 | 12：cordis preset 做 kix 自研原型 | ✅ 方案已定（零配置） | 用 DSH 出厂 `cordis` agent preset 开新会话即得 cordis_* 工具集（config/agent-presets/cordis，随安装目录存在，无需改任何配置）；详见 §3.2 |
 | 边界 | 13/14/16 纪律写入 kixparadigm 技能（ralph 限发散等） | ⛔ 保持禁止 | 须经真实任务验证后晋升（§5），未改规则层 |
+| 更新 | kix-guards v5（2026-08-22，用户决策）：ask 级门禁改聊天内提问 | ✅ 代码/测试已验（164 组断言）；⚠️ 真实拦截 E2E 待重启后新会话复验 | `plugins/kix-guards.js` v5：人类确认点（reset --hard/clean -f/branch -D/stash drop/checkout --/restore/普通 push/GitHub mutation）从 `{kind:'ask'}` → approval 服务弹窗改为 `ctx.userQuestions.ask()`（ask_user_question 底层服务）聊天内提问，用户答「允许执行/拒绝」；审批策略 danger-full-access 恢复 approval: never（web cordis.patch.yml，2026-08-22）——全自动零弹窗；降级路径（无 userQuestions/无 agent/子代理 DELEGATED_CALLER/提问中止）→ fail-safe deny |
 
 ### §3.1 能力元数据校验（P1-9 剩余文档化）
 

@@ -61,6 +61,7 @@
 | P2 | 11：团队编排 workflow script 化 | ✅ 已落地 | 同上模板：Producer→Dev(pipeline)→QA(schema 强制)→汇总；含失败纪律/边界/陷阱 |
 | P3 | 12：cordis preset 做 kix 自研原型 | ✅ 方案已定（零配置） | 用 DSH 出厂 `cordis` agent preset 开新会话即得 cordis_* 工具集（config/agent-presets/cordis，随安装目录存在，无需改任何配置）；详见 §3.2 |
 | 边界 | 13/14/16 纪律写入 kixparadigm 技能（ralph 限发散等） | ⛔ 保持禁止 | 须经真实任务验证后晋升（§5），未改规则层 |
+| Update | kix-guards v5 (2026-08-22, user decision): ask gates moved to in-chat questions | ✅ code/tests verified (164 assertions); ⚠️ live E2E re-check pending after restart + new session | `plugins/kix-guards.js` v5: human-confirmation points (reset --hard/clean -f/branch -D/stash drop/checkout --/restore/ordinary push/GitHub mutation) changed from `{kind:'ask'}` → approval-service dialog to `ctx.userQuestions.ask()` (the service behind `ask_user_question`) asked inside the chat, user answers 「允许执行/拒绝」; approval policy for `danger-full-access` restored to `never` (web cordis.patch.yml, 2026-08-22) — fully automatic, zero dialogs; degrade paths (no userQuestions / no agent / subagent DELEGATED_CALLER / aborted question) → fail-safe deny |
 
 ### §3.1 能力元数据校验（P1-9 剩余文档化）
 

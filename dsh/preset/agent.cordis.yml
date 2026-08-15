@@ -121,7 +121,7 @@
       - **跨厂商观察者**：三通道观察/最高置信 claim/平台库语义断言 → **`subagent_cross`**（kix-route 按父厂商自动取反路由，运行时解析可用模型）；普通分派用 `subagent`（继承主模型）；`workflow` 的 `agent(prompt, {provider, model})` 可逐调用覆盖（§3）。本部署仅单厂商时 `subagent_cross` 会启动报错——此时改用 `subagent` 同厂商复核，并在结论中注明「单厂商部署，无独立第二通道」。
       - **识图**：主模型无视觉，`read_image` 会被路线门禁拒。看图（截图/报错图/图表/UI/OCR）→ 把图片路径 + 问题交 **`subagent_vision`**（kix-route 自动路由到 image 模型；§3）。
       - **UI 发图**：profile 插件 `dsh-vision-bridge` 在点发送时把图片转文本描述，消息以 `📷 [图片自动识别]` 前缀进入会话——**是插件产物不是用户原话**；描述不足时请用户给图片路径用 `subagent_vision` 细看（§3）。
-      - **机械门禁**：`plugins/kix-guards.js` 已自动挂载（tools/pre-execute 拦截破坏性 git/SQL/控制平面/未知执行工具；§2）；sandbox + approval 栈是常驻机械层。
+      - **机械门禁**：`plugins/kix-guards.js` 已自动挂载（tools/pre-execute 拦截破坏性 git/SQL/控制平面/未知执行工具；§2）；需人类确认的门禁在**聊天内提问**（`ctx.userQuestions.ask()`，即 ask_user_question 底层服务，用户答「允许/拒绝」），审批策略 danger-full-access = never 全自动、零弹窗；sandbox 栈是常驻机械层。
       - **slash command（已注册，P1-8）**：`/kixpower-new` 等 5 个命令由 `plugins/kix-commands.js` 注册——UI 敲 `/` 见候选、触发零 token、handler 把 `prompts/kixpower-*.prompt.md` 正文注入为 user 消息（与 `/plan` 同语义）；用户说出对应意图时同样读取对应 prompt 文件执行。
       - **原生编排优先**：复杂多阶段编排用 `workflow`（phases/pipeline/parallel）；长目标用 `goal`；需先规划用 plan mode；长任务用 `pwsh run_in_background` + `job_output`。
       - **PTC（both 已启用，红线常驻）**：`run_code` 用于机械多步/批处理/并发只读探测；**验证与观察动作保持 native**（证据需可回放、门禁逐条可见，三通道"观察"不得压进程序只吐摘要）。红线：验证证据必须 native 重跑或交独立观察者；程序必须 print 出后续需要的全部上下文（含被 deny 的子分派及原因）；遇 deny 立即中止、**禁止静默吞 deny**；中间值不回流（§9 全量纪律）。
@@ -132,7 +132,7 @@
       - 生态技能：`skills/handoff`（交接）、`skills/write-a-skill`、`skills/improve-codebase-architecture`、`skills/tdd`、`skills/teach`、`skills/grill-me`、`skills/grill-with-docs`、`skills/diagnose`、`skills/prototype`、`skills/triage`、`skills/to-issues`、`skills/to-prd`、`skills/zoom-out`、`skills/migrate-to-shoehorn`、`skills/caveman`
       - kixpower 流程（slash command 等价物）：`prompts/kixpower-new.prompt.md` / `kixpower-import.prompt.md` / `kixpower-continue.prompt.md` / `kixpower-review.prompt.md` / `kixpower.prompt.md`（智能路由）
       - 方法论记忆：`memories/*.md`（6 个，含 ai-agent-practices / kix-review-patterns / tech-patterns / dsh-capability-map；DSH 不自动注入，按需读取）
-      - 机械门禁：`plugins/kix-guards.js` 已自动挂载（tools/pre-execute 监听器，拦截破坏性 SQL/git 写/控制平面）；kixpower 的 hooks/*.ps1 保留为参考实现 + 手动检查，本 harness 的 sandbox + approval 栈是常驻机械层。
+      - 机械门禁：`plugins/kix-guards.js` 已自动挂载（tools/pre-execute 监听器，拦截破坏性 SQL/git 写/控制平面；需人类确认的门禁改为**聊天内提问** v5）；kixpower 的 hooks/*.ps1 保留为参考实现 + 手动检查，本 harness 的 sandbox 栈是常驻机械层。
 
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'

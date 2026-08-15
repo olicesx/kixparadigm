@@ -36,7 +36,7 @@
 
 | Copilot 机制 | DSH 等价物（已实测） | 说明 |
 |---|---|---|
-| PreToolUse hooks（拦截/放行） | `tools/pre-execute` 事件（waterfall） | 返回 allow/deny/ask；**实测可拦截工具调用**（deny 生效）。注册方式：`ctx.on('tools/pre-execute', ...)` 或 `tools.guard()` |
+| PreToolUse hooks（拦截/放行） | `tools/pre-execute` 事件（waterfall） | 返回 allow/deny；**实测可拦截工具调用**（deny 生效）。需人类确认的门禁在监听器内直接调 `ctx.userQuestions.ask()`（聊天内提问，v5）。注册方式：`ctx.on('tools/pre-execute', ...)` 或 `tools.guard()` |
 | PostToolUse hooks（后处理/阻断） | `tools/post-execute` 事件（waterfall） | accept/replace/enrich/block；**实测生效**。可替代 auto-update-progress 等 |
 | 工具调用环绕（超时/重试/度量） | `tools/execute` 事件（waterfall） | around-dispatch |
 | 工具结果观察 | `tools/result` 事件（emit） | 只读观察最终结果 |
@@ -131,7 +131,7 @@ kix 的原始编排假设只有 runSubagent；DSH 提供更结构化的原生能
 ## 7. 已知限制（诚实声明）
 
 1. ~~跨厂商模型不可用~~ → **已启用**：`subagent_cross` 工具行（zai-coding-cn/GLM-5.3）已注册，主模型自主选择；新增厂商 = settings 加 profile + preset 加工具行（见 §3）
-2. **hooks/*.ps1 不自动触发**——但 DSH 有完整等价机制，且 **preset 已内置 `plugins/kix-guards.js`（v4，2026-08-15 GitHub 只读工具误拦修复）**（`tools/pre-execute` 监听器，blast-radius 核心门禁的 JS 移植）：破坏性 SQL（含 UPDATE without WHERE）/ 终端数据库客户端保守拦截 / git 写保护（force push 完整检测 -f/+refs/--mirror，修复 v1 静默失效）/ main 分支保护（commit/push）+ commit 时真实分支检查 / **commit budget**（reflog 计数，hard cap 10 / progress.md 预算 / 冷启动 3）/ **MCP GitHub 远程写保护**（main/master deny、无 branch deny、mutation ask；v4 起只读 get_/list_/search_ 工具直接放行，mutation 按工具名精确匹配）/ **人类确认点 ask**（reset --hard/clean -f/branch -D/stash drop/checkout --/restore/普通 push → approval 服务）/ 控制平面保护 / 未知执行工具拦截 / run_code 代码体检查，单元回归 142 组断言通过（源仓库 `plugins/kix-guards.test.js`；v3 修复 3 漏拦 + 7 误伤反例全过，v4 +14 组 GitHub 只读/mutation 断言）。sandbox + approval 栈仍是常驻机械层
+2. **hooks/*.ps1 不自动触发**——但 DSH 有完整等价机制，且 **preset 已内置 `plugins/kix-guards.js`（v5，2026-08-22 ask 级门禁改聊天内提问）**（`tools/pre-execute` 监听器，blast-radius 核心门禁的 JS 移植）：破坏性 SQL（含 UPDATE without WHERE）/ 终端数据库客户端保守拦截 / git 写保护（force push 完整检测 -f/+refs/--mirror，修复 v1 静默失效）/ main 分支保护（commit/push）+ commit 时真实分支检查 / **commit budget**（reflog 计数，hard cap 10 / progress.md 预算 / 冷启动 3）/ **MCP GitHub 远程写保护**（main/master deny、无 branch deny、mutation ask；v4 起只读 get_/list_/search_ 工具直接放行，mutation 按工具名精确匹配）/ **人类确认点 ask**（reset --hard/clean -f/branch -D/stash drop/checkout --/restore/普通 push/GitHub mutation → **聊天内提问** `ctx.userQuestions.ask()`，即 ask_user_question 底层服务；不再走 approval 弹窗——审批策略 danger-full-access 为 never 全自动，用户直接在聊天里回答「允许执行/拒绝」；无 userQuestions 服务/无 agent/子代理提问抛错 → fail-safe deny）/ 控制平面保护 / 未知执行工具拦截 / run_code 代码体检查，单元回归 **164 组断言通过**（v5：ask 门禁按「允许→allow / 拒绝→deny」双向 + 3 条降级路径验证）。sandbox 栈仍是常驻机械层
 3. **slash command（/kixpower-*）已注册为 DSH 原生命令**（P1-8，2026-08-21）：`plugins/kix-commands.js` 注册 5 命令（kixpower-new/import/continue/review/kixpower），敲 `/` 见候选、触发后 handler 读 `prompts/*.prompt.md` 剥离 frontmatter 注入 user 消息（与 /plan 同语义，零 token）。「无 UI 注册」过期文案已于 2026-08-22 全量修复（persona §DSH 适配、kixpower/SKILL.md 适配注记），不再残留
 4. **CodeGraphy / GitHub MCP 无对应**——降级 grep/read + gh CLI
 5. **memory 不自动注入**——按需读取

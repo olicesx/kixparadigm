@@ -1,4 +1,4 @@
-// kix-guards — kixparadigm 机械门禁的 DSH 原生实现（v3，2026-08-21）
+// kix-guards — kixparadigm 机械门禁的 DSH 原生实现（v5，2026-08-22）
 //
 // 移植自 kixpower 的 blast-radius-check.ps1 / block-source-edit.ps1 核心门禁，
 // 以 DSH `tools/pre-execute` 监听器形态自动拦截（等价 Copilot PreToolUse hook）。
@@ -23,13 +23,21 @@
 //   - 保留（按 kix 0% 误报纪律 + 规则是负债）：角色边界门禁不接（exec.agent 无角色
 //     标记）、预算一致性软警告不接（建议类不进机械层）、SQL 文件引用检查不接
 //     （psql -f 场景，文本纪律覆盖，见 capability map §3）
+// v5（2026-08-22，用户决策）：ask 级门禁从 approval 服务弹窗改为**聊天内提问**
+//   （ctx.userQuestions.ask —— 即 ask_user_question 的底层服务）。审批策略
+//   danger-full-access 已恢复 approval: never（全自动、零审批弹窗）；需人类确认
+//   的门禁（普通 git push / 本地破坏性 Git 操作 / GitHub 写）在聊天里问
+//   「允许执行/拒绝」，用户回答决定放行。硬 deny（force push / main 分支 /
+//   控制平面 / 破坏性 SQL / 未知执行工具 / commit budget）不变。
+//   降级（fail-safe）：无 userQuestions 服务 / exec 无 agent / 提问被中止或
+//   抛错（子代理 DELEGATED_CALLER、无 provider 等）→ 自动拒绝（deny）。
 //
 // 挂载方式：preset agent.cordis.yml 中一行：
 //   - id: kix-guards
 //     name: ./plugins/kix-guards.js
 // 说明：本监听器按 agent scope 挂载，只拦本 preset 的会话；deny 返回 reason 由
-// 工具执行管道呈现；ask 走 approval 服务弹用户确认（无 agent/无 approval 自动
-// 降级 deny，dsh-tools serviceAsk 契约）。
+// 工具执行管道呈现；ask 级门禁直接调 ctx.userQuestions.ask() 在聊天里提问
+// （无 agent/无 userQuestions 自动降级 deny，fail-safe）。
 //
 // 纯逻辑导出：module.exports.__internals 供单元测试直接验证判定函数
 // （不影响 DSH loader：loader 只读 name/inject/apply）。
@@ -338,7 +346,7 @@ module.exports = {
 
     // ── MCP GitHub 远程写保护（ps1 检查 5）────────────────────────────────
     // 只读工具（get_/list_/search_*）直接放行；write 类（写文件/推分支）必须
-    // 显式提供非 main/master 的 branch；mutation 类：ask 确认。
+    // 显式提供非 main/master 的 branch；mutation 类：聊天内提问确认（v5）。
     // v4（2026-08-15）：按工具名精确匹配，废除"包含子串"式正则——旧实现
     // `.*request_` 把 get_pull_request_files/comments/reviews/status 等只读
     // 工具误判为 mutation（日志实测：PR 审查会话中 get_pull_request_files 被
@@ -375,6 +383,45 @@ module.exports = {
       return undefined
     }
 
+    // ── v5：聊天内提问（替代 approval 服务弹窗）───────────────────────────
+    // 调用 ctx.userQuestions.ask() —— 即 ask_user_question 工具底层的同一服务，
+    // 问题显示在聊天里，用户回答「允许执行/拒绝」后继续。
+    // 返回：true=用户允许 / false=用户拒绝 / undefined=降级拒绝
+    //   （无 userQuestions 服务 / exec 无 agent / 提问被中止或抛错，如子代理
+    //   DELEGATED_CALLER、无 UI provider —— fail-safe 一律拒绝）。
+    async function askUser(exec, reason) {
+      const userQuestions = ctx.get('userQuestions')
+      if (userQuestions === void 0 || exec === void 0 || exec.agent === void 0) return undefined
+      try {
+        const { answers } = await userQuestions.ask({
+          questions: [{
+            id: 'kix-guards-confirm',
+            question: reason,
+            header: 'BLAST RADIUS 确认',
+            options: [
+              { label: '允许执行', description: '确认这是有意的操作，放行执行。' },
+              { label: '拒绝', description: '阻止该操作执行。' },
+            ],
+          }],
+          agent: exec.agent,
+          ...exec.signal !== void 0 ? { signal: exec.signal } : {},
+        })
+        const selected = answers && answers[0] && answers[0].selected
+        return Array.isArray(selected) && selected.includes('允许执行')
+      } catch {
+        return undefined
+      }
+    }
+
+    // 门禁 ask 决策统一处理：拒绝/降级 → deny（reason 区分），允许 → 继续后续检查
+    async function resolveAsk(exec, decision) {
+      if (decision.kind !== 'ask') return decision
+      const ok = await askUser(exec, decision.reason)
+      if (ok === false) return DENY('BLAST RADIUS: 用户拒绝执行该操作。')
+      if (ok === void 0) return DENY('BLAST RADIUS: 无法向用户提问（无提问通道或非主会话），已自动拒绝。')
+      return undefined
+    }
+
     // ── pre-execute 监听器（自动拦截）─────────────────────────────────────
     ctx.on('tools/pre-execute', async (exec, next) => {
       const name = exec && exec.name
@@ -405,19 +452,21 @@ module.exports = {
           return DENY('BLAST RADIUS: 终端数据库客户端中的破坏性 SQL（DELETE/UPDATE without WHERE / DROP/TRUNCATE/ALTER）已拦截。请改用结构化工具或先在事务/只读副本中验证。')
         }
         // 2b. git 写保护（v3：解析式子命令门 + 顺序对齐 ps1：force → local ask →
-        //     push main → push ask → budget/分支）
+        //     push main → push ask → budget/分支；v5：ask 级门禁改为聊天内提问）
         if (isGitWrite(text)) {
           if (isForcePush(text)) {
             return DENY('BLAST RADIUS: git push --force 会重写远端历史。需用户明确确认；优先使用 --force-with-lease 或 git revert。')
           }
           if (isLocalDestructiveAsk(text)) {
-            return ASK('BLAST RADIUS: 检测到会丢失本地工作的 Git 操作（reset --hard / clean -f / branch -D / stash drop|clear / checkout -- / restore）。请确认目标仓库、分支和待丢弃内容。')
+            const decision = await resolveAsk(exec, ASK('BLAST RADIUS: 检测到会丢失本地工作的 Git 操作（reset --hard / clean -f / branch -D / stash drop|clear / checkout -- / restore）。请确认目标仓库、分支和待丢弃内容。'))
+            if (decision) return decision
           }
           if (pushTargetsProtectedRef(text)) {
             return DENY('BLAST RADIUS: 禁止直接 push 到 main/master。请推送 feature 分支并通过 PR 合并。')
           }
           if (hasGitSubcommand(text, 'push')) {
-            return ASK('BLAST RADIUS: git push 会写入共享远端。确认远端、源分支和目标分支后再继续。')
+            const decision = await resolveAsk(exec, ASK('BLAST RADIUS: git push 会写入共享远端。确认远端、源分支和目标分支后再继续。'))
+            if (decision) return decision
           }
           if (hasGitSubcommand(text, 'commit')) {
             const decision = await checkGitCommit(text, exec)
@@ -446,10 +495,13 @@ module.exports = {
         }
       }
 
-      // 5. MCP GitHub 远程写保护
+      // 5. MCP GitHub 远程写保护（v5：mutation 的 ask 级门禁改为聊天内提问）
       if (name && /^mcp__github__/.test(name)) {
         const decision = checkGitHubWrite(name, args)
-        if (decision) return decision
+        if (decision) {
+          const resolved = await resolveAsk(exec, decision)
+          if (resolved) return resolved
+        }
       }
 
       return next()
@@ -457,7 +509,7 @@ module.exports = {
 
     // 记录挂载
     ctx.on('ready', () => {
-      ctx.logger?.info?.('[kix-guards] 机械门禁监听器已挂载（pre-execute，v3：解析式子命令门/budget/branch/force-push/GitHub/SQL 完整）')
+      ctx.logger?.info?.('[kix-guards] 机械门禁监听器已挂载（pre-execute，v5：解析式子命令门/budget/branch/force-push/GitHub/SQL 完整；ask 级门禁改为聊天内提问）')
     })
   },
 }

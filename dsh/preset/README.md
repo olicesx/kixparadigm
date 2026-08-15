@@ -40,7 +40,7 @@ kixparadigm/                      ← 本 preset
 | `~/.copilot/agents/*.agent.md` | `agents/` 参考（`subagent`/`subagent_fork` 分派时按角色构造 prompt） |
 | `~/.copilot/prompts/*.prompt.md`（/kixpower-* slash command） | `prompts/` 参考（模型按意图读取对应流程文件执行） |
 | memory-tool user memories | `memories/` 参考（persona 指引按需读取） |
-| VS Code PreToolUse hooks（blast-radius 等 .ps1） | hooks/*.ps1 随技能保留，经 `pwsh` 手动调用；常驻机械层 = 本 harness 的 sandbox + approval 栈 |
+| VS Code PreToolUse hooks（blast-radius 等 .ps1） | hooks/*.ps1 随技能保留，经 `pwsh` 手动调用；常驻机械层 = `plugins/kix-guards.js`（pre-execute 门禁，v5：需确认的门禁在聊天内提问）+ 本 harness 的 sandbox 栈 |
 | `runSubagent` | `subagent` / `subagent_fork` |
 | `vscode_askQuestions` | `ask_user_question` |
 | `read_file`/`grep_search`/`replace_string_in_file`/`run_in_terminal` | `read`/`grep`/`edit`/`pwsh` |

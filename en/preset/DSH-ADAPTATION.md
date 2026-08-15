@@ -12,14 +12,14 @@
 | `read_file` / `grep_search` | `read` / `grep` | same semantics |
 | `replace_string_in_file` | `edit` | literal old_string/new_string |
 | `run_in_terminal` | `pwsh` (Windows) / `bash` (POSIX) | default `pwsh` 7.x |
-| PreToolUse hooks | `plugins/kix-guards.js` (tools/pre-execute) + host sandbox/approval stack | kixpower `hooks/*.ps1` kept as reference + manual checks |
+| PreToolUse hooks | `plugins/kix-guards.js` (tools/pre-execute) + host sandbox stack | kixpower `hooks/*.ps1` kept as reference + manual checks |
 | slash commands `/kixpower-*` | native commands registered by `plugins/kix-commands.js` | type `/` in the UI; zero-token trigger; handler injects `prompts/*.prompt.md` body as a user message |
 
 ## §2 Mechanical guards (resident)
 
 - `plugins/kix-guards.js` auto-mounts a `tools/pre-execute` listener (scope-filtered to this preset) that intercepts: destructive SQL (DROP/TRUNCATE/DELETE/UPDATE without WHERE, statement-level, comment-stripped), dangerous git (force push incl. `-f`/`+refs`/`--mirror`, main-branch pushes, commit-budget via reflog), control-plane file writes (`~/.dsh/**`), unknown execution tools, MCP GitHub remote writes without a feature branch.
-- Human-confirmation (`ask`) points: `reset --hard`, `clean -f`, `branch -D`, `stash drop`, `checkout --`/`restore`, ordinary pushes, `merge_pull_request`, issue comments.
-- The harness's sandbox + approval stack is the resident mechanical layer on top.
+- Human-confirmation points (v5, 2026-08-22): `reset --hard`, `clean -f`, `branch -D`, `stash drop`, `checkout --`/`restore`, ordinary pushes, GitHub mutations (e.g. `merge_pull_request`, issue comments) → **asked inside the chat** via `ctx.userQuestions.ask()` (the service behind `ask_user_question`), not the approval dialog. The user answers 「允许执行/拒绝」; the gate then allows or denies. Fail-safe: no `userQuestions` service / no agent / subagent DELEGATED_CALLER / aborted → deny.
+- The harness's sandbox stack is the resident mechanical layer on top; the approval policy for `danger-full-access` is `never` (fully automatic, no approval dialogs).
 
 ## §3 Delegation, cost tiers & vision
 
