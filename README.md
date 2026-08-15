@@ -5,6 +5,8 @@
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)]()
 
+> **🌍 English:** [README.en.md](README.en.md) · **中文:** 本文件
+
 ---
 
 ## 🧭 为什么会有这个仓库：kix × DSH 的适配研究
