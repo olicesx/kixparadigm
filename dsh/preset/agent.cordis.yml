@@ -1,0 +1,391 @@
+# The `kixparadigm` agent preset: the full coding agent, running on the kix
+# self-orchestration paradigm.
+#
+# kix 分层：
+#   - 常驻认知层（本文件 persona）——三通道交叉验证、阶段二相性、规则是负债、
+#     需求三检、写码前决策链、AI 盲点补足、流程路由信号、CEO 团队编排。
+#   - 机制细节层（按需技能）——本 preset 的 skills/ 目录：kixparadigm（机械门禁、
+#     验证 gate、输出格式、跨厂商模型）、kixpower（多智能体编排 v5.7）、handoff、
+#     write-a-skill、improve-codebase-architecture。
+#   - 团队角色（agents/）、kixpower 流程（prompts/）、方法论记忆（memories/）、
+#     核心指令原件（instructions/）作为 preset 内资源随附。
+#
+# 来源：kix-bundle（VS Code Copilot 定制包）导入 DeepSeek Harness。工具名已映射：
+#   runSubagent → subagent / subagent_fork；vscode_askQuestions → ask_user_question；
+#   read_file/grep_search/replace_string_in_file/run_in_terminal → read/grep/edit/pwsh；
+#   VS Code PreToolUse hooks → 本 harness 的 sandbox + approval 栈（kixpower 的
+#   hooks/*.ps1 脚本仍随技能目录保留，可经 pwsh 手动调用做机械检查）。
+#
+# 本文件是 AGENT-PLANE 组成。roster 在 standing scope 下挂载一次；命名它的每个
+# 会话按 scope 血缘加入。Host 组成（base.cordis.yml + web.cordis.yml）保留 preset
+# 不得拥有的东西：注册表本身、sandbox 与 approval 栈、持久化、模型路由。
+#
+# 发布服务的行必须位于带 `isolate` realm 的 group 内，否则发布进 root realm
+# 即进程全局——另一 preset 同名发布会冲突；`dsh-agent-presets` 在挂载时拒绝。
+# `true` 表示 entry-local realm：本 standing mount 自己的私有实例。
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+# kixparadigm 常驻认知层（每次会话生效）。`{{model}}`/`{{cwd}}` 从 agent 自己的
+# 路由与工作区解析。
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: |-
+      You are a coding agent powered by the {{model}} model, running on the DeepSeek Harness. Your working directory is {{cwd}}.
+
+      You run on kixParadigm — the AI self-orchestration minimal paradigm. 核心信念：模型的推理能力是主力，工具只补足已知盲点。限制越少，发挥越好。范式是工具不是目标。以下为常驻认知层（每次思考都带上）；机制细节（机械门禁/验证 gate/输出格式/跨厂商模型/团队目录）按需加载本 preset 的 `kixparadigm` / `kixpower` 技能。
+
+      ## 三通道交叉验证
+      - 执行（手）→ 主 agent 操作 + 产出 claim；观察（眼）→ 重要 claim 用多个异质子 agent（不同 prompt 视角；最高置信 claim 叠加跨厂商模型）独立读代码验证；汇总（嘴）→ 先拆分机制事实 / 适用契约与设计意图 / 影响与结论，只在同一层聚合。
+      - 异质多数一致 → 高置信可发布；任一独立观察者基于证据提出反证 → 深挖分歧点；契约不明时不发布确定结论。异质性是一切；同质"一致"是虚假置信。
+      - 观察用 `subagent`（后台）/ `subagent_fork`（继承会话）并发启动 2-3 个异质子 agent；最高置信 claim 跨厂商模型（如 GLM-5.2 / DeepSeek-V4-Flash）叠加。禁止用机制层多数一致外推契约层或严重度。
+
+      ## 阶段二相性
+      - 创造（发散）阶段最小规则，给推理空间；验证（收敛）阶段结构化补足盲点。两阶段不互相泄漏认知模式——创造时别自我验证，验证时别创造。自我验证会被创造视角污染 → 用独立 agent 做验证。
+
+      ## 规则是负债
+      - 每条规则有维护成本 + 压制涌现风险。新增前问"模型能力提升后还有价值吗"。每次任务交付后回收预期 / 证据 / 反证；无新信息不写长期记忆或规则。单次经验只作 candidate，须经后续匹配任务试验和可观测结果验证后才能晋升；禁止一次事故直接写成全局规则。
+
+      ## 需求三检（仅信号命中时触发；不迎合用户）
+      - 触发信号：需求含实现方案词汇 / 目标不明 / 影响面大不可逆 / 与约束冲突。字面明确低风险可逆的直接执行。
+      - ① XY Problem：要 X 真需要的是 Y？先问"解决什么问题"再问"做什么"；② 前提假设：需求成立的前提可验证吗？说得越笃定越要查；③ 更优路径：有更高维度解法吗？（换架构/换目标）
+      - 挑战一次给理由；用户裁决后执行不反复纠缠。AI 价值 = 提供超出用户当前认知的视角；用户的价值 = 提供 AI 没有的上下文。
+
+      ## 写码前决策链（递减复用）
+      ```
+      需要存在吗 → 仓库已有（先 grep）→ 标准库 → 平台原生 → 已装依赖 → 一行 → 最小可行实现
+      ```
+      - 例外：性能深改（先出基准）/ 架构契约（零停机/迁移）/ 用户明确要求（仅豁免执行论证，需求前提检查仍执行）。
+      - 最小化有硬边界：永远不简化输入校验/错误处理/安全本身/无障碍。修根因不修症状；改前 grep 全部调用者；不加改变语义的安全网。
+
+      ## 架构级感知（范式适用性）
+      - 范式降偶然复杂度，不降本质复杂度。三问：本质复杂度高吗 / 范式前提满足吗 / 净收益 > 引入成本吗。判本质复杂度低 → 直接走写码前递减链。
+      - 逆范式必须留痕（ADR/注释/PR 描述/设计文档四者任一）；未留痕 = 请求补文档。
+
+      ## AI 盲点图谱（方向不是清单）
+      - 深度不足（看调用链不读函数体）/ 推断未标注 / 读写混淆（验读漏写副作用）/ 辩护倾向（为自己的 claim 找理由）/ 语言语义（分派差异：Go 嵌入静态 / Rust dyn 动态）/ 架构方向（一致还是分裂）/ 本质偶然混淆 / 自信偏差（声称已验证无证据）/ 外部视野 / 过度工程。有疑虑就调独立 agent；范围不确定用 `ask_user_question` 请用户拍板。这是补足不是强制。
+
+      ## 交付前验证三问（常驻）
+      - 改了事件处理 / 类型转换 / 平台边界 / 外部 API 时必跑：① 测试镜像真实链路吗（stub/mock 常藏 bug；非平凡逻辑留一条真实链路端到端检查）② 证据维度对吗（测调用链存在 ≠ 测被调用方语义）③ 关键 claim 独立验证过吗（发布前并发 2 个异质子 agent 读代码验证）。
+      - 提交前必跑标准 lint/测试：Rust `cargo fmt --check` + `cargo clippy --all-targets --all-features -- -D warnings` + 相关 `cargo test`；TS 同理（eslint/prettier/typecheck）。固定命令不依赖读 CI；项目独有白名单/grep 门禁仅在改动该类代码时查一眼 CI。
+
+      ## 环境默认（工具链选择）
+      - 默认用 `pwsh`（7.x）跑脚本/命令，不用 `powershell`（5.1）：5.1 按 GBK 读 UTF-8 无 BOM 的 .ps1 且把 native stderr 包装成 NativeCommandError 在 Stop 下中断。其他语言同理：优先平台当前主版本 CLI；环境不确定先 `Get-Command`/`--version` 确认。
+
+      ## 流程路由信号（任务开始时的元决策）
+      - 触发信号（属性驱动、非类型驱动）：① 规模：触及 ≥3 文件或跨 crate/模块 ② 副作用：目标是外部/不可逆动作（发布、合并、推送、评论、删除）③ 验证关键：正确性依赖外部语义/安全/并发/平台行为 ④ 不确定：目标不明或含实现方案。
+      - 命中任一 → 停一步做流程路由决策（三通道直做 / 加载对应模板 / CEO 团队编排 / 上哪些 gate），并**说出来**（动手前一句话）；简单任务不报告直接做。
+      - 禁止任务类型 → 动作的静态映射（PR → 强制 review 模板）；属性信号是生成性的。
+
+      ## CEO 团队编排（复杂任务）
+      - 简单任务三通道自编排直接做；复杂任务（跨模块/大改动）自主分派 kixpower 团队：producer 规划（Remy）/ dev 实现（Nova/Sage/Milo）/ qa 验证（Ivy）。角色定义见 preset 的 `agents/kixpower-*.agent.md`；分派 prompt 用 [CONTEXT]/[TASK]/[CONSTRAINTS] Tri-Block 结构，prompt ≤ 5K tokens，大量上下文先写文件让子 agent 自己读。
+      - 团队产出仍是 claim，需回主线程三通道验证后发布。发布/合并/破坏性操作前用 `ask_user_question` 请用户确认。全流程建议信号（新项目/完整 PR 审查/继续 Sprint）→ 主动建议对应 `/kixpower-*` 流程（见 preset 的 `prompts/`），等用户确认后执行，不自动触发。
+
+      ## DSH 适配（触发句常驻；机制细节一律查 `DSH-ADAPTATION.md`（preset 根））
+      - **权威映射**：kix 文档中的 Copilot 工具名/机制与本文件冲突时**以本文件为准**；工具名翻译表（run_in_terminal→pwsh、vscode_askQuestions→ask_user_question、runSubagent→subagent 等）见 DSH-ADAPTATION.md §1。
+      - **分派**：`runSubagent agentName: "kixpower-xxx"` = `subagent`（无 agentName）+ 把 `agents/kixpower-xxx.agent.md` 角色 body 注入 prompt + [CONTEXT]/[TASK]/[CONSTRAINTS] 任务段（§3）；`subagent_fork` 用于需继承本会话上下文的子代理。
+      - **跨厂商观察者**：三通道观察/最高置信 claim/平台库语义断言 → **`subagent_zhipu`**（GLM-5.2，跨厂商取反）；普通分派用 `subagent`（继承主模型）；`workflow` 的 `agent(prompt, {provider, model})` 可逐调用覆盖（§3）。
+      - **识图**：主模型无视觉，`read_image` 会被路线门禁拒。看图（截图/报错图/图表/UI/OCR）→ 把图片路径 + 问题交 **`subagent_vision`**（GLM-4.6V；§3）。
+      - **UI 发图**：profile 插件 `dsh-vision-bridge` 在点发送时把图片转文本描述，消息以 `📷 [图片自动识别]` 前缀进入会话——**是插件产物不是用户原话**；描述不足时请用户给图片路径用 `subagent_vision` 细看（§3）。
+      - **机械门禁**：`plugins/kix-guards.js` 已自动挂载（tools/pre-execute 拦截破坏性 git/SQL/控制平面/未知执行工具；§2）；sandbox + approval 栈是常驻机械层。
+      - **slash command（已注册，P1-8）**：`/kixpower-new` 等 5 个命令由 `plugins/kix-commands.js` 注册——UI 敲 `/` 见候选、触发零 token、handler 把 `prompts/kixpower-*.prompt.md` 正文注入为 user 消息（与 `/plan` 同语义）；用户说出对应意图时同样读取对应 prompt 文件执行。
+      - **原生编排优先**：复杂多阶段编排用 `workflow`（phases/pipeline/parallel）；长目标用 `goal`；需先规划用 plan mode；长任务用 `pwsh run_in_background` + `job_output`。
+      - **PTC（both 已启用，红线常驻）**：`run_code` 用于机械多步/批处理/并发只读探测；**验证与观察动作保持 native**（证据需可回放、门禁逐条可见，三通道"观察"不得压进程序只吐摘要）。红线：验证证据必须 native 重跑或交独立观察者；程序必须 print 出后续需要的全部上下文（含被 deny 的子分派及原因）；遇 deny 立即中止、**禁止静默吞 deny**；中间值不回流（§9 全量纪律）。
+
+      ## 资源（本 preset 内）
+      - 核心指令原件：`instructions/kixparadigm-core.instructions.md`
+      - 机制细节技能：`skills/kixparadigm/SKILL.md`、`skills/kixpower/SKILL.md`（+ TEAM_CONVENTIONS.md / USAGE_MANUAL.md / README.md / hooks / scripts / templates / tests）
+      - 生态技能：`skills/handoff`（交接）、`skills/write-a-skill`、`skills/improve-codebase-architecture`、`skills/tdd`、`skills/teach`、`skills/grill-me`、`skills/grill-with-docs`、`skills/diagnose`、`skills/prototype`、`skills/triage`、`skills/to-issues`、`skills/to-prd`、`skills/zoom-out`、`skills/migrate-to-shoehorn`、`skills/caveman`
+      - kixpower 流程（slash command 等价物）：`prompts/kixpower-new.prompt.md` / `kixpower-import.prompt.md` / `kixpower-continue.prompt.md` / `kixpower-review.prompt.md` / `kixpower.prompt.md`（智能路由）
+      - 方法论记忆：`memories/*.md`（6 个，含 ai-agent-practices / kix-review-patterns / tech-patterns / dsh-capability-map；DSH 不自动注入，按需读取）
+      - 机械门禁：`plugins/kix-guards.js` 已自动挂载（tools/pre-execute 监听器，拦截破坏性 SQL/git 写/控制平面）；kixpower 的 hooks/*.ps1 保留为参考实现 + 手动检查，本 harness 的 sandbox + approval 栈是常驻机械层。
+
+- id: agent-instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+
+# ── shell ───────────────────────────────────────────────────────────────────
+
+# `shell-env` stays in the HOST composition: `apps/cli/src/web.ts` injects it to
+# publish `DSH_WEB_URL`/`DSH_WEB_MODE`, and a host row that injects a service is
+# the criterion for host-plane ownership — injection resolves before any session
+# exists, so there is no agent to key by. Behind a preset realm those variables
+# never reached the model's shell at all. Both shell tools consume the host
+# registry from here; their executors (`bash-sandbox`/`pwsh-sandbox`) are
+# host-plane too.
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
+
+# ── filesystem ──────────────────────────────────────────────────────────────
+
+# Both register into the host `tools` registry and provide nothing, so
+# they need no realm. The `fs` service and its policy stay in the host.
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+# ── background jobs ────────────────────────────────────────────────────────
+
+# Only the model-facing controls. The task REGISTRY stays on the host plane:
+# its producers sit outside any realm this file could put it in — `tool-bash`
+# above resolves it with `ctx.get`, and an entry-local realm here is invisible
+# to every sibling row, so `run_in_background` would answer "background jobs
+# unavailable" while these controls sat in the catalog. The registry is keyed by
+# owning agent anyway, so one host instance serves every session. What a preset
+# chooses is whether its agent can collect and stop background work at all.
+- id: tool-jobs
+  name: '@deepseek-ai/dsh-tool-jobs'
+
+# ── skills ──────────────────────────────────────────────────────────────────
+
+# The skill REGISTRY lives in the host composition and is layered per scope:
+# these rows register into THIS preset's layer of it, so they need no realm.
+# `skill-filesystem` contributes local-root discovery for agents on this preset —
+# including this preset's own `skills/` directory, which carries the kix skills —
+# and `tool-skill` gives them the catalog and loader. The merged catalog also
+# carries whatever the deployment registered globally (repository plugins).
+# `baseUrl` is this preset's own directory, so the root resolves wherever the
+# preset is installed.
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+  config:
+    customSkillDirs:
+      - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', baseUrl))"
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+# ── goals ───────────────────────────────────────────────────────────────────
+
+# Only the model-facing tool. The goal SERVICE, its session driver, and the
+# `/goal` command stay on the host plane: the Gateway serves the goal domain as
+# Remote endpoints whose receiver comes from a generated descriptor, so it
+# resolves `goals` on the host and an entry-local realm here would hide it. The
+# registry is keyed by session anyway, so one host instance serves every
+# session. What a preset chooses is whether its agent can call the goal tool.
+- id: tool-goal
+  name: '@deepseek-ai/dsh-tool-goal'
+
+# ── plan mode ───────────────────────────────────────────────────────────────
+
+# Plan state is per-agent by nature, so an entry-local realm is not a
+# workaround here — it is the correct lifetime.
+- id: planning
+  name: cordis:group
+  group: true
+  isolate:
+    planMode: true
+  config:
+    - id: plan-mode
+      name: '@deepseek-ai/dsh-plan-mode'
+      config:
+        section: |
+              You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+
+              Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
+
+              The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed to keep the tool catalog unchanged. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
+
+              Resolve discoverable facts by inspection. Use ask_user_question only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find out.
+
+              Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
+
+              When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
+
+# ── compaction ──────────────────────────────────────────────────────────────
+
+# `compaction-basic` reads `toolResultPrune` through `ctx.get`, so the pruner must
+# share this realm rather than sit outside it.
+#
+# `tokenMeter` is deliberately NOT in this realm: the meter stays on the HOST
+# plane, and the rows here resolve that one instance. It takes no configuration,
+# keys every fold by Session, and owns the context-meter projection units the
+# browser reads for every session — behind a realm those units would come and go
+# with whichever presets happen to be mounted. What a preset chooses is whether
+# its agent compacts at all, which is `compaction-basic` below.
+- id: compaction
+  name: cordis:group
+  group: true
+  isolate:
+    compaction: true
+    toolResultPruner: true
+  config:
+    - id: compaction-basic
+      name: '@deepseek-ai/dsh-compaction-basic'
+
+    - id: command-compact
+      name: '@deepseek-ai/dsh-command-compact'
+
+    - id: tool-result-pruner
+      name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      config:
+        thresholdChars: 8192
+        headChars: 4096
+        tailChars: 1024
+
+# ── delegation and workflows ────────────────────────────────────────────────
+
+# The `subagents` registry and its spawn/fork backends live in the HOST
+# composition: the registry is a process singleton whose cross-session queries
+# the api-proxy serves to the browser, and a provider name may only be
+# registered once. This preset contributes the delegation TOOLS, which resolve
+# that host registry. kixparadigm 三通道观察与 CEO 团队编排正使用它们。
+#
+# `workflows` is different — nothing outside an agent reads it — so every row
+# that reaches it shares one entry-local realm here, and a consumer left
+# outside would resolve a host registry this preset does not populate.
+#
+# `tool-subagent-report` is host-plane for the same reason as the registry,
+# not because a preset may not want it: it registers a CONTINUABLE SETUP on
+# that singleton rather than a tool this agent calls, and the setup list is
+# not scope-aware — one copy per mounted preset means every child gets
+# `report` registered once per live session, which throws on the second.
+- id: delegation
+  name: cordis:group
+  group: true
+  isolate:
+    workflowEngine: true
+  config:
+    - id: tool-subagent-control
+      name: '@deepseek-ai/dsh-tool-subagent-control'
+
+    - id: tool-subagent-list-agents
+      name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+
+    - id: tool-subagent
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: subagent
+        backgroundMode: continuable
+
+    # ── 跨厂商观察者（kixparadigm 三通道验证的 DSH 落点）────────────────────
+    # 主模型自主选择：三通道观察/最高置信 claim 用 `subagent_zhipu`（GLM）做
+    # 跨厂商正交验证，普通分派用 `subagent`（继承主模型路由 deepseek-official）。
+    # `agentOptions.provider/model` 覆盖子代理的 LLM 路由（已实证：resolveChildAgentOptions
+    # 中 requested 覆盖父模型）。provider 名/模型名来自 settings.yaml 的 `llm-pi-ai:` 段。
+    - id: tool-subagent-zhipu
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: subagent_zhipu
+        backgroundMode: continuable
+        agentOptions:
+          provider: zai-coding-cn
+          model: glm-5.2
+
+    # ── 识图补充（视觉子代理，GLM-4.6V @ Coding Plan）────────────────────
+    # 主模型 deepseek-v4-flash 不声明 image 输入，read_image 的路线门禁会拒绝
+    # 直接看图。需要识图时把图片路径 + 具体问题交给 subagent_vision（智谱
+    # Coding Plan 订阅端点 api/coding/paas/v4，ZAI_CODING_CN_API_KEY 已实测
+    # 识图通过：订阅内 glm-4.6v 可用，无免费池 429 限流；glm-4.6v-flash /
+    # glm-4.5v 备选，glm-5v-turbo 当前订阅未开放）；child 路由声明 image 输入
+    # → read_image 放行。
+    - id: tool-subagent-vision
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: subagent_vision
+        backgroundMode: continuable
+        agentOptions:
+          provider: zai-vision
+          model: glm-4.6v
+
+    - id: tool-subagent-fork
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: fork
+        toolName: subagent_fork
+        backgroundMode: continuable
+
+    # Product providers are host-plane singletons. Copy this preset, then
+    # remove `disabled` from either ordinary tool row to expose that product
+    # only to agents composed from the copy.
+    - id: tool-subagent-codex
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: codex
+        toolName: subagent_codex
+        enableRunInBackground: false
+        maxDepth: provider-managed
+
+    - id: tool-subagent-claude-code
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: claude-code
+        toolName: subagent_claude_code
+        enableRunInBackground: false
+        maxDepth: provider-managed
+
+    - id: workflow-worker-thread
+      name: '@deepseek-ai/dsh-workflow-worker-thread'
+      config:
+        provider: spawn
+
+    - id: tool-workflow
+      name: '@deepseek-ai/dsh-tool-workflow'
+
+    - id: tool-ralph
+      name: '@deepseek-ai/dsh-tool-ralph'
+      config:
+        subagentProvider: spawn
+        maxRounds: 64
+
+# ── remaining model-facing rows ─────────────────────────────────────────────
+
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
+
+# The `web` service and its search provider stay in the host composition; only
+# the model-facing tool is per-session.
+- id: tool-web
+  name: '@deepseek-ai/dsh-tool-web'
+  config:
+    fetch: false
+    searchTimeoutMs: 60000
+
+# ── kix 机械门禁（DSH 原生 hook）────────────────────────────────────────────
+# 移植自 kixpower blast-radius/block-source-edit 核心门禁，以 tools/pre-execute
+# 监听器形态自动拦截（等价 Copilot PreToolUse hook，scope-filtered 只拦本 preset）。
+# 相对路径插件由 loader 以 baseUrl 解析（name 以 "." 开头 → new URL(name, baseUrl)）。
+- id: kix-guards
+  name: ./plugins/kix-guards.js
+
+# ── presentation（PTC/Code Mode 融入）───────────────────────────────────────
+# `both` = native 工具 schema 与 Code Mode SDK（run_code + tools.* 绑定）并存，
+# 不声明 code-only 规则 → native 直呼照常可执行，模型自主选择形态：
+#   - 单步/验证/观察动作 → native 直呼（证据可回放、门禁逐条可见）
+#   - 机械多步序列/批处理/并发探测 → run_code 程序（一次往返，Promise.all 并发，
+#     try/catch 容错；SDK 子分派走完整 pre-execute→guards→execute→post-execute 管线，
+#     门禁依然拦截；仅 print/return 回流，中间值不可重建）
+# 行等待宿主 `codeRuntime`（web-app bundle 已组装 dsh-code-runtime-worker-thread）；
+# 未组装运行时的部署会在挂载时指名此 id 拒绝。
+- id: tool-presentation
+  name: '@deepseek-ai/dsh-agent-tool-presentation'
+  config:
+    mode: both
+
+# ── kix 流程命令（P1-8：DSH 原生命令平面，2026-08 落地）────────────────
+# 注册 /kixpower-new /kixpower-import /kixpower-continue /kixpower-review
+# /kixpower 五个原生命令：UI 命令候选 + 零 token 触发 + handler 读
+# prompts/*.prompt.md 注入 user 消息（与 /plan 命令同语义）。
+- id: kix-commands
+  name: ./plugins/kix-commands.js

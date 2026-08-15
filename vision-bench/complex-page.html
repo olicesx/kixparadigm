@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; margin: 24px; color: #1a1a2e; background: #f4f6fb; }
+  h1 { font-size: 22px; margin: 0 0 2px; }
+  .sub { color: #667; font-size: 13px; margin-bottom: 16px; }
+  .card { background: #fff; border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .card h2 { font-size: 14px; margin: 0 0 10px; color: #2b3a67; border-left: 4px solid #4a6cf7; padding-left: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { border: 1px solid #dde3f0; padding: 5px 8px; text-align: left; }
+  th { background: #eef2fc; }
+  .err { color: #d64545; font-weight: 600; }
+  .warn { color: #c98a1b; font-weight: 600; }
+  .ok { color: #2e9e5b; font-weight: 600; }
+  .mono { font-family: Consolas, monospace; font-size: 11.5px; background: #f1f3f9; padding: 6px 8px; border-radius: 6px; white-space: pre-wrap; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; margin-right: 6px; }
+  .b-red { background: #fdecec; color: #d64545; }
+  .b-green { background: #e8f7ee; color: #2e9e5b; }
+  .b-blue { background: #e8effd; color: #2b5bd7; }
+  .b-amber { background: #fdf3e2; color: #b57614; }
+  .row { display: flex; gap: 14px; }
+  .row .card { flex: 1; }
+</style>
+</head>
+<body>
+  <h1>支付网关监控面板 v2.4.1</h1>
+  <div class="sub">生产环境 · 集群 cn-east-1 · 最近更新 2026-08-17 14:32:07 · 数据区间 08-10 ~ 08-16</div>
+
+  <div class="card">
+    <h2>服务状态</h2>
+    <span class="badge b-green">● gateway: healthy</span>
+    <span class="badge b-amber">● callback-svc: degraded</span>
+    <span class="badge b-red">● settlement: DOWN</span>
+    <span class="badge b-blue">ℹ queue depth: 1,204</span>
+  </div>
+
+  <div class="row">
+    <div class="card">
+      <h2>近 7 日交易量（笔）</h2>
+      <svg width="520" height="170" viewBox="0 0 520 170">
+        <line x1="40" y1="10" x2="40" y2="140" stroke="#ccc"/>
+        <line x1="40" y1="140" x2="510" y2="140" stroke="#ccc"/>
+        <polyline points="40,120 110,102 180,114 250,84 320,96 390,58 460,66 500,44"
+                  fill="none" stroke="#4a6cf7" stroke-width="2.5"/>
+        <circle cx="390" cy="58" r="4" fill="#d64545"/>
+        <text x="46" y="156" font-size="10" fill="#667">08-10</text>
+        <text x="456" y="156" font-size="10" fill="#667">08-16</text>
+        <text x="375" y="50" font-size="10" fill="#d64545">峰值 12,840</text>
+        <text x="10" y="30" font-size="10" fill="#667">15k</text>
+        <text x="10" y="75" font-size="10" fill="#667">10k</text>
+        <text x="10" y="145" font-size="10" fill="#667">5k</text>
+      </svg>
+    </div>
+    <div class="card" style="flex: 0 0 320px;">
+      <h2>渠道占比</h2>
+      <div style="font-size: 12.5px; line-height: 1.9;">
+        <span class="b-blue">微信支付 41.2%</span><br>
+        <span class="b-green">支付宝 33.7%</span><br>
+        <span class="b-amber">云闪付 12.5%</span><br>
+        <span class="b-red">银行卡 8.1%</span><br>
+        <span style="color:#667">其他 4.5%</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>结算异常明细（最近 5 条）</h2>
+    <table>
+      <tr><th>订单号</th><th>渠道</th><th>金额</th><th>状态</th><th>重试次数</th><th>时间</th></tr>
+      <tr><td class="mono">TXN-20260817-008421</td><td>wechat</td><td>¥ 12,840.00</td><td class="err">TIMEOUT</td><td>3</td><td>14:31:02</td></tr>
+      <tr><td class="mono">TXN-20260817-008390</td><td>alipay</td><td>¥ 3,256.50</td><td class="err">REVERSED</td><td>1</td><td>14:28:44</td></tr>
+      <tr><td class="mono">TXN-20260817-008377</td><td>unionpay</td><td>¥ 899.00</td><td class="warn">PENDING</td><td>5</td><td>14:25:19</td></tr>
+      <tr><td class="mono">TXN-20260817-008355</td><td>wechat</td><td>¥ 66.00</td><td class="ok">SETTLED</td><td>0</td><td>14:22:57</td></tr>
+      <tr><td class="mono">TXN-20260817-008340</td><td>alipay</td><td>¥ 15,000.00</td><td class="err">AUTH_FAILED</td><td>2</td><td>14:19:31</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>最近一次告警回调原始报文（JSON）</h2>
+    <div class="mono">{"event":"settlement.failed","order_id":"TXN-20260817-008421",
+"channel":"wechat","amount_cents":1284000,"currency":"CNY",
+"attempts":3,"last_error":"upstream_conn_reset",
+"callback_url":"https://api.merchant.example.com/v1/notify",
+"sign":"a3f9c2e1d4b5"}</div>
+  </div>
+
+  <div class="card">
+    <h2>配置片段（application.yml）</h2>
+    <div class="mono">settlement:
+  retry: { max: 5, backoff: "exponential", base_ms: 2000 }
+  webhook: { enabled: true, timeout_ms: 8000 }
+  notify_keys: ["order_id", "status", "amount_cents"]</div>
+  </div>
+</body>
+</html>

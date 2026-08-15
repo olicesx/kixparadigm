@@ -1,0 +1,11 @@
+# 依赖与构建产物
+node_modules/
+*.tgz
+npm-debug.log*
+
+# 个人工作区（不入库）
+.zcode/
+
+# 系统杂项
+.DS_Store
+Thumbs.db

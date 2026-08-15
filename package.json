@@ -1,0 +1,55 @@
+{
+  "name": "kixparadigm",
+  "version": "1.0.0",
+  "description": "kixparadigm — AI 自编排最小范式（认知层常驻）+ kixpower 多智能体编排 + DSH 一键导入（preset + vision-bridge + 门禁插件）",
+  "license": "MIT",
+  "author": "kix (olicesx)",
+  "keywords": [
+    "kixparadigm",
+    "kixpower",
+    "kix",
+    "agent",
+    "ai-agent",
+    "deepseek-harness",
+    "dsh",
+    "agent-preset",
+    "multi-agent",
+    "coding-agent"
+  ],
+  "bin": {
+    "kixparadigm": "bin/kixparadigm.js"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "dsh/",
+    "skills/",
+    "agents/",
+    "instructions/",
+    "prompts/",
+    "memories/",
+    "plugins/",
+    "INSTALL.md",
+    "install.ps1",
+    "install.sh",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/install-lib.js --quiet",
+    "test": "node dsh/preset/plugins/kix-guards.test.js && node dsh/preset/plugins/kix-commands.test.js",
+    "verify:vision": "node scripts/verify-vision-bridge-resolution.cjs",
+    "verify:guards": "node scripts/verify-guards.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/olicesx/kixparadigm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/olicesx/kixparadigm/issues"
+  },
+  "homepage": "https://github.com/olicesx/kixparadigm#readme"
+}

@@ -1,0 +1,203 @@
+# Kixpower Orchestration — Hook: Block Source Code Edits
+# 从 stdin 读取 JSON，拦截对源代码文件的编辑操作
+# 优化：① 只对编辑类工具检查 ②适配绝对路径与 workspace 相对路径
+
+param(
+    [ValidateSet('producer','orchestrator')]
+    [string]$Role = 'producer'
+)
+
+# 强制设置脚本和控制台使用 UTF-8 编码，防止 Windows 默认的 GBK 处理 Git/Markdown 时引发乱码和宿主警告
+$OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$Env:LC_ALL = "C.UTF-8"
+$Env:LANG = "C.UTF-8"
+
+$inputJson = $Input | Out-String
+if ([string]::IsNullOrWhiteSpace($inputJson)) {
+    exit 0
+}
+
+try {
+    $hookInput = $inputJson | ConvertFrom-Json
+} catch {
+    [Console]::Error.WriteLine('SOURCE BOUNDARY: hook input 不是有效 JSON，拒绝编辑。')
+    exit 2
+}
+
+$contractScript = Join-Path $PSScriptRoot '..\scripts\kixpower-contract.ps1'
+if (-not (Test-Path $contractScript)) {
+    [Console]::Error.WriteLine('SOURCE BOUNDARY: contract helper 缺失，拒绝编辑。')
+    exit 2
+}
+. (Resolve-Path $contractScript)
+
+$toolName = [string]$hookInput.tool_name
+$toolLeaf = ($toolName -split '\.')[-1]
+$argsObj = $hookInput.tool_input
+if (-not $argsObj) { exit 0 }
+
+if (Test-KixSuspiciousExecutionTool -ToolName $toolName) {
+    $result = @{ hookSpecificOutput = @{ hookEventName = "PreToolUse"; permissionDecision = "deny"; permissionDecisionReason = "当前 agent 禁止使用未登记的代码执行/脚本工具；请使用受边界检查的终端或编辑工具。" } }
+    Write-Output ($result | ConvertTo-Json -Depth 3)
+    exit 2
+}
+
+$blockedExecutionTools = @('create_and_run_task','create_new_workspace','create_new_jupyter_notebook','run_vscode_command','install_extension','run_notebook_cell')
+if ($blockedExecutionTools -contains $toolLeaf) {
+    $result = @{ hookSpecificOutput = @{ hookEventName = "PreToolUse"; permissionDecision = "deny"; permissionDecisionReason = "当前 agent 禁止使用可绕过文档写边界的执行或脚手架工具。" } }
+    Write-Output ($result | ConvertTo-Json -Depth 3)
+    exit 2
+}
+
+# 终端只用于执行/检查，不允许借 shell 写文件绕过编辑 Hook。
+if ($toolLeaf -eq 'run_in_terminal') {
+    $terminalCommand = Get-KixTerminalCommand -ToolLeaf $toolLeaf -ToolInput $argsObj
+    if (Test-KixTerminalWriteCommand -Command $terminalCommand) {
+        $result = @{ hookSpecificOutput = @{ hookEventName = "PreToolUse"; permissionDecision = "deny"; permissionDecisionReason = "当前 agent 禁止通过终端写文件；请使用受路径检查的编辑工具。" } }
+        Write-Output ($result | ConvertTo-Json -Depth 3)
+        exit 2
+    }
+    exit 0
+}
+
+# 符号重命名可能跨文件改写引用，无法用单个输入路径约束。
+if ($toolLeaf -eq 'vscode_renameSymbol') {
+    $result = @{ hookSpecificOutput = @{ hookEventName = "PreToolUse"; permissionDecision = "deny"; permissionDecisionReason = "当前 agent 禁止执行跨文件符号重命名。" } }
+    Write-Output ($result | ConvertTo-Json -Depth 3)
+    exit 2
+}
+
+# 只对编辑类工具检查，避免 read/search 等只读操作也触发路径正则
+$editTools = @('apply_patch','replace_string_in_file','insert_edit_into_file','edit_notebook_file','create_file','create_or_update_file','delete_file','push_files')
+$isRemoteFileEdit = $toolName -match '(?i)mcp_github.*(?:create_or_update_file|delete_file|push_files)'
+if (-not $argsObj -or (($editTools -notcontains $toolLeaf) -and -not $isRemoteFileEdit)) {
+    exit 0
+}
+
+$targetPaths = [System.Collections.Generic.List[string]]::new()
+if ($toolLeaf -eq 'apply_patch' -and $argsObj.input) {
+    foreach ($match in [regex]::Matches([string]$argsObj.input, '(?m)^\*\*\* (?:Add|Update|Delete) File:\s*(.+?)(?:\s+->.*)?\s*$')) {
+        $targetPaths.Add($match.Groups[1].Value)
+    }
+} elseif ($argsObj.filePath) {
+    $targetPaths.Add([string]$argsObj.filePath)
+} elseif ($argsObj.path) {
+    $targetPaths.Add([string]$argsObj.path)
+} elseif ($argsObj.files) {
+    foreach ($file in $argsObj.files) {
+        if ($file.path) { $targetPaths.Add([string]$file.path) }
+    }
+}
+if ($targetPaths.Count -eq 0) { exit 0 }
+
+# 提取相对 workspace 根的路径（适配绝对路径输入）
+$workspace = $hookInput.workspaceFolder
+if (-not $workspace) { $workspace = $hookInput.cwd }
+if (-not $workspace) { $workspace = (Get-Location).Path }
+$normalizedWorkspace = [System.IO.Path]::GetFullPath([string]$workspace).Replace('\', '/').TrimEnd('/')
+
+# 允许编辑的路径（文档与项目配置）
+$allowedPatterns = if ($Role -eq 'orchestrator') {
+    @(
+        '^docs/\.kixpower-current-sprint$',
+        '^docs/\.kixpower-qa-session\.json$',
+        '^docs/sprint-\d+/progress\.md$',
+        '^docs/sprint-\d+/hill-climbing\.md$',
+        '^docs/reviews/.+\.md$',
+        '^\.kixpower/memory/repo/(harness-backlog|lessons-learned)\.md$'
+    )
+} else {
+    @(
+        '^docs/',
+        '^README\.md$',
+        '^PROJECT_BRIEF\.md$',
+        '^\.github/',
+        '^\.gitignore$',
+        '^\.kixpower/memory/repo/(harness-backlog|lessons-learned)\.md$'
+    )
+}
+
+# 被阻止的源代码路径
+# v5.0 注（U2 反过拟合）：扩展名规则（\.go$/.rs$/.ts$/...）是语言无关的**主判据**，
+# 已覆盖 dae 等 Go 项目（component/**/control/** 经 \.go$ 拦截）。
+# 下方路径前缀（src/app/api/components...）是 Rust/前端起源的**辅助启发式**，
+# 对非 src 布局项目可能漏判无扩展名目录，但扩展名兜底保证主流语言不漏。
+$blockedPatterns = @(
+    '(^|/)src/',
+    '(^|/)app/',
+    '(^|/)api/',
+    '(^|/)components/',
+    '(^|/)lib/',
+    '(^|/)utils/',
+    '(^|/)hooks/',
+    '(^|/)styles/',
+    '\.(js|ts|jsx|tsx|mjs|cjs|mts|cts|py|java|go|rs|cpp|c|h|cs|rb|php|kt|kts|scala|swift|dart|lua|ex|exs|erl|hrl|fs|fsx|vb|sh|bash|zsh|fish|ps1|psm1|sql|html|css|scss|sass|less|vue|svelte|xml|proto|ipynb)$',
+    'package\.json$',
+    'tsconfig\.json$',
+    'next\.config\.',
+    'vite\.config\.',
+    'webpack\.config\.',
+    'docker-compose\.yml$',
+    'Dockerfile$',
+    '\.env'
+)
+
+foreach ($targetPath in $targetPaths) {
+    try {
+        $candidatePath = [string]$targetPath
+        if ($workspace -and -not [System.IO.Path]::IsPathRooted($candidatePath)) {
+            $candidatePath = Join-Path $workspace $candidatePath
+        }
+        $candidatePath = [System.IO.Path]::GetFullPath($candidatePath)
+    } catch {
+        $result = @{ hookSpecificOutput = @{ hookEventName = "PreToolUse"; permissionDecision = "deny"; permissionDecisionReason = "无法规范化目标路径，拒绝编辑。" } }
+        Write-Output ($result | ConvertTo-Json -Depth 3)
+        exit 2
+    }
+    $normalizedPath = $candidatePath.Replace('\', '/')
+    if (-not ($normalizedPath.Equals($normalizedWorkspace, [System.StringComparison]::OrdinalIgnoreCase) -or
+              $normalizedPath.StartsWith("$normalizedWorkspace/", [System.StringComparison]::OrdinalIgnoreCase))) {
+        $result = @{ hookSpecificOutput = @{ hookEventName = "PreToolUse"; permissionDecision = "deny"; permissionDecisionReason = "当前 agent 禁止编辑工作区外文件。" } }
+        Write-Output ($result | ConvertTo-Json -Depth 3)
+        exit 2
+    }
+    $relPath = $normalizedPath.Substring($normalizedWorkspace.Length).TrimStart('/')
+
+    # 源码/配置黑名单优先：Producer 即使路径命中 docs/ 白名单也不得写源码扩展名文件。
+    foreach ($pattern in $blockedPatterns) {
+        if ($relPath -match $pattern) {
+            $result = @{
+                hookSpecificOutput = @{
+                    hookEventName = "PreToolUse"
+                    permissionDecision = "deny"
+                    permissionDecisionReason = "当前 agent 禁止编辑源代码文件。发现 Bug 请提 Issue，让 Dev 团队修复。"
+                }
+            }
+            Write-Output ($result | ConvertTo-Json -Depth 3)
+            exit 2
+        }
+    }
+
+    $isAllowed = $false
+    foreach ($pattern in $allowedPatterns) {
+        if ($relPath -match $pattern) {
+            $isAllowed = $true
+            break
+        }
+    }
+    if ($isAllowed) { continue }
+
+    $result = @{
+        hookSpecificOutput = @{
+            hookEventName = "PreToolUse"
+            permissionDecision = "deny"
+            permissionDecisionReason = if ($Role -eq 'orchestrator') { "Orchestrator 只能写 progress.md、hill-climbing.md 和 docs/reviews/*.md；规划与 PROJECT_BRIEF 交 Producer。" } else { "Producer 只能编辑 PROJECT_BRIEF.md、顶层 docs/**、README.md、.github/** 和 .gitignore。" }
+        }
+    }
+    Write-Output ($result | ConvertTo-Json -Depth 3)
+    exit 2
+}
+
+exit 0
