@@ -282,12 +282,30 @@ function installCopilot(log) {
   const sh = path.join(PKG_ROOT, 'install.sh')
   if (process.platform === 'win32' && fs.existsSync(ps1)) {
     log.step('运行 install.ps1（VS Code Copilot 侧导入）')
-    const pwsh = spawnSync('pwsh', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1], { stdio: 'inherit' })
-    if (pwsh.status !== 0) { log.warn(`install.ps1 退出码 ${pwsh.status}`); process.exitCode = pwsh.status ?? 1 }
+    // 优先 pwsh（7.x）；未安装时回退系统自带 Windows PowerShell 5.1
+    let r = null
+    for (const cmd of ['pwsh', 'powershell']) {
+      r = spawnSync(cmd, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1], { stdio: 'inherit' })
+      if (!(r.error && r.error.code === 'ENOENT')) break
+      log.warn(`${cmd} 不可用，尝试下一个可用 shell`)
+    }
+    if (r && r.error && r.error.code === 'ENOENT') {
+      log.warn('未找到 pwsh / powershell（install.ps1 需要其中之一）')
+      process.exitCode = 1
+    } else if (r.status !== 0) {
+      log.warn(`install.ps1 退出码 ${r.status}`)
+      process.exitCode = r.status ?? 1
+    }
   } else if (fs.existsSync(sh)) {
     log.step('运行 install.sh（VS Code Copilot 侧导入）')
     const r = spawnSync('bash', [sh], { stdio: 'inherit' })
-    if (r.status !== 0) { log.warn(`install.sh 退出码 ${r.status}`); process.exitCode = r.status ?? 1 }
+    if (r.error && r.error.code === 'ENOENT') {
+      log.warn('未找到 bash（install.sh 需要 bash，可安装 bash 后重试）')
+      process.exitCode = 1
+    } else if (r.status !== 0) {
+      log.warn(`install.sh 退出码 ${r.status}`)
+      process.exitCode = r.status ?? 1
+    }
   } else {
     log.warn('未找到 install.ps1 / install.sh')
     process.exitCode = 1

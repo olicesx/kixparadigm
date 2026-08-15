@@ -4,6 +4,14 @@
 # shell 脚本固定 LF（Linux/macOS 执行安全，不受平台检出影响）
 *.sh text eol=lf
 
+# 带 shebang 的 Node 可执行脚本固定 LF（Windows 检出 CRLF 会破坏 POSIX shebang，
+# 导致 npm 全局安装后 bin 命令在 Linux/macOS 上报 bad interpreter）
+bin/*.js text eol=lf
+en/bin/*.js text eol=lf
+scripts/install-lib.js text eol=lf
+en/scripts/install-lib.js text eol=lf
+skills/*/scripts/*.mjs text eol=lf
+
 # 二进制文件（禁止文本转换）
 *.png binary
 *.tgz binary
