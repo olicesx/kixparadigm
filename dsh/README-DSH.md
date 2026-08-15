@@ -70,8 +70,9 @@ pwsh -File .\scripts\sync-dsh-preset.ps1 -Force
 ## 验证
 
 ```powershell
-node .\dsh\preset\plugins\kix-guards.test.js      # 机械门禁 128 组断言
+node .\dsh\preset\plugins\kix-guards.test.js      # 机械门禁 142 组断言
 node .\dsh\preset\plugins\kix-commands.test.js    # 命令注册 6 组断言
+node .\dsh\preset\plugins\kix-cost.test.js        # 成本纪律 24 组断言
 ```
 
 preset 挂载校验（roster `standingKeyFor`）在 DSH 会话内用 cordis 工具集执行。

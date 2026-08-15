@@ -6,6 +6,9 @@ npm-debug.log*
 # 个人工作区（不入库）
 .zcode/
 
+# 本地会话测量产物（含个人路径/会话 ID/prompt 预览，仅本地生成，勿入库）
+tools/log-audit/*.json
+
 # 环境变量与密钥（不入库；.env.example 例外，可作模板提交）
 .env
 .env.*

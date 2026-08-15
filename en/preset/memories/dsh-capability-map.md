@@ -89,4 +89,4 @@
 3. 「ralph 限发散阶段」——需一次真实发散/收敛任务对照实验。
 4. 「workflow 脚本化 kix 团队 vs 手动 subagent 分派」的产出质量差异——需同一任务双路径对比（P2-11 模板已就绪）。
 5. 档一 1-7 的「直接依赖零改造」声明——每项在首个匹配任务中验证后即视为坐实。
-6. **kix-guards v3 新增门禁的真实拦截**（2026-08-21 挂账）：128 组单元测试（含独立审查 3 漏拦 + 7 误伤反例）+ 挂载校验已过，但当前进程 standing generation 为 v1 时代组装（运行中不重读）——**需用户重启 DSH 进程**（Ctrl+C → `dsh web`）后，新会话实测 v3 分支：psql 客户端 deny、git -C push --force deny、git push origin feature ask、MCP GitHub 写 main deny、UPDATE 语句级 deny。重启前 P0 行保持 ⚠️ 状态。
+6. **kix-guards v3 新增门禁的真实拦截**（2026-08-21 挂账）：128 组单元测试（含独立审查 3 漏拦 + 7 误伤反例）+ 挂载校验已过，但当前进程 standing generation 为 v1 时代组装（运行中不重读）——**需用户重启 DSH 进程**（Ctrl+C → `dsh web`）后，新会话实测 v3 分支：psql 客户端 deny、git -C push --force deny、git push origin feature ask、MCP GitHub 写 main deny、UPDATE 语句级 deny。重启前 P0 行保持 ⚠️ 状态。**v4 更新（2026-08-15）**：GitHub 门禁误拦修复（只读 get_/list_/search_ 放行、mutation 按工具名精确匹配），单元回归扩至 **142 组全过**；挂载校验复验 OK（standingKeyFor）。E2E 实测项仍待重启后新会话进行。

@@ -13,7 +13,7 @@ This edition is delivered in **phased translation**. The resident cognition laye
 | `agents/kixparadigm.agent.md` (main entry role) | English |
 | `DSH-ADAPTATION.md` | English (condensed authoritative mapping) |
 | `README.md`, `TRANSLATION-STATUS.md` | English |
-| `plugins/` (kix-guards.js, kix-commands.js + tests) | Code — language-neutral |
+| `plugins/` (kix-guards.js, kix-cost.js, kix-commands.js + tests) | Code — language-neutral |
 
 ## ⏳ Pending (Chinese originals, still fully functional)
 

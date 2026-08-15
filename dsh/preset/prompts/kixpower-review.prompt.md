@@ -74,9 +74,15 @@ reviewer: kixpower-orchestrator
 
 实践项只影响内部审查过程，不得出现在公开 review body。
 
-### 阶段 2：分层审查（orchestrator 直接执行，不调子 agent 节省 token）
+### 阶段 2：分层审查（orchestrator 判断 + `subagent_lite` 并行机械取证；v5.8 成本分层）
 
 基于 diff + worktree 中完整源码按 7 个维度逐项审查，每个维度产出 verdict + 评论清单。**禁止修改代码**，只生成评论。
+
+**取证分工（v5.8，日志实测驱动：大 PR 逐文件内联读取 + high effort 思考，58 步烧 156k 思考仍未见底）**：
+- **判断留在 orchestrator**（不派子代理）：维度 verdict、严重级别、契约对照、跨文件综合推理、反方辩护；
+- **机械取证派 `subagent_lite`**（并行 ≤2；只读 read/grep/glob/pwsh 四工具 + 8K 帽 + 思考 ≈0，每步固定开销 34.3k → ~5.9k，↓83%）：通读 diff 文件、提取目标文件既有代码基线（维度 4 风格基线）、grep 符号定位、枚举测试覆盖与边界（维度 5）、逐文件核对清单；
+- **判定标准**：只读/检索/核对/枚举 → lite；需判断/权衡/综合 → orchestrator。**禁止 orchestrator 逐文件通读 diff**（机械步骤全部走 lite）；
+- **证据门禁不变**：lite 回流的是「取证素材」，orchestrator 仍须按下方证据门禁核验（引用 `文件:行号`、权威源），不得把 lite 输出直接当结论；lite 只读不写，不得用它执行任何有副作用的步骤。
 
 #### 维度清单
 

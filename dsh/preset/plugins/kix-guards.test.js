@@ -146,6 +146,22 @@ function check(label, decision, expect) {
   check('github merge_pull_request → ask', await dispatch('mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 3 }), 'ask')
   check('github add_issue_comment → ask', await dispatch('mcp__github__add_issue_comment', { owner: 'o', repo: 'r', issue_number: 1, body: 'b' }), 'ask')
   check('github get_file_contents → allow', await dispatch('mcp__github__get_file_contents', { owner: 'o', repo: 'r', path: 'README.md' }), false)
+  // v4 修复：只读工具不再被 `.*request_` 误判为 mutation（日志实测 2026-08-15）
+  check('github get_pull_request → allow (v4)', await dispatch('mcp__github__get_pull_request', { owner: 'o', repo: 'r', pull_number: 1 }), false)
+  check('github get_pull_request_files → allow (v4 修复)', await dispatch('mcp__github__get_pull_request_files', { owner: 'o', repo: 'r', pull_number: 1 }), false)
+  check('github get_pull_request_comments → allow (v4 修复)', await dispatch('mcp__github__get_pull_request_comments', { owner: 'o', repo: 'r', pull_number: 1 }), false)
+  check('github get_pull_request_reviews → allow (v4 修复)', await dispatch('mcp__github__get_pull_request_reviews', { owner: 'o', repo: 'r', pull_number: 1 }), false)
+  check('github get_pull_request_status → allow (v4 修复)', await dispatch('mcp__github__get_pull_request_status', { owner: 'o', repo: 'r', pull_number: 1 }), false)
+  check('github list_pull_requests → allow (v4)', await dispatch('mcp__github__list_pull_requests', { owner: 'o', repo: 'r' }), false)
+  check('github get_issue → allow (v4)', await dispatch('mcp__github__get_issue', { owner: 'o', repo: 'r', issue_number: 1 }), false)
+  check('github search_code → allow (v4)', await dispatch('mcp__github__search_code', { q: 'x' }), false)
+  check('github list_commits → allow (v4)', await dispatch('mcp__github__list_commits', { owner: 'o', repo: 'r', sha: 'a' }), false)
+  // v4：mutation 精确名单仍须 ask（含原 `request_` 意图覆盖的 review 提交）
+  check('github create_pull_request → ask (v4)', await dispatch('mcp__github__create_pull_request', { owner: 'o', repo: 'r', title: 't', head: 'h', base: 'b' }), 'ask')
+  check('github create_pull_request_review → ask (v4)', await dispatch('mcp__github__create_pull_request_review', { owner: 'o', repo: 'r', pull_number: 1, event: 'APPROVE' }), 'ask')
+  check('github update_issue → ask (v4)', await dispatch('mcp__github__update_issue', { owner: 'o', repo: 'r', issue_number: 1, state: 'closed' }), 'ask')
+  check('github fork_repository → ask (v4)', await dispatch('mcp__github__fork_repository', { owner: 'o', repo: 'r' }), 'ask')
+  check('github create_branch → ask (v4)', await dispatch('mcp__github__create_branch', { owner: 'o', repo: 'r', branch: 'x' }), 'ask')
 
   // ══ 7. __internals 纯逻辑 ═════════════════════════════════════════════
   const I = plugin.__internals

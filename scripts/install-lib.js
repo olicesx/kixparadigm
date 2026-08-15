@@ -264,7 +264,7 @@ function doctor(log) {
   }
 
   log.step('运行插件单元回归（installed preset）')
-  for (const t of ['kix-guards.test.js', 'kix-commands.test.js']) {
+  for (const t of ['kix-guards.test.js', 'kix-commands.test.js', 'kix-cost.test.js']) {
     const test = path.join(preset, 'plugins', t)
     if (!fs.existsSync(test)) { log.warn(`测试文件缺失: ${test}`); allOk = false; continue }
     const r = spawnSync(process.execPath, [test], { stdio: 'inherit' })

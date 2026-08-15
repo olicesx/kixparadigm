@@ -66,3 +66,18 @@ description: "Kixpower — AI 多智能体协作编排（v5.7）。采用 DAG �
 | ⑪ | AI 盲点图谱（5 类盲区方向 + 补足工具，**非检查表**） | 盲区提醒（赋能） | [review.prompt.md](../../prompts/kixpower-review.prompt.md) §AI 盲点图谱 + [TEAM_CONVENTIONS.md](./TEAM_CONVENTIONS.md) §证据门禁 |
 | ⑫ | review-of-review 子 agent（独立 grader，利用多 agent 注意力独立性） | 独立推理（赋能） | [review.prompt.md](../../prompts/kixpower-review.prompt.md) §阶段2.5 |
 | ⑬ | claim_evidence_failure trace（L4 闭环度量） | 观测（赋能） | [kixpower-orchestrator.agent.md](../../agents/kixpower-orchestrator.agent.md) §Observe trace schema + §L4 模式识别 |
+
+## v5.8 成本纪律（2026-08-21 日志实测驱动）
+
+> 常驻规则在 `agent.cordis.yml` persona「成本纪律」节（两 edition 均有）；本表是路由索引。
+> 机制落地：`plugins/kix-cost.js`（lite 自动选型 + 思考强度归一化）+ 四档子代理工具行 + per-role 预算帽。
+
+| # | 方法 | 落地段 |
+|---|---|---|
+| ⑭ | 机械档精简组合（`subagent_lite`：机械 persona ~60 token + 只读 4 工具 + 8K 帽；每步固定开销 34.3k → ~5.9k，↓83%） | agent.cordis.yml `tool-subagent-lite` 行 |
+| ⑮ | lite 首选路由（zai/glm-4.7）首次请求自动探测，不可用回退环境默认路由（跨环境分发不挂） | `plugins/kix-cost.js` |
+| ⑯ | 思考强度归一化：`subagent_thinker`（≥98K 帽）→ max；其余 deepseek 子代理 → high（适配器默认 high/256K，64K 帽是跑飞防线） | `plugins/kix-cost.js`（agent/request waterfall） |
+| ⑰ | per-role 预算帽：subagent/zhipu/fork 64K、thinker 128K、lite 8K | 各工具行 `agentOptions.maxTokens` |
+| ⑱ | 禁轮询空转 / 观察者门控（1→分歧+1，并发≤3）/ [EFFORT]+[BUDGET] 标注 / outputSchema 回流 / 跨会话结论复用 / 同会话去重 | persona「成本纪律」节（agent.cordis.yml） |
+| ⑲ | 等待步骤零思考：job_output/list_agents 等待是检查点不是思考点；后台任务运行期间做其他独立工作（实测：单次 job_output 等待烧 12,998 思考） | persona「成本纪律」节（agent.cordis.yml） |
+| ⑳ | review 流程阶段 2 取证分工：orchestrator 判断 + `subagent_lite` 并行机械取证（只读/检索/核对/枚举走 lite，禁止 orchestrator 逐文件通读 diff） | `prompts/kixpower-review.prompt.md` 阶段 2 |

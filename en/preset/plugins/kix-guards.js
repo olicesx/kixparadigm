@@ -337,10 +337,28 @@ module.exports = {
     }
 
     // ── MCP GitHub 远程写保护（ps1 检查 5）────────────────────────────────
-    // write 类：必须显式提供非 main/master 的 branch；mutation 类：ask 确认
+    // 只读工具（get_/list_/search_*）直接放行；write 类（写文件/推分支）必须
+    // 显式提供非 main/master 的 branch；mutation 类：ask 确认。
+    // v4（2026-08-15）：按工具名精确匹配，废除"包含子串"式正则——旧实现
+    // `.*request_` 把 get_pull_request_files/comments/reviews/status 等只读
+    // 工具误判为 mutation（日志实测：PR 审查会话中 get_pull_request_files 被
+    // ASK，agent 被迫全程绕道 gh CLI，只读调用被拒会打断审查流程）。
+    const GITHUB_READ = /^mcp__github__(get|list|search)_/
     const GITHUB_WRITE = /^mcp__github__(create_or_update_file|delete_file|push_files)$/
-    const GITHUB_MUTATION = /^mcp__github__.*(?:_write|create_|update_|delete_|merge_|add_|assign_|fork_|push_files|request_|submit_|resolve_|unresolve_)/
+    const GITHUB_MUTATION = new Set([
+      'mcp__github__create_issue',
+      'mcp__github__create_pull_request',
+      'mcp__github__create_pull_request_review',
+      'mcp__github__create_repository',
+      'mcp__github__create_branch',
+      'mcp__github__update_issue',
+      'mcp__github__update_pull_request_branch',
+      'mcp__github__add_issue_comment',
+      'mcp__github__merge_pull_request',
+      'mcp__github__fork_repository',
+    ])
     function checkGitHubWrite(name, args) {
+      if (GITHUB_READ.test(name)) return undefined
       if (GITHUB_WRITE.test(name)) {
         const branch = args && (args.branch || args.target_branch || args.ref)
         if (!branch) {
@@ -351,7 +369,7 @@ module.exports = {
         }
         return undefined
       }
-      if (GITHUB_MUTATION.test(name)) {
+      if (GITHUB_MUTATION.has(name)) {
         return ASK('BLAST RADIUS: 该 GitHub 操作会写入共享系统。确认目标、内容与分支后再继续。')
       }
       return undefined

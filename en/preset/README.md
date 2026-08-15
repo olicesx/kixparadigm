@@ -31,6 +31,7 @@ After install: `kixparadigm-en doctor` self-checks, `kixparadigm-en uninstall` r
 ## Verify
 
 ```bash
-node plugins/kix-guards.test.js      # 128 assertions
+node plugins/kix-guards.test.js      # 142 assertions
 node plugins/kix-commands.test.js    # 6 assertion groups
+node plugins/kix-cost.test.js        # 24 assertions
 ```

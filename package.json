@@ -1,6 +1,6 @@
 {
   "name": "kixparadigm",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "kixparadigm — AI 自编排最小范式（认知层常驻）+ kixpower 多智能体编排 + DSH 一键导入（preset + vision-bridge + 门禁插件）",
   "license": "MIT",
   "author": "kix (olicesx)",
@@ -37,7 +37,7 @@
   ],
   "scripts": {
     "postinstall": "node scripts/install-lib.js --quiet",
-    "test": "node dsh/preset/plugins/kix-guards.test.js && node dsh/preset/plugins/kix-commands.test.js",
+    "test": "node dsh/preset/plugins/kix-guards.test.js && node dsh/preset/plugins/kix-commands.test.js && node dsh/preset/plugins/kix-cost.test.js",
     "verify:vision": "node scripts/verify-vision-bridge-resolution.cjs",
     "verify:guards": "node scripts/verify-guards.js"
   },

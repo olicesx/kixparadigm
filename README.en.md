@@ -98,7 +98,8 @@ kix is layered in two, and this repository ships both layers plus the ecosystem 
 | **Cognition layer (how to think)** | `kixparadigm` | Resident cognition paradigm: Three-Channel Cross-Validation, Phase Duality, Rules Are Liabilities, Triple Requirement Check (no sycophancy), Pre-Code Decision Chain, AI Blind-Spot Map. Active in every session |
 | **Execution layer (how to execute)** | `kixpower` | Multi-agent orchestration: Producer plans → Dev implements → QA verifies; sprints, DAG topology, 4-level loop, verifiable gates |
 | **Ecosystem skills** | `handoff` / `write-a-skill` / `improve-codebase-architecture` and 17 more | Session handoff, skill authoring, architecture improvement, TDD/teaching/diagnosis methodology |
-| **Mechanical guards** | `kix-guards` plugin | Commit budget, feature branch, force push, dangerous SQL, control-plane file protection, human confirmation points (128 assertions) |
+| **Mechanical guards** | `kix-guards` plugin | Commit budget, feature branch, force push, dangerous SQL, control-plane file protection, human confirmation points (142 assertions; v4 fixes GitHub read-only tool false positives) |
+| **Cost discipline** | `kix-cost` plugin | Subagent reasoning-effort normalization (thinker→max, other deepseek→high) + lite-tier preferred-route probing with automatic fallback (24 assertions, v5.8) |
 | **Native commands** | `kix-commands` plugin | `/kixpower-*` five commands registered as DSH native commands (zero-token trigger, inject flows from `prompts/`) |
 | **Vision compensation** | `dsh-vision-bridge` plugin | When the main model has no vision, pasted/dropped images are auto-converted to text descriptions before submit (GLM-4.6V, server HTTP + client dock) |
 
@@ -148,7 +149,7 @@ kixparadigm/
 ## 🧪 Development & verification
 
 ```bash
-npm test                                  # guards 128 assertions + commands 6 assertions
+npm test                                  # guards 142 assertions + commands 6 assertion groups + cost 24 assertions
 node scripts/verify-guards.js             # compare installed preset vs bundle guards
 node scripts/verify-vision-bridge-resolution.cjs  # vision-bridge load-chain full path
 pwsh -File .\scripts\sync-dsh-preset.ps1 -DryRun   # preview preset diffs
