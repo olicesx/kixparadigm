@@ -14,6 +14,9 @@ tools/log-audit/*.json
 .env.*
 !.env.example
 
+# npm 认证（token 只留在用户级 ~/.npmrc，绝不入库）
+.npmrc
+
 # 系统杂项
 .DS_Store
 Thumbs.db
