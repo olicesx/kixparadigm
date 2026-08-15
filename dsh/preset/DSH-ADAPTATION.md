@@ -125,8 +125,8 @@ kix 的原始编排假设只有 runSubagent；DSH 提供更结构化的原生能
 **技能（17 个，preset `skills/`）**：kixparadigm / kixpower / handoff / write-a-skill / improve-codebase-architecture（原 5 个）+ **新增 12 个通用方法论**：tdd / teach / grill-me / grill-with-docs / diagnose / prototype / triage / to-issues / to-prd / zoom-out / migrate-to-shoehorn / caveman。
 **不迁移**（领域/项目专属，遵循"规则是负债"）：rpgmaker-mv-debug-menu / unity-bepinex-debug-menu / unity-il2cpp-debug-menu / scaffold-exercises / setup-matt-pocock-skills / setup-pre-commit / git-guardrails（Copilot hooks 设定，已被 kix-guards 替代）。
 
-**记忆（6 个，preset `memories/`）**：原 3 个 + **新增 2 个通用**：kix-review-patterns.md（审查方法论，私有项目 H PR#38 实证）、tech-patterns.md（Windows/Unity/开发工具模式）+ **dsh-capability-map.md**（DSH 机制事实地图，kix×DSH 任务先查；2026-08-22 补入 preset）。
-**不迁移**（领域专属）：machine-config / 内部记忆 A / 内部记忆 B / 内部记忆 C / tts-tools。
+**记忆（6 个，preset `memories/`）**：原 3 个 + **新增 2 个通用**：kix-review-patterns.md（审查方法论，私有项目 PR 实证）、tech-patterns.md（Windows/Unity/开发工具模式）+ **dsh-capability-map.md**（DSH 机制事实地图，kix×DSH 任务先查；2026-08-22 补入 preset）。
+**不迁移**（领域专属，内部系统与运维记忆 5 个：机器配置 / 内部业务公式 / 数据库链路模式等，名字从略）。
 
 ## 7. 已知限制（诚实声明）
 
