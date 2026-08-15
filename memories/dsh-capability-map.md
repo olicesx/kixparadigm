@@ -129,3 +129,10 @@
   tick 检测 stalled 集合**新增**时经 enable 缓存 agent 的 `agent.steer` 注入一条 user 消息（去抖）；
   会话级 opt-in（重启需重新 enable）。E2E 证据：GUI 敲三命令全部成功、frontmatter 落盘验证、
   判定正确（123h 判停滞 / 1h 正常 / done 不误报）。
+- **token 预算对照（2026-08-15）**：命令通道绝对零 token（command/run+done 为 log-only，
+  契约明文 never model surface，结果只在 UI 渲染）；工具通道紧凑（3 sprint ≈ 0.2K tokens，
+  最坏 100 sprint ≈ 2-3K，DSH toolResultPruner 对超限输出自动裁剪兜底）；曾有的定时提醒
+  （steer 注入触发模型轮次）是唯一常驻成本点，已随减法移除——恢复定时形态时必须重估此维度。
+- **融入 workflow**：`skills/kixpower/templates/kixpower-workflow.template.md`「Preflight：stalled
+  门禁」节——机械检测走 /kixst-check（零 token），恢复决策走用户 /kixpower-continue；
+  Producer prompt 加模型侧双保险（脚本层无法机械检测，workflow 无 fs/命令能力）。
