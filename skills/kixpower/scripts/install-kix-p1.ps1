@@ -12,7 +12,7 @@
 #   1. 复制 plugins/kix-commands.js → ~/.dsh/.agent-presets/kixparadigm/plugins/
 #   2. 在 agent.cordis.yml 追加挂载行（已存在则跳过）
 #   3. 同步源仓库 plugins/kix-guards.js + kix-guards.test.js（v2 接线补全，
-#      2026-08-21 起纳入源仓库；agent.cordis.yml 的 kix-guards 挂载行 preset 自带）
+#      2026-08-15 起纳入源仓库；agent.cordis.yml 的 kix-guards 挂载行 preset 自带）
 #   4. 打印验证指引
 
 $ErrorActionPreference = 'Stop'
@@ -60,7 +60,7 @@ if ($content -match '(?m)^\s*- id: kix-commands\s*$') {
   Write-Host '==> [2/3] agent.cordis.yml 已追加 kix-commands 挂载行'
 }
 
-# 3. 同步 kix-guards（v2，2026-08-21 起源仓库 plugins/ 为准；幂等）
+# 3. 同步 kix-guards（v2，2026-08-15 起源仓库 plugins/ 为准；幂等）
 $SrcGuards = Join-Path $RepoRoot 'plugins\kix-guards.js'
 $SrcGuardsTest = Join-Path $RepoRoot 'plugins\kix-guards.test.js'
 if (Test-Path $SrcGuards) {

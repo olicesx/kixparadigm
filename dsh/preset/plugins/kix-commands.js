@@ -85,7 +85,7 @@ function loadPrompt(file, rawInput) {
     const input = (rawInput || '').trim()
     // 有参数 → 替换占位符；空参数 → 清空占位符（不留字面量给模型）。
     // 用函数替换器：rawInput 含 $&/$1 等时避免 replace 的替换串特殊解释
-    // （GLM 独立审查 minor①，2026-08-21 修复）。
+    // （GLM 独立审查 minor①，2026-08-15 修复）。
     text = text.replace(/\{\{\s*input\s*\}\}/g, () => input)
     return text
   } catch {

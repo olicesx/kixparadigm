@@ -18,7 +18,7 @@ kix-bundle/
     └── preset/              ← → ~/.dsh/.agent-presets/kixparadigm/ 的镜像（唯一事实源）
 ```
 
-## 唯一事实源声明（2026-08-22 归一）
+## 唯一事实源声明（2026-08-15 归一）
 
 - **`dsh/preset/` 是 DSH preset 的唯一事实源**。`~/.dsh/.agent-presets/kixparadigm/`
   只是它的安装副本；两处内容由 `scripts/sync-dsh-preset.ps1` 单向同步。
@@ -66,14 +66,15 @@ pwsh -File .\scripts\sync-dsh-preset.ps1 -Force
 - `prompts/`（5 个）— /kixpower-* 流程（kix-commands 插件注入用）
 - `instructions/` — 核心指令原件（persona 已内置同源内容）
 - `memories/`（6 个）— 方法论记忆，含 dsh-capability-map.md（kix×DSH 任务先查）
-- `plugins/` — kix-guards.js（机械门禁监听器）+ kix-commands.js（原生命令注册）+ 测试
+- `plugins/` — kix-guards.js（机械门禁监听器）+ kix-cost.js（成本纪律）+ kix-route.js（跨厂商路由）+ kix-commands.js（原生命令注册）+ kix-stalled.js（opt-in）+ 测试
 
 ## 验证
 
 ```powershell
-node .\dsh\preset\plugins\kix-guards.test.js      # 机械门禁 142 组断言
+node .\dsh\preset\plugins\kix-guards.test.js      # 机械门禁 164 组断言
 node .\dsh\preset\plugins\kix-commands.test.js    # 命令注册 6 组断言
 node .\dsh\preset\plugins\kix-cost.test.js        # 成本纪律 24 组断言
+node .\dsh\preset\plugins\kix-route.test.js       # 跨厂商路由 57 组断言
 ```
 
 preset 挂载校验（roster `standingKeyFor`）在 DSH 会话内用 cordis 工具集执行。

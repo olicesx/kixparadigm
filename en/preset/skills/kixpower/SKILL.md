@@ -67,7 +67,7 @@ description: "Kixpower — AI 多智能体协作编排（v5.7）。采用 DAG �
 | ⑫ | review-of-review 子 agent（独立 grader，利用多 agent 注意力独立性） | 独立推理（赋能） | [review.prompt.md](../../prompts/kixpower-review.prompt.md) §阶段2.5 |
 | ⑬ | claim_evidence_failure trace（L4 闭环度量） | 观测（赋能） | [kixpower-orchestrator.agent.md](../../agents/kixpower-orchestrator.agent.md) §Observe trace schema + §L4 模式识别 |
 
-## v5.8 成本纪律（2026-08-21 日志实测驱动）
+## v5.8 成本纪律（2026-08-15 日志实测驱动）
 
 > 常驻规则在 `agent.cordis.yml` persona「成本纪律」节（两 edition 均有）；本表是路由索引。
 > 机制落地：`plugins/kix-cost.js`（lite 自动选型 + 思考强度归一化）+ 四档子代理工具行 + per-role 预算帽。

@@ -1,11 +1,11 @@
-# KIX Token 优化 —— 落地实施记录（2026-08-21，v5：en 版 preset 同步）
+# KIX Token 优化 —— 落地实施记录（2026-08-15，v5：en 版 preset 同步）
 
 > 决策人：AI agent（本会话），依据 `kix-task-log-analysis.md` 的实测日志分析。
 > 状态：**已全部落地 + 已挂载校验 + 单元测试全绿 + 关键路径已实测**。行为性改动在「新会话」生效（预设组合在会话创建时加载）。
 
 ---
 
-## 〇、v5：en（kixparadigm-en）同步（2026-08-21 第五轮）
+## 〇、v5：en（kixparadigm-en）同步（2026-08-15 第五轮）
 
 `en/` 是完整英文 preset（`kixparadigm-en`，已安装），v5.8 成本纪律机制全部同步：
 
@@ -22,7 +22,7 @@ zh 侧同步：`skills/kixpower/SKILL.md` 四个副本（root / dsh/preset / en/
 
 ---
 
-## 〇、v4：默认档 medium → high（2026-08-21 第四轮，用户裁决）
+## 〇、v4：默认档 medium → high（2026-08-15 第四轮，用户裁决）
 
 用户裁决：**默认档应该是 high**。已全链路对齐：
 
@@ -33,7 +33,7 @@ zh 侧同步：`skills/kixpower/SKILL.md` 四个副本（root / dsh/preset / en/
 | `plugins/kix-cost.test.js` | 期望值更新 + 新增 7b 分支（回退且环境默认无 effort → 注入 high），**24/24 通过** |
 | `agent.cordis.yml` | persona 机制事实 / 角色分档 / lite 行注释 / kix-cost 行注释全部同步 high |
 
-**最终档位矩阵**：lite（glm-4.7 精简机械，思考 ≈0）→ subagent（deepseek **high**，64K 帽）→ subagent_thinker（deepseek **max**，128K 帽）→ subagent_zhipu（glm-5.3 跨厂商，适配器自管）。
+**最终档位矩阵**：lite（glm-4.7 精简机械，思考 ≈0）→ subagent（deepseek **high**，64K 帽）→ subagent_thinker（deepseek **max**，128K 帽）→ subagent_cross（kix-route 自动取反厂商，64K 帽；v5.9 起替代原 subagent_zhipu 钉值行）。
 
 **收益语义调整**：思考侧节省从「high→medium」变为「预算帽 64K vs 适配器 256K 的跑飞截断 + lite 机械档零思考」；每步固定开销 ↓83% 与轮询/重复/重试规则不变。
 
@@ -41,7 +41,7 @@ zh 侧同步：`skills/kixpower/SKILL.md` 四个副本（root / dsh/preset / en/
 
 ---
 
-## 〇、v3：机械档自动选型（2026-08-21 第三轮，回应「大家的环境不一样」）
+## 〇、v3：机械档自动选型（2026-08-15 第三轮，回应「大家的环境不一样」）
 
 ### 问题
 `subagent_lite` 若硬编码 `zai-coding-cn/glm-4.7`，preset 分发到其他部署（无 zai provider / 无该模型 / 不同 API key）会直接失效。DSH 机制约束：子代理路由必须是精确 (provider, model) 对，没有「auto」路由。
@@ -122,7 +122,7 @@ zh 侧同步：`skills/kixpower/SKILL.md` 四个副本（root / dsh/preset / en/
 ## 五、新会话验证流程（1 分钟）
 
 新开一个会话后：
-1. **工具列表**应出现 `subagent_lite` / `subagent_thinker`（还有 `subagent` / `subagent_zhipu` / `subagent_fork` / `subagent_vision`）。
+1. **工具列表**应出现 `subagent` / `subagent_lite` / `subagent_thinker` / `subagent_cross` / `subagent_vision` / `subagent_fork`（v5.9 起无 `subagent_zhipu` 行，跨厂商由 `subagent_cross` 哨兵路由承担）。
 2. spawn 一个普通子代理做小任务，查其会话日志 `request/header`：
    - 普通行 → `reasoningEffort: medium`（不再是适配器默认 high）；
    - `subagent_thinker` → `reasoningEffort: max`；
@@ -130,7 +130,7 @@ zh 侧同步：`skills/kixpower/SKILL.md` 四个副本（root / dsh/preset / en/
    - 无 zai 环境：lite 子代理首请求后 `request/header` 路由为默认 provider/model（回退生效）。
 3. 主会话自身 effort 仍为会话创建时的 settings 值（新会话 = medium；重活可临时在 UI 模型选择器调高）。
 
-## 六、自检记录（2026-08-21，实地测试前最后一道门）
+## 六、自检记录（2026-08-15，实地测试前最后一道门）
 
 | # | 检查项 | 结果 |
 |---|---|---|

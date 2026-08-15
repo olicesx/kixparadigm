@@ -1,4 +1,4 @@
-// kix-route — subagent routing layer: sentinel model name -> live available route (2026-08-21)
+// kix-route — subagent routing layer: sentinel model name -> live available route (2026-08-15)
 //
 // Problem solved: pinning exact (provider, model) pairs in tool rows conflicts
 //   with "configure by whatever models are actually available".

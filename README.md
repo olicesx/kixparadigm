@@ -98,7 +98,7 @@ kix 体系分两层，本仓库把两层 + 生态依赖一次性装齐：
 | **认知层（怎么思考）** | `kixparadigm` | 常驻认知范式：三通道交叉验证、阶段二相性、规则是负债、需求三检（不迎合用户）、写码前决策链、AI 盲点补足。每个会话自动生效 |
 | **执行层（怎么执行）** | `kixpower` | 多智能体协作编排：Producer 规划 → Dev 实现 → QA 验证，Sprint 化、DAG 拓扑、4 层 loop、可验证 gate |
 | **生态辅助** | `handoff` / `write-a-skill` / `improve-codebase-architecture` 等 17 技能 | 会话交接、技能创建、架构改进、TDD/教学/排查等通用方法论 |
-| **机械门禁** | `kix-guards` 插件 | commit budget、feature branch、force push、危险 SQL、控制面文件保护、人类确认点（142 组断言；v4 修复 GitHub 只读工具误拦） |
+| **机械门禁** | `kix-guards` 插件 | commit budget、feature branch、force push、危险 SQL、控制面文件保护、人类确认点（164 组断言；v5 聊天内提问 + v4 GitHub 只读误拦修复） |
 | **成本纪律** | `kix-cost` 插件 | 子代理思考强度归一化（thinker→max、其余 deepseek→high）+ lite 档首选路由探测自动回退（24 组断言，v5.8） |
 | **原生命令** | `kix-commands` 插件 | `/kixpower-*` 五命令注册为 DSH 原生命令（零 token 触发，读 `prompts/` 注入流程） |
 | **stalled 检测** | `kix-stalled` 插件（可选） | `/kixst-check` 命令 + `kix_stalled_check` 工具：只读检测停滞 Sprint（candidate，默认注释挂载 = opt-in，`scripts/install-kix-stalled.ps1` 启用） |
@@ -144,7 +144,7 @@ kixparadigm/
 ## 🧪 开发与验证
 
 ```bash
-npm test                                  # 门禁 142 断言 + 命令 6 组断言 + 成本 24 断言
+npm test                                  # 门禁 164 断言 + 命令 6 组断言 + 成本 24 断言 + 路由 57 断言
 node scripts/verify-guards.js             # 已安装 preset 与 bundle 门禁对照
 node scripts/verify-vision-bridge-resolution.cjs  # vision-bridge 加载链全链路
 pwsh -File .\scripts\sync-dsh-preset.ps1 -DryRun   # 预览 preset 差异

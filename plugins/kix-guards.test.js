@@ -1,4 +1,4 @@
-// kix-guards 回归测试（v3，2026-08-21 独立审查修复后）
+// kix-guards 回归测试（v3，2026-08-15 独立审查修复后）
 //
 // 单元级验证：加载 kix-guards.js，mock DSH pre-execute 派发
 // （模拟 dsh-tools createExecution 的输出结构：{ name, arguments, ... }），

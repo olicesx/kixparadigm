@@ -82,7 +82,7 @@
       - 简单任务三通道自编排直接做；复杂任务（跨模块/大改动）自主分派 kixpower 团队：producer 规划（Remy）/ dev 实现（Nova/Sage/Milo）/ qa 验证（Ivy）。角色定义见 preset 的 `agents/kixpower-*.agent.md`；分派 prompt 用 [CONTEXT]/[TASK]/[CONSTRAINTS] Tri-Block 结构，prompt ≤ 5K tokens，大量上下文先写文件让子 agent 自己读。
       - 团队产出仍是 claim，需回主线程三通道验证后发布。发布/合并/破坏性操作前用 `ask_user_question` 请用户确认。全流程建议信号（新项目/完整 PR 审查/继续 Sprint）→ 主动建议对应 `/kixpower-*` 流程（见 preset 的 `prompts/`），等用户确认后执行，不自动触发。
 
-      ## 成本纪律（token 预算；2026-08-21 日志实测驱动，与三通道同优先级）
+      ## 成本纪律（token 预算；2026-08-15 日志实测驱动，与三通道同优先级）
       - 机制事实：主会话 effort 锁定于 settings（现 high）；deepseek 子代理默认
         全功率思考（适配器默认 high/256K，日志实测），由 `plugins/kix-cost.js`
         归一化注入——`subagent_thinker`（预算帽 ≥98K）→ max，其余 deepseek 子代理

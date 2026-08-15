@@ -66,9 +66,9 @@ subagent（run_in_background 按需）:
   | `subagent_vision` | `kix-route:vision` 哨兵 → 运行时自动路由到首个声明 image 输入的模型（zai-vision 偏好） | **识图补充**（主模型无视觉；图片路径 + 问题 → child 调 read_image 看图；无 image 模型时启动报错） |
   - 机制：`agentOptions.provider/model` 在 `resolveChildAgentOptions` 中覆盖父模型路由（已实证）；工具行级配置，模型按需选工具即实现"主模型自主选择子 agent 模型"。**「自动选择」的落点（v5.9 起 kix-route 自动路由）**：cross/vision/thinker 工具行只钉 `kix-route:<tier>` 哨兵模型名，`plugins/kix-route.js` 在子代理首次请求的 agent/request waterfall 里按 llm 实时目录解析——cross = 父厂商取反、vision = 首个声明 image 输入的模型、thinker = deepseek 系首选。**边界语义（v5.9.1，角色核心能力缺失报错 / 角色仍成立降级）**：cross 在单厂商部署（无任何异厂商 provider）、vision 在全目录无 image 模型时**启动即报错**——错误信息附已注册清单与改用建议（subagent 同厂商复核 + 注明局限 / 配置对应 provider），随 run 失败带回父模型，绝不静默同厂商降级（假独立性比失败更糟）；thinker 无 deepseek 时降级环境默认路由（大预算深思考角色仍成立）+ 一次性告警；解析失败不缓存（中途注册的 provider 下一请求生效）；插件缺失时哨兵直达适配器响亮失败（UNKNOWN_MODEL）。此前「必须钉精确对」是声明层约束（agentOptions 自定义键会被 zod 剥离），waterfall 层可整体改写（kix-cost lite 回退同机制已实证）。候选池 = settings.yaml `llm-pi-ai:` 清单 + pi-ai 内置目录；模型线升级只改 settings
   - 模型路由：`settings.yaml` 的 `llm-pi-ai:` 段配置多 provider profile（pi-ai 适配器内置 `zai-coding-cn`（智谱 GLM-5.3/5.2/5.1/5-turbo，1M 窗口）、`deepseek`、`kimi-coding`、`moonshotai`、`qwen-token-plan` 等目录路由；OpenAI 兼容网关可整体自声明）
-  - 已激活 provider：`deepseek-official` + `zai-coding-cn` + `zai-vision`（自定义 profile：`api/coding/paas/v4` 订阅端点，models 列表声明 `glm-4.6v`/`glm-4.6v-flash`/`glm-4.5v`，均声明 image 输入）；`glm-5.3` 可解析（2026-08-15 起 profile 声明，1M 窗口；pi-ai 内置目录尚无该模型，reasoning 档位未声明则按非推理处理，需要档位时在 settings 该条目加 `reasoningEfforts`）、`glm-5.2` 可解析（reasoning: off/low/medium/high/max）；`glm-4.6v` 订阅内实测可用（2026-08-17 识图通过），`glm-5v-turbo` 当前订阅未开放（429 code 1311）
+  - 已激活 provider：`deepseek-official` + `zai-coding-cn` + `zai-vision`（自定义 profile：`api/coding/paas/v4` 订阅端点，models 列表声明 `glm-4.6v`/`glm-4.6v-flash`/`glm-4.5v`，均声明 image 输入）；`glm-5.3` 可解析（2026-08-15 起 profile 声明，1M 窗口；pi-ai 内置目录尚无该模型，reasoning 档位未声明则按非推理处理，需要档位时在 settings 该条目加 `reasoningEfforts`）、`glm-5.2` 可解析（reasoning: off/low/medium/high/max）；`glm-4.6v` 订阅内实测可用（2026-08-15 识图通过），`glm-5v-turbo` 当前订阅未开放（429 code 1311）
   - 再加其他厂商：`settings.yaml` `llm-pi-ai.providers` 追加 profile + 在 preset 加对应 subagent 工具行即可
-  - **UI 发图无缝层（profile 插件 dsh-vision-bridge，2026-08-17 启用，不属于 preset）**：
+  - **UI 发图无缝层（profile 插件 dsh-vision-bridge，2026-08-15 启用，不属于 preset）**：
     `~/.dsh/profiles/web/cordis.patch.yml` insert；源码 `~/.dsh/profiles/web/plugins/dsh-vision-bridge/`
     （**2026-08 加固后 junction 直指该源码，整链收进 DSH_HOME，不再依赖 npm 全局目录**；
     全局副本 `%APPDATA%\npm\node_modules\dsh-vision-bridge\` 降级为冗余备份）。
@@ -125,14 +125,14 @@ kix 的原始编排假设只有 runSubagent；DSH 提供更结构化的原生能
 **技能（17 个，preset `skills/`）**：kixparadigm / kixpower / handoff / write-a-skill / improve-codebase-architecture（原 5 个）+ **新增 12 个通用方法论**：tdd / teach / grill-me / grill-with-docs / diagnose / prototype / triage / to-issues / to-prd / zoom-out / migrate-to-shoehorn / caveman。
 **不迁移**（领域/项目专属，遵循"规则是负债"）：rpgmaker-mv-debug-menu / unity-bepinex-debug-menu / unity-il2cpp-debug-menu / scaffold-exercises / setup-matt-pocock-skills / setup-pre-commit / git-guardrails（Copilot hooks 设定，已被 kix-guards 替代）。
 
-**记忆（6 个，preset `memories/`）**：原 3 个 + **新增 2 个通用**：kix-review-patterns.md（审查方法论，私有项目 PR 实证）、tech-patterns.md（Windows/Unity/开发工具模式）+ **dsh-capability-map.md**（DSH 机制事实地图，kix×DSH 任务先查；2026-08-22 补入 preset）。
+**记忆（6 个，preset `memories/`）**：原 3 个 + **新增 2 个通用**：kix-review-patterns.md（审查方法论，私有项目 PR 实证）、tech-patterns.md（Windows/Unity/开发工具模式）+ **dsh-capability-map.md**（DSH 机制事实地图，kix×DSH 任务先查；2026-08-15 补入 preset）。
 **不迁移**（领域专属，内部系统与运维记忆 5 个：机器配置 / 内部业务公式 / 数据库链路模式等，名字从略）。
 
 ## 7. 已知限制（诚实声明）
 
 1. ~~跨厂商模型不可用~~ → **已启用**：`subagent_cross` 工具行（zai-coding-cn/GLM-5.3）已注册，主模型自主选择；新增厂商 = settings 加 profile + preset 加工具行（见 §3）
-2. **hooks/*.ps1 不自动触发**——但 DSH 有完整等价机制，且 **preset 已内置 `plugins/kix-guards.js`（v5，2026-08-22 ask 级门禁改聊天内提问）**（`tools/pre-execute` 监听器，blast-radius 核心门禁的 JS 移植）：破坏性 SQL（含 UPDATE without WHERE）/ 终端数据库客户端保守拦截 / git 写保护（force push 完整检测 -f/+refs/--mirror，修复 v1 静默失效）/ main 分支保护（commit/push）+ commit 时真实分支检查 / **commit budget**（reflog 计数，hard cap 10 / progress.md 预算 / 冷启动 3）/ **MCP GitHub 远程写保护**（main/master deny、无 branch deny、mutation ask；v4 起只读 get_/list_/search_ 工具直接放行，mutation 按工具名精确匹配）/ **人类确认点 ask**（reset --hard/clean -f/branch -D/stash drop/checkout --/restore/普通 push/GitHub mutation → **聊天内提问** `ctx.userQuestions.ask()`，即 ask_user_question 底层服务；不再走 approval 弹窗——审批策略 danger-full-access 为 never 全自动，用户直接在聊天里回答「允许执行/拒绝」；无 userQuestions 服务/无 agent/子代理提问抛错 → fail-safe deny）/ 控制平面保护 / 未知执行工具拦截 / run_code 代码体检查，单元回归 **164 组断言通过**（v5：ask 门禁按「允许→allow / 拒绝→deny」双向 + 3 条降级路径验证）。sandbox 栈仍是常驻机械层
-3. **slash command（/kixpower-*）已注册为 DSH 原生命令**（P1-8，2026-08-21）：`plugins/kix-commands.js` 注册 5 命令（kixpower-new/import/continue/review/kixpower），敲 `/` 见候选、触发后 handler 读 `prompts/*.prompt.md` 剥离 frontmatter 注入 user 消息（与 /plan 同语义，零 token）。「无 UI 注册」过期文案已于 2026-08-22 全量修复（persona §DSH 适配、kixpower/SKILL.md 适配注记），不再残留
+2. **hooks/*.ps1 不自动触发**——但 DSH 有完整等价机制，且 **preset 已内置 `plugins/kix-guards.js`（v5，2026-08-15 ask 级门禁改聊天内提问）**（`tools/pre-execute` 监听器，blast-radius 核心门禁的 JS 移植）：破坏性 SQL（含 UPDATE without WHERE）/ 终端数据库客户端保守拦截 / git 写保护（force push 完整检测 -f/+refs/--mirror，修复 v1 静默失效）/ main 分支保护（commit/push）+ commit 时真实分支检查 / **commit budget**（reflog 计数，hard cap 10 / progress.md 预算 / 冷启动 3）/ **MCP GitHub 远程写保护**（main/master deny、无 branch deny、mutation ask；v4 起只读 get_/list_/search_ 工具直接放行，mutation 按工具名精确匹配）/ **人类确认点 ask**（reset --hard/clean -f/branch -D/stash drop/checkout --/restore/普通 push/GitHub mutation → **聊天内提问** `ctx.userQuestions.ask()`，即 ask_user_question 底层服务；不再走 approval 弹窗——审批策略 danger-full-access 为 never 全自动，用户直接在聊天里回答「允许执行/拒绝」；无 userQuestions 服务/无 agent/子代理提问抛错 → fail-safe deny）/ 控制平面保护 / 未知执行工具拦截 / run_code 代码体检查，单元回归 **164 组断言通过**（v5：ask 门禁按「允许→allow / 拒绝→deny」双向 + 3 条降级路径验证）。sandbox 栈仍是常驻机械层
+3. **slash command（/kixpower-*）已注册为 DSH 原生命令**（P1-8，2026-08-15）：`plugins/kix-commands.js` 注册 5 命令（kixpower-new/import/continue/review/kixpower），敲 `/` 见候选、触发后 handler 读 `prompts/*.prompt.md` 剥离 frontmatter 注入 user 消息（与 /plan 同语义，零 token）。「无 UI 注册」过期文案已于 2026-08-15 全量修复（persona §DSH 适配、kixpower/SKILL.md 适配注记），不再残留
 4. **CodeGraphy / GitHub MCP 无对应**——降级 grep/read + gh CLI
 5. **memory 不自动注入**——按需读取
 
@@ -179,7 +179,7 @@ Code Mode SDK（`run_code` + 生成式 `tools.*` TypeScript 绑定）并存，�
   （deny `import(node:)`/`child_process`/`fetch(`/`WebSocket(`/`process.`）：
   run_code 是通用 Node 运行时（实测 fetch/process/动态 import 可用），
   `tools.*` 是自愿通道，代码体可零痕迹绕过子分派门禁，内容检查闭合此洞。
-  回归测试：`plugins/kix-guards.test.js`（17 用例，node 直接运行）。
+  回归测试：`plugins/kix-guards.test.js`（164 组断言，node 直接运行）。
 - **已知限制（2026-08-15 声明）**：① kix-guards 按 agent scope 挂载，**不覆盖
   子代理会话**（三通道观察者/团队子代理无此机械层，sandbox 是其唯一边界）；
   ② 程序内子分派命中 approval `ask` 的语义未定义（fail-safe 建议：视为结构化
@@ -191,7 +191,7 @@ Code Mode SDK（`run_code` + 生成式 `tools.*` TypeScript 绑定）并存，�
   已运行会话保持开始时的呈现。验证方法：新建会话，工具目录出现 `run_code` 且
   直接调用 read/edit 等仍可执行（both 语义），即挂载成功。
 
-## 10. 还债测试记录（2026-08-22，规则是负债）
+## 10. 还债测试记录（2026-08-15，规则是负债）
 
 **触发**：kix 范式 × DSH 插件思想融合度审计（自检）发现 persona「DSH 适配」节携带
 大量机制细节，违反范式自身「常驻层只放认知、机制细节按需」的分层。

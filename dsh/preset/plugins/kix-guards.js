@@ -1,12 +1,12 @@
-// kix-guards — kixparadigm 机械门禁的 DSH 原生实现（v5，2026-08-22）
+// kix-guards — kixparadigm 机械门禁的 DSH 原生实现（v5，2026-08-15）
 //
 // 移植自 kixpower 的 blast-radius-check.ps1 / block-source-edit.ps1 核心门禁，
 // 以 DSH `tools/pre-execute` 监听器形态自动拦截（等价 Copilot PreToolUse hook）。
 //
-// v2（2026-08-21）：补全 blast-radius 未接线门禁 —— commit budget、真实分支检查、
+// v2（2026-08-15）：补全 blast-radius 未接线门禁 —— commit budget、真实分支检查、
 // force push 完整检测、MCP GitHub 远程写保护、终端数据库客户端保守拦截、
 // UPDATE without WHERE、人类确认点 ask。
-// v3（2026-08-21，独立审查 2fed9f16 驱动）：
+// v3（2026-08-15，独立审查 2fed9f16 驱动）：
 //   - 修复漏拦：git 子命令改「解析式」检测（gitSubcommands），`git -C x push --force`、
 //     `git -c k=v push`、`git.exe push`、`git -C x reset --hard` 不再绕过整个 git 门禁；
 //     push 目标参数检测补 refs/heads/main 形态
@@ -23,7 +23,7 @@
 //   - 保留（按 kix 0% 误报纪律 + 规则是负债）：角色边界门禁不接（exec.agent 无角色
 //     标记）、预算一致性软警告不接（建议类不进机械层）、SQL 文件引用检查不接
 //     （psql -f 场景，文本纪律覆盖，见 capability map §3）
-// v5（2026-08-22，用户决策）：ask 级门禁从 approval 服务弹窗改为**聊天内提问**
+// v5（2026-08-15，用户决策）：ask 级门禁从 approval 服务弹窗改为**聊天内提问**
 //   （ctx.userQuestions.ask —— 即 ask_user_question 的底层服务）。审批策略
 //   danger-full-access 已恢复 approval: never（全自动、零审批弹窗）；需人类确认
 //   的门禁（普通 git push / 本地破坏性 Git 操作 / GitHub 写）在聊天里问

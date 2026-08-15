@@ -1,4 +1,4 @@
-// kix-cost 回归测试（v5.8，2026-08-21）
+// kix-cost 回归测试（v5.8，2026-08-15）
 //
 // 单元级验证：加载 kix-cost.js，mock cordis ctx（on/effect/get）与 llm 服务，
 // 覆盖：档位注入（medium/max/非 deepseek 跳过）、子代理判别、lite 自动选型
