@@ -1,0 +1,51 @@
+{
+  "name": "kixparadigm-en",
+  "version": "1.0.0",
+  "description": "kixparadigm-en — English edition of the kix paradigm preset for DeepSeek Harness: resident cognition layer (EN) + kixpower multi-agent orchestration, one-command import (preset + vision-bridge + guard plugins)",
+  "license": "MIT",
+  "author": "kix (olicesx)",
+  "keywords": [
+    "kixparadigm",
+    "kixpower",
+    "kix",
+    "agent",
+    "ai-agent",
+    "deepseek-harness",
+    "dsh",
+    "agent-preset",
+    "multi-agent",
+    "coding-agent",
+    "english"
+  ],
+  "bin": {
+    "kixparadigm-en": "bin/kixparadigm-en.js"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "preset/",
+    "bridge/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/install-lib.js --quiet",
+    "test": "node preset/plugins/kix-guards.test.js && node preset/plugins/kix-commands.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "kixparadigm": {
+    "presetId": "kixparadigm-en",
+    "presetDir": "preset",
+    "bridgeDir": "bridge"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/olicesx/kixparadigm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/olicesx/kixparadigm/issues"
+  },
+  "homepage": "https://github.com/olicesx/kixparadigm#readme"
+}

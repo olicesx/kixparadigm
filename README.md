@@ -53,6 +53,17 @@ npm i -g kixparadigm
 npx kixparadigm install
 ```
 
+### 🌍 English edition
+
+The resident cognition layer (persona / core instructions / glossary / main-entry agent) is fully translated — see the canonical terminology table in [`en/preset/instructions/glossary.md`](en/preset/instructions/glossary.md):
+
+```bash
+npm i -g kixparadigm-en     # installs the kixparadigm-en preset (mode picker: kixparadigm-en)
+kixparadigm-en doctor       # self-check
+```
+
+Deep-mechanism docs (skills / prompts / memories / team roles) are still the Chinese originals while translation progresses — status tracked in [`en/preset/TRANSLATION-STATUS.md`](en/preset/TRANSLATION-STATUS.md). Source of the EN edition: the `en/` directory (npm package root) + `en/preset/` (EN preset source of truth).
+
 ### 常用运维命令
 
 ```bash

@@ -1,32 +1,35 @@
-# sync-dsh-preset.ps1 — 把 kix-bundle/dsh/preset（DSH 唯一事实源）同步到
-# ~/.dsh/.agent-presets/kixparadigm（DSH 实际安装的 preset）。
+# sync-dsh-preset.ps1 — 把 preset 镜像（dsh/preset 或 en/preset）同步到
+# DSH 实际安装的 preset（~/.dsh/.agent-presets/kixparadigm 或 kixparadigm-en）。
 #
 # 方向（单向）：
-#   kix-bundle/dsh/preset/  ──►  ~/.dsh/.agent-presets/kixparadigm/
+#   dsh/preset/（CN）  ──►  ~/.dsh/.agent-presets/kixparadigm/
+#   en/preset/（EN）   ──►  ~/.dsh/.agent-presets/kixparadigm-en/   （-PresetId kixparadigm-en -SourceDir en\preset）
 #
 # 规则：
-#   - 镜像（dsh/preset/）是唯一事实源。维护 preset 内容 = 改镜像，再跑本脚本同步。
+#   - 镜像是唯一事实源。维护 preset 内容 = 改镜像，再跑本脚本同步。
 #   - 幂等：内容相同的文件跳过；目标缺失 → 新增；内容不同 → -Force 覆盖（默认询问）。
 #   - 只同步 preset 布局（agent.cordis.yml / preset.yml / README.md / DSH-ADAPTATION.md /
 #     skills/ / agents/ / instructions/ / prompts/ / memories/ / plugins/）。
 #   - 目标侧独有文件（镜像没有的）只报告不删除——人工确认后再清理。
 #
 # 用法：
-#   .\scripts\sync-dsh-preset.ps1 -DryRun        # 预览差异
-#   .\scripts\sync-dsh-preset.ps1                # 交互（逐文件确认覆盖）
-#   .\scripts\sync-dsh-preset.ps1 -Force         # 全量同步（覆盖差异）
+#   .\scripts\sync-dsh-preset.ps1 -DryRun                        # 预览差异（CN）
+#   .\scripts\sync-dsh-preset.ps1 -Force                         # 全量同步（CN）
+#   .\scripts\sync-dsh-preset.ps1 -Force -PresetId kixparadigm-en -SourceDir en\preset   # EN
 #
 # 同步后：重启 DSH 进程（Ctrl+C → `dsh web`）再开新会话，preset 才重新组装。
 
 param(
   [string]$BundleRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')),
-  [string]$PresetRoot = (Join-Path ($env:DSH_HOME ?? (Join-Path $env:USERPROFILE '.dsh')) '.agent-presets\kixparadigm'),
+  [string]$PresetId = 'kixparadigm',
+  [string]$SourceDir = 'dsh\preset',
+  [string]$PresetRoot = (Join-Path ($env:DSH_HOME ?? (Join-Path $env:USERPROFILE '.dsh')) ('.agent-presets\' + $PresetId)),
   [switch]$DryRun,
   [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
-$src = Join-Path $BundleRoot 'dsh\preset'
+$src = Join-Path $BundleRoot $SourceDir
 
 if (-not (Test-Path $src)) {
   Write-Error "镜像不存在: $src（需要 kix-bundle 的 dsh/preset 目录）"
