@@ -6,6 +6,11 @@ npm-debug.log*
 # 个人工作区（不入库）
 .zcode/
 
+# 环境变量与密钥（不入库；.env.example 例外，可作模板提交）
+.env
+.env.*
+!.env.example
+
 # 系统杂项
 .DS_Store
 Thumbs.db
