@@ -100,6 +100,7 @@ kix 体系分两层，本仓库把两层 + 生态依赖一次性装齐：
 | **生态辅助** | `handoff` / `write-a-skill` / `improve-codebase-architecture` 等 17 技能 | 会话交接、技能创建、架构改进、TDD/教学/排查等通用方法论 |
 | **机械门禁** | `kix-guards` 插件 | commit budget、feature branch、force push、危险 SQL、控制面文件保护、人类确认点（128 组断言） |
 | **原生命令** | `kix-commands` 插件 | `/kixpower-*` 五命令注册为 DSH 原生命令（零 token 触发，读 `prompts/` 注入流程） |
+| **stalled 检测** | `kix-stalled` 插件（可选） | `/kixst-check` 命令 + `kix_stalled_check` 工具：只读检测停滞 Sprint（candidate，默认注释挂载 = opt-in，`scripts/install-kix-stalled.ps1` 启用） |
 | **识图补足** | `dsh-vision-bridge` 插件 | 主模型无视觉时，粘贴/拖入图片自动转文本描述再提交（GLM-4.6V，服务端 HTTP + client dock） |
 
 **关系一句话**：kixparadigm 给 AI「怎么思考」的自由度与盲点补足，kixpower 给「怎么执行」的结构化团队编排，门禁与识图插件把 DSH 变成 kix 的完整宿主。
@@ -124,7 +125,7 @@ kixparadigm/
 │   │   ├── preset.yml               ← roster 显示元数据
 │   │   ├── DSH-ADAPTATION.md        ← 权威机制映射（工具名/门禁/编排/vision）
 │   │   ├── skills/  agents/  prompts/  instructions/  memories/
-│   │   └── plugins/                 ← kix-guards.js + kix-commands.js + 测试
+│   │   └── plugins/                 ← kix-guards.js + kix-commands.js + kix-stalled.js（opt-in）+ 测试
 │   ├── vision-bridge/               ← dsh-vision-bridge 插件源码（client + server + package.json）
 │   └── README-DSH.md                ← DSH 部署说明
 │

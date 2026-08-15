@@ -90,3 +90,42 @@
 4. 「workflow 脚本化 kix 团队 vs 手动 subagent 分派」的产出质量差异——需同一任务双路径对比（P2-11 模板已就绪）。
 5. 档一 1-7 的「直接依赖零改造」声明——每项在首个匹配任务中验证后即视为坐实。
 6. **kix-guards v3 新增门禁的真实拦截**（2026-08-21 挂账）：128 组单元测试（含独立审查 3 漏拦 + 7 误伤反例）+ 挂载校验已过，但当前进程 standing generation 为 v1 时代组装（运行中不重读）——**需用户重启 DSH 进程**（Ctrl+C → `dsh web`）后，新会话实测 v3 分支：psql 客户端 deny、git -C push --force deny、git push origin feature ask、MCP GitHub 写 main deny、UPDATE 语句级 deny。重启前 P0 行保持 ⚠️ 状态。
+
+## §6 动态 Cordis 插件实测机制事实（2026-08-15 kixst stalled 原型，E2E 坐实）
+
+> 来源：kixst-5 插件 9 个 Package 迭代 + GUI 实机敲命令验证。**不是规则**，机制事实层。
+
+### 6.1 `harness.defineTool` 注册动态工具的精确契约（4 次失败迭代得出）
+
+- `parameters` 是**属性映射 DSL**（`{ root: { type:'string', description } }`），不是 JSON Schema 包装 `{type:'object',properties}`——传包装报 "parameters must be a ParameterSchemaSpec object"
+- 隐式 `root` 参数开放：`additionalProperties` 必须 true 或省略（否则 "the implicit parameter root is open"）
+- `output` **必填**且须为 `{ schema, render, presentationMeta? }`（schema 用 ValueSchemaSpec，如 `{type:'json'}`；render 返回 ContentBlock[]，如 `[{type:'text', text}]`）
+- `execute` 放在 `defineTool` options 内（不是 registerTool 时附加）；`harness.registerTool(ctx, tool)` 只接受 `defineTool` 产物（"must use a tool returned by harness.defineTool"）
+- 动态注册的工具**不出现**在 `cordis_inspect_query Tool.listTools` 结果里（Inspect 只反映静态工具）；验证靠真实调用或 GUI
+
+### 6.2 插件上下文异步与写文件（关键陷阱）
+
+- **命令 handler 内的 `await fs.*` 链路可靠**（commands runtime 会 await handler 的 Promise）——/kixst-enable 写 PROJECT_BRIEF.md、/kixst-check 扫描均 E2E 通过
+- **apply 里 fire-and-forget 的裸 Promise 异步链不可靠**：apply 返回后脱离插件生命周期，扫描/写报告静默无输出（console.error 仅进宿主 stdout，无文件落点）——诊断成本极高，应避免
+- 插件写文件需显式 `sandboxPolicy.resolve({mode:'workspace-write'})` 传入 `writeText` 第 5 参（省略时默认策略可能拒写）；命令 handler 上下文 + 显式策略 = 可靠写路径
+- `ctx.get('sandboxPolicy')` 在插件上下文可用；`workspaceRoot` 有值（与 sandboxPolicy 服务契约一致）
+
+### 6.3 原生命令注册契约（对照 kix-commands.js 静态插件，动态插件同构）
+
+- `ctx.commands.register({ name(小写无斜杠), description, input:{hint}, handler({agent, rawInput}) → CommandResult })`
+- CommandResult = `{kind:'success', text?} | {kind:'error', text}`；handler 同步/异步均可，结果由 UI 直接渲染（GUI 命令卡片，零 token 不进模型）
+- `command/run`+`command/done` 日志事件对（recordInput 默认 true 记录 rawInput）
+- 动态插件注册的命令在 GUI 输入框敲 `/` 候选可见（E2E 实测：/kixst-enable 候选出现并执行）
+
+### 6.4 L3 档 A 落地形态（kixst，2026-08-15）
+
+- **减法后形态（当前）**：只保留 `/kixst-check [root]` 命令（零 token、只读、无状态）+
+  `kix_stalled_check` 模型工具。阈值固定 24h（参数化待真实项目定夺）。pkg-15 E2E 通过。
+- **减法决定（2026-08-15，范式「规则是负债」）**：原三命令形态（enable/disable +
+  frontmatter 持久化 + 惰性定时器 + steer 提醒）无真实项目证据即常驻/写入，属过拟合雏形；
+  已全部移除，**代码保留在 pkg-14 原型历史与本文件下述记录**，真实项目证明需要后按需恢复。
+- 曾实现并 E2E 验证（保留作恢复参考）：三命令 + frontmatter `l3_stalled_check: {enabled, threshold_h}`
+  写/删落盘验证通过；惰性定时器（enabledRoots 空不启动，间隔=min(threshold)/4，下限 60s）；
+  tick 检测 stalled 集合**新增**时经 enable 缓存 agent 的 `agent.steer` 注入一条 user 消息（去抖）；
+  会话级 opt-in（重启需重新 enable）。E2E 证据：GUI 敲三命令全部成功、frontmatter 落盘验证、
+  判定正确（123h 判停滞 / 1h 正常 / done 不误报）。

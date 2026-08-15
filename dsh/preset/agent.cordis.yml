@@ -389,3 +389,10 @@
 # prompts/*.prompt.md 注入 user 消息（与 /plan 命令同语义）。
 - id: kix-commands
   name: ./plugins/kix-commands.js
+
+# ── kix-stalled（L3 档 A：stalled 机械检测，2026-08-15，默认注释 = opt-in）──
+# 只读、无状态、无常驻：/kixst-check <项目根> 命令（零 token）+ kix_stalled_check
+# 模型工具。candidate 状态（1 次夹具 E2E），真实项目证据后再考虑默认启用。
+# 启用：取消下面两行注释（或运行 scripts/install-kix-stalled.ps1，由用户 shell 执行）。
+# - id: kix-stalled
+#   name: ./plugins/kix-stalled.js
