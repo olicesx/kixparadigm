@@ -1,0 +1,9 @@
+# 换行符策略：所有文本文件以 LF 存入仓库（Windows 检出时按 core.autocrlf 转 CRLF）
+* text=auto
+
+# shell 脚本固定 LF（Linux/macOS 执行安全，不受平台检出影响）
+*.sh text eol=lf
+
+# 二进制文件（禁止文本转换）
+*.png binary
+*.tgz binary
