@@ -1,5 +1,13 @@
 # VS Code Copilot 自定义体系
 
+> **归档注记（2026-08-16，插件化改造）**：本文件是 **VS Code Copilot 侧**知识源
+> （`.claude/settings.json` hooks、`.agent.md` 机制），在 DeepSeek Harness 环境**无执行价值**——
+> DSH 的等价机制：`tools/pre-execute`/`post-execute` 事件（kix-guards 插件）、
+> `agent.cordis.yml` 组成、DSH 原生命令。本文件保留供 VS Code Copilot 分发版
+> （根目录 `plugins/`、`skills/`）参考；DSH 侧按需读取时请忽略其中 hooks/.agent.md
+> 路径类内容，以 DSH-ADAPTATION.md §2 的 hook 等价物表为准。待 DSH 侧确认不再需要
+> 后可整体移出 preset（规则是负债）。
+
 ## Hooks —— 和 Claude Code 高度对齐（几乎无缝迁移）
 - 位置：`.github/hooks/*.json`（团队共享）/ `~/.claude/settings.json`（用户级）/ `.claude/settings.json`、`.claude/settings.local.json`（仓库级）。**VS Code 直接兼容 Claude 的 `.claude/settings.json` 路径**
 - Events：SessionStart / UserPromptSubmit / **PreToolUse** / **PostToolUse** / PreCompact / SubagentStart / SubagentStop / Stop

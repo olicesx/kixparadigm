@@ -6,6 +6,8 @@ description: "kixParadigm — AI 自编排最小范式 + 统一入口，适合�
 # kixParadigm — AI 自编排范式
 
 > **DSH 适配注记**：本文件从 VS Code Copilot 导入，其中的工具名（`runSubagent`/`vscode_askQuestions`/`read_file`/`grep_search`/`run_in_terminal` 等）与 Copilot 机制（PreToolUse hooks、跨厂商模型字符串、VS Code 对齐）在 DeepSeek Harness 中有对应映射，**权威映射见 preset 根的 `DSH-ADAPTATION.md`，与本文件冲突时以该文件为准**。机制与判断（三通道/二相性/需求三检/写码前/盲点/验证 gate）原样适用。
+>
+> **2026-08-16 插件化改造注记**：本文件中「机械门禁」「验证 gate」「需求三检契约」等**机制性纪律已插件化**——由 `plugins/kix-guards.js`（机械门禁）、`plugins/kix-discipline.js`（需求三检契约 gate + 验证 gate + `kix_discipline_spec` 工具）、`plugins/kix-cost.js`（成本分层）、`plugins/kix-route.js`（跨厂商/识图路由）强制，不再靠模型自觉遵守本文件的说明。本文件保留的是**认知方法层**（怎么思考/怎么呈现）与按需参考（hook 细节、跨厂商判据）；与插件冲突时以插件行为为准。改造总览见 preset 根 `PLUGINIZATION-ROADMAP.md`。
 
 > **分层**：核心认知范式（三通道/二相性/规则是负债/需求三检/写码前/盲点/CEO 概览）**常驻**于 `../../instructions/kixparadigm-core.instructions.md`（每次会话生效）。本文件为**机制细节层**（按需加载）：机械门禁、验证 gate、输出格式、团队目录、VS Code 对齐、还债机制。
 > 不是流程引擎，不是规则手册。是 AI 为自己设计的最小工具箱 + 安全网 + 盲点提醒。

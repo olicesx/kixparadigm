@@ -11,7 +11,7 @@ hooks:
 			timeout: 10
 ---
 
-> **DSH adaptation note**: this role definition was imported from VS Code Copilot. In DeepSeek Harness it serves as a prompt template for subagent dispatch (DSH's subagent has no agentName parameter — inject this file's role body into the prompt). Tool-name/mechanism mapping is in DSH-ADAPTATION.md at the preset root (runSubagent→subagent, run_in_terminal→pwsh, vscode_askQuestions→ask_user_question, hooks must be invoked manually). Role duties, hard constraints, and editable scope apply unchanged.
+> **DSH adaptation note**: this role definition was imported from VS Code Copilot. In DeepSeek Harness it serves as a prompt template for subagent dispatch (DSH's subagent has no agentName parameter — inject this file's role body into the prompt). Tool-name/mechanism mapping is in DSH-ADAPTATION.md at the preset root (runSubagent→subagent/subagent_cross, run_in_terminal→pwsh, vscode_askQuestions→ask_user_question). **The frontmatter hooks block does not auto-trigger** — blast-radius and other mechanical guards are enforced natively by `plugins/kix-guards.js` (tools/pre-execute). Role duties, hard constraints, and editable scope apply unchanged.
 
 # kixparadigm — AI Self-Orchestration Paradigm Main Entry
 

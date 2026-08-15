@@ -1,6 +1,6 @@
 ---
 name: kixparadigm-core
-description: "kixParadigm core cognition paradigm — resident. Three-Channel Cross-Validation, Phase Duality, Rules Are Liabilities, Triple Requirement Check (no sycophancy), Pre-Code Decision Chain, AI Blind-Spot Map. Mechanism details (mechanical guards / output formats / team orchestration / DSH mapping) live in ../../skills/kixparadigm/SKILL.md"
+description: "kixParadigm core cognition paradigm — resident. Three-Channel Cross-Validation, Phase Duality, Rules Are Liabilities, Triple Requirement Check (no sycophancy), Pre-Code Decision Chain, AI Blind-Spot Map. Mechanism details (mechanical guards / discipline gates / orchestration handoffs / cost / routing / commands) are enforced by preset plugins (kix-guards/kix-discipline/kix-orchestration/kix-cost/kix-route/kix-commands); cognition load-on-demand lives in skills/kixparadigm"
 applyTo: '**'
 ---
 # kixParadigm Core Cognition Paradigm (resident)
@@ -89,6 +89,13 @@ Always run when touching **event handling / type conversions / platform boundari
 - Unsure who to dispatch to / whether a team is needed → ask the user. An explicit user slash command (`/kixpower-*`) = user intent, execute directly
 - **Full-flow suggestion signals**: when you detect a full-flow scenario (new project / complete PR review / continue sprint) → proactively suggest the matching `/kixpower-*` command, **wait for user confirmation, then execute — never auto-trigger**: heavy flows + irreversible side effects mean the start button belongs to the user
 
-## Mechanism details → SKILL.md
+## Mechanism details → plugins + docs (not this file)
 
-Mechanical guards (security/destructive SQL/git), output formats (conclusion-first three-paragraph), DSH mechanism mapping (tool names / progressive disclosure), full verification gates (deterministic-first / evidence support / minimal tests / ownership path enumeration) load **on demand** from `../../skills/kixparadigm/SKILL.md`. The verification gates' **core three questions are resident** (see "Pre-Delivery Verification Three Questions" above), not purely on-demand.
+Mechanical guards → `kix-guards` plugin; discipline gates (requirement-contract / verification)
+→ `kix-discipline` plugin; orchestration handoff gates → `kix-orchestration` plugin; cost
+tiering → `kix-cost`; cross-vendor/vision routing → `kix-route`; slash commands →
+`kix-commands`. Output formats / team manual load **on demand** from
+`../../skills/kixparadigm/SKILL.md` and `../../skills/kixpower/`. The verification gates' **core
+three questions are resident** (see "Pre-Delivery Verification Three Questions" above).
+Pluginization overview: `PLUGINIZATION-ROADMAP.md` at the preset root. DSH mechanism mapping:
+`DSH-ADAPTATION.md`.

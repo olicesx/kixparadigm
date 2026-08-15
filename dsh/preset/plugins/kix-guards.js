@@ -235,6 +235,10 @@ module.exports = {
       'cordis_define', 'cordis_run', 'cordis_stop', 'cordis_undefine',
       // SQL 工具：v3 起入白名单（否则门禁 1 的 /run|exec/ 正则先拒，门禁 4 死代码）
       'sql', 'sql_execute', 'run_sql',
+      // kix-focus 渐进披露（2026-08-16）：发现目录 + 代理调用入口。call 的
+      // 内部子调用（tools.execute）走完整 pre-execute，门禁对每个被代理工具
+      // 依然拦截；此处显式白名单防御未来正则变化误伤（名字本身不含 exec/run）。
+      'kix_capability_search', 'kix_capability_call',
       // PTC/Code Mode 呈现（mode: both）：run_code 是保留传输，其 SDK 子分派
       // 走完整 pre-execute 管线，本门禁对程序内每个工具调用依然拦截；
       // run_code 本身由门禁 1b 做代码体受限能力检查。

@@ -1,0 +1,463 @@
+// kix-discipline — kixparadigm 纪律机制化（P0，2026-08-16）
+//
+// 定位：把 kix 的「需求三检」与「验证 gate」从 prompt 说教（模型自觉）改为
+// 机制强制（hook + 工具 + 持久契约）。设计哲学按 kix 自身裁剪，不照搬生态插件
+// （dsh-doublecheck 等只取「门禁+工具+持久状态」的机制结构，不取其规则内容）：
+//
+//   - 补足非限制：只拦「动作」（edit/write 前的契约缺失、回合结束无验证），
+//     不拦「思考」（需求三检的内容判断留给模型，spec 是契约不是审讯）。
+//   - 限制越少越好：默认 intensity=remind（提醒不阻断）；ask/block 需显式配置。
+//     字面明确、低风险、可逆的任务，模型看到提醒后可忽略直接执行（kix：直接执行）。
+//   - 阶段二相性：创造阶段（编辑中）只提醒一次（remindOnce），不反复打断；
+//     验证阶段（回合结束 turn-stopping）检查"有实现 edit 但无测试运行"。
+//   - 规则是负债：任何 gate 若 2 轮内无真实拦截记录（remind 从未触发），降级 opt-in
+//     或删除（见 PLUGINIZATION-ROADMAP.md §7）。
+//
+// 机制（对照 DSH-ADAPTATION.md §2 的 hook 等价物表）：
+//   - tools/pre-execute waterfall：edit/write 前检查 spec 契约在档。
+//       * 无 spec + 首次实现编辑 → intensity 决定 remind（放行+注入提醒）/
+//         ask（聊天内提问 ctx.userQuestions.ask，同 kix-guards v5）/
+//         block（deny 带 reason）。
+//       * 测试文件（*.test.* / test 目录）永远放行——写测试是需求三检/red 步骤。
+//   - tools/post-execute waterfall：识别测试运行（bash/pwsh 命令匹配测试模式）
+//     → 记录 green；识别实现 edit → 记录 red 证据缺失。
+//   - agent/turn-stopping serial：回合结束时，本回合有实现 edit 且无测试运行
+//     → 注入 green 提醒（remindOnce，durable 于会话日志）。
+//   - kix_discipline_spec 工具：模型记录需求三检契约（goal/xy/assumptions/path/
+//     acceptance 五字段，对应 kix 三检①XY ②前提 ③路径 + 目标 + 验收），写入
+//     工作区 kix-discipline/spec.md + 会话状态（spec 契约跨会话可查）。
+//   - /kix-discipline 命令：status / report / on|off（durable 开关）。
+//
+// 边界诚实声明（P0）：
+//   - 「模糊任务」判定为保守启发式：无 spec 的首次实现编辑即提醒一次。不做
+//     任务文本语义分析（那是模型判断，机制不越界）；ask/block 档需显式配置。
+//   - gate 按 agent scope 挂载，不覆盖子代理会话（与 kix-guards 同款边界，
+//     见 DSH-ADAPTATION.md §9 已知限制①）。
+//   - spec 文件写入工作区 kix-discipline/ 目录，遵循 fs 沙箱策略。
+//
+// 挂载：preset agent.cordis.yml 一行（与 kix-guards 同款相对路径）：
+//   - id: kix-discipline
+//     name: ./plugins/kix-discipline.js
+// 测试：node plugins/kix-discipline.test.js（纯逻辑经 __internals 验证）。
+
+'use strict'
+
+const { readFileSync, writeFileSync, mkdirSync, existsSync } = require('node:fs')
+const { join } = require('node:path')
+const { randomUUID } = require('node:crypto')
+
+// ── 常量 ───────────────────────────────────────────────────────────────────
+const SPEC_FILENAME = 'spec.md'
+const SPEC_DIRNAME = 'kix-discipline'
+// 测试命令模式（bash/pwsh 文本匹配；与 kix-guards 的 KNOWN_SAFE 同层判断）
+const TEST_COMMAND_PATTERNS = [
+  /(?:^|[;&|]\s*)(?:(?:pnpm|npm|npx|yarn|bun)(?:\s+run)?\s+(?:test|vitest|jest|mocha)(?:\s|$))/,
+  /(?:^|[;&|]\s*)(?:(?:pytest|go\s+test|cargo\s+test|make\s+test|ctest)(?:\s|$))/,
+  /(?:^|[;&|]\s*)(?:node\s+--test(?:\s|$))/,
+  /(?:^|[;&|]\s*)(?:deno\s+test|uv\s+run\s+pytest)(?:\s|$)/,
+]
+// 实现编辑工具（写测试文件永远放行）
+const MUTATION_TOOLS = new Set(['edit', 'write'])
+// 测试文件模式（这些路径的编辑不算"实现编辑"，不触发 red/green gate）
+const TEST_FILE_PATTERNS = [
+  /(^|[\\/])(tests?|__tests__|specs?)([\\/]|$)/,
+  /\.[tj]sx?\.(test|spec)\.[a-z0-9]+$/i,
+  /\.(test|spec)\.[a-z0-9]+$/i,
+  /\.(test|spec)\.(py|rs|go|java|rb)$/i,
+]
+
+// ── 纯判定函数（模块级：单元测试经 __internals 直接验证）─────────────────
+
+function isTestCommand(text) {
+  return TEST_COMMAND_PATTERNS.some((re) => re.test(String(text || '')))
+}
+
+function isTestFile(path) {
+  const p = String(path || '').replace(/\\/g, '/')
+  return TEST_FILE_PATTERNS.some((re) => re.test(p))
+}
+
+function isMutationTool(name) {
+  return MUTATION_TOOLS.has(String(name || '').toLowerCase())
+}
+
+// spec 契约 markdown 生成（五字段对应 kix 三检 + 目标 + 验收）
+function renderSpec(spec) {
+  const s = spec || {}
+  return [
+    '# kix-discipline spec（需求三检契约）',
+    '',
+    '- 记录时间: ' + (s.recordedAt || new Date().toISOString()),
+    '',
+    '## Goal（要解决的根本问题）',
+    s.goal || '（未填写）',
+    '',
+    '## XY 检查（需求三检①：要 X 真需要的是 Y？）',
+    s.xy || '（未填写）',
+    '',
+    '## 前提假设（需求三检②：前提可验证吗？）',
+    s.assumptions || '（未填写）',
+    '',
+    '## 更优路径（需求三检③：有更高维度解法吗？）',
+    s.path || '（未填写）',
+    '',
+    '## 验收标准（可验证的完成定义）',
+    s.acceptance || '（未填写）',
+    '',
+  ].join('\n')
+}
+
+// spec 契约五字段是否齐全（空/空白字段视为未完成——契约必须可验证才算数）
+function specComplete(spec) {
+  const s = spec || {}
+  return ['goal', 'xy', 'assumptions', 'path', 'acceptance'].every(
+    (k) => typeof s[k] === 'string' && s[k].trim().length > 0,
+  )
+}
+
+// 从 markdown 反向解析 spec（读已有文件时用；宽松：缺字段返回 undefined）
+function parseSpec(text) {
+  if (!text) return undefined
+  const m = /^# kix-discipline spec/m.test(text)
+  if (!m) return undefined
+  const grab = (title) => {
+    const re = new RegExp(`## ${title}[\\s\\S]*?\\n([\\s\\S]*?)(?=\\n## |\\n\\n- 记录时间|$)`)
+    const hit = re.exec(text)
+    if (!hit) return undefined
+    const v = hit[1].trim()
+    return v.length > 0 ? v : undefined
+  }
+  return {
+    recordedAt: undefined,
+    goal: grab('Goal（要解决的根本问题）'),
+    xy: grab('XY 检查（需求三检①：要 X 真需要的是 Y？）'),
+    assumptions: grab('前提假设（需求三检②：前提可验证吗？）'),
+    path: grab('更优路径（需求三检③：有更高维度解法吗？）'),
+    acceptance: grab('验收标准（可验证的完成定义）'),
+  }
+}
+
+// 会话状态折叠（durable：从 spec 文件 + 会话内内存恢复）
+// io：可选读写器 { readText(path), writeText(path, content) } —— apply 注入 ctx.fs
+// （走 DSH 文件系统服务，经沙箱策略与 fs/write-intent 门禁），默认 node:fs 同步（测试用）。
+function makeState({ sessionKey, workspaceRoot, io }) {
+  const specFile = workspaceRoot ? join(workspaceRoot, SPEC_DIRNAME, SPEC_FILENAME) : undefined
+  let cached = undefined
+  let specLoaded = false
+  return {
+    specFile,
+    enabled: true,
+    remindOnce: true,
+    redReminded: false,
+    greenReminded: false,
+    // 本回合（turn）内的实现编辑与测试运行计数——turn 边界重置
+    turnEdits: 0,
+    turnTests: 0,
+    spec: undefined,
+    async loadSpec() {
+      if (specLoaded) return cached
+      specLoaded = true
+      if (specFile) {
+        try {
+          const text = io && io.readText ? await io.readText(specFile) : readFileSync(specFile, 'utf8')
+          const parsed = parseSpec(text)
+          if (parsed && specComplete(parsed)) cached = parsed
+        } catch { cached = undefined }
+      }
+      return cached
+    },
+    async saveSpec(spec) {
+      cached = spec
+      if (!specFile) return false
+      try {
+        if (io && io.writeText) {
+          await io.writeText(specFile, renderSpec(spec))
+        } else {
+          mkdirSync(join(workspaceRoot, SPEC_DIRNAME), { recursive: true })
+          writeFileSync(specFile, renderSpec(spec), 'utf8')
+        }
+        return true
+      } catch {
+        return false
+      }
+    },
+  }
+}
+
+function makeUserMessage(text) {
+  return {
+    id: randomUUID(),
+    role: 'user',
+    content: [{ type: 'text', text }],
+    source: { kind: 'plugin', plugin: 'kix-discipline', form: 'notice', summary: text.slice(0, 100) },
+  }
+}
+
+module.exports = {
+  name: 'kix-discipline',
+  inject: ['tools', 'commands'],
+  apply(ctx, config) {
+    const tools = ctx.tools
+    const commands = ctx.commands
+    const cfg = config || {}
+    const intensity = cfg.intensity || 'remind'
+    const sandboxPolicy = ctx.get('sandboxPolicy')
+    const defaultRoot = sandboxPolicy !== undefined && sandboxPolicy.workspaceRoot ? sandboxPolicy.workspaceRoot : undefined
+
+    // ctx.fs 是 DSH 文件系统服务（经沙箱策略 + fs/write-intent 门禁）。可用时 spec 读写
+    // 走 ctx.fs（深度融合，写入路径受沙箱约束）；缺失时降级 node:fs（跨环境不挂）。
+    const dshFs = ctx.get('fs')
+    const fsIo = dshFs !== undefined
+      ? {
+          async readText(path) {
+            const target = await dshFs.resolve(path)
+            return dshFs.readText(target)
+          },
+          async writeText(path, content) {
+            const target = await dshFs.resolve(path)
+            await dshFs.writeText(target, content, undefined, undefined, sandboxPolicy && sandboxPolicy.resolve ? sandboxPolicy.resolve({ mode: 'workspace-write' }) : undefined)
+          },
+        }
+      : undefined
+
+    // 每会话状态（key = agent session id；跨会话 durable 于 spec 文件）
+    const states = new Map()
+    function stateFor(agent) {
+      const key = agent && agent.id ? String(agent.id) : 'anonymous'
+      let st = states.get(key)
+      if (!st) {
+        const session = agent && agent.session
+        const header = session && session.header
+        const cwd = header && header.cwd && typeof header.cwd === 'string' ? header.cwd : undefined
+        const workspaceRoot = defaultRoot || cwd || undefined
+        st = makeState({ sessionKey: key, workspaceRoot, io: fsIo })
+        st.loadSpec().catch(() => { /* 缓存填充失败静默：后续 loadSpec 重试或降级 */ })
+        states.set(key, st)
+      }
+      return st
+    }
+
+    function agentCwd(exec) {
+      try {
+        const cwd = exec && exec.agent && exec.agent.session && exec.agent.session.header && exec.agent.session.header.cwd
+        return typeof cwd === 'string' && cwd.length > 0 ? cwd : undefined
+      } catch {
+        return undefined
+      }
+    }
+
+    // 聊天内提问（同 kix-guards v5：userQuestions.ask，fail-safe 拒绝）
+    async function askUser(exec, reason) {
+      const userQuestions = ctx.get('userQuestions')
+      if (userQuestions === void 0 || exec === void 0 || exec.agent === void 0) return undefined
+      try {
+        const { answers } = await userQuestions.ask({
+          questions: [{
+            id: 'kix-discipline-confirm',
+            question: reason,
+            header: 'kix-discipline 确认',
+            options: [
+              { label: '先记录需求三检契约', description: '调用 kix_discipline_spec 后再继续。' },
+              { label: '任务明确，直接继续', description: '字面明确低风险可逆，按 kix 直接执行。' },
+            ],
+          }],
+          agent: exec.agent,
+          ...exec.signal !== void 0 ? { signal: exec.signal } : {},
+        })
+        const selected = answers && answers[0] && answers[0].selected
+        return Array.isArray(selected) && selected.includes('任务明确，直接继续')
+      } catch {
+        return undefined
+      }
+    }
+
+    // ── 模型工具：记录需求三检契约 ────────────────────────────────────────
+    const disposeSpecTool = tools.register({
+      name: 'kix_discipline_spec',
+      description: '记录当前任务的需求三检契约（kix 需求三检：XY Problem / 前提假设 / 更优路径），写入工作区 kix-discipline/spec.md。需求三检后、开始实现编辑前调用；契约可跨会话复用。',
+      parameters: {
+        // tools.register 原样投影 parameters：必须含顶层 type: 'object'
+        type: 'object',
+        properties: {
+          goal: { type: 'string', description: '要解决的根本问题（需求三检①：用户要 X 真需要的是 Y）' },
+          xy: { type: 'string', description: 'XY 检查结论：确认了真正要解决的问题' },
+          assumptions: { type: 'string', description: '前提假设（需求三检②）：需求成立的前提可验证吗' },
+          path: { type: 'string', description: '更优路径（需求三检③）：选定的方案与理由' },
+          acceptance: { type: 'string', description: '验收标准：可验证的完成定义（测试/gate 判据）' },
+        },
+        required: ['goal', 'xy', 'assumptions', 'path', 'acceptance'],
+      },
+      output: {
+        // output.schema 是 JsonSchemaNode：object 需 properties
+        schema: { type: 'object', properties: {}, additionalProperties: true },
+        render: (args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+      },
+      async execute(args, exec) {
+        const spec = {
+          recordedAt: new Date().toISOString(),
+          goal: String((args && args.goal) || '').trim(),
+          xy: String((args && args.xy) || '').trim(),
+          assumptions: String((args && args.assumptions) || '').trim(),
+          path: String((args && args.path) || '').trim(),
+          acceptance: String((args && args.acceptance) || '').trim(),
+        }
+        const complete = specComplete(spec)
+        if (!complete) {
+          return { ok: false, error: 'spec 契约不完整：goal/xy/assumptions/path/acceptance 五字段均必填（需求三检必须全部落定才算契约）。' }
+        }
+        const agent = exec && exec.agent
+        const st = stateFor(agent)
+        const saved = await st.saveSpec(spec)
+        return { ok: true, saved, specFile: st.specFile || null, contract: spec }
+      },
+    })
+    ctx.effect(() => disposeSpecTool)
+
+    // ── pre-execute：spec 契约门禁 + red 证据记录 ─────────────────────────
+    ctx.on('tools/pre-execute', async (exec, next) => {
+      const name = exec && exec.name
+      const tool = (name || '').toLowerCase()
+      const args = exec && (exec.arguments ?? exec.args)
+      const agent = exec && exec.agent
+
+      // 只关心实现编辑工具
+      if (!isMutationTool(tool)) {
+        // 测试运行识别（任何工具：bash/pwsh 文本匹配测试命令）
+        const cmdText = args && (args.command || args.cmd)
+        if (typeof cmdText === 'string' && isTestCommand(cmdText) && agent) {
+          const st = stateFor(agent)
+          st.turnTests++
+        }
+        return next()
+      }
+
+      const st = stateFor(agent)
+      if (!st.enabled) return next()
+
+      // 测试文件永远放行（写测试是需求三检/red 步骤）
+      const path = args && (args.file_path || args.path)
+      if (typeof path === 'string' && isTestFile(path)) return next()
+
+      // 实现编辑：记录 red 证据缺失
+      st.turnEdits++
+
+      // spec 契约检查：无 spec + 首次实现编辑 → intensity 决定
+      const spec = st.spec || (await st.loadSpec())
+      if (spec) return next()
+
+      const reason = 'kix-discipline: 该编辑前未记录需求三检契约（kix_discipline_spec）。先调用 kix_discipline_spec 落定 goal/xy/assumptions/path/acceptance，或确认任务字面明确低风险可逆后直接继续。'
+
+      if (intensity === 'block') {
+        return { kind: 'deny', reason }
+      }
+      if (intensity === 'ask') {
+        const ok = await askUser(exec, reason)
+        if (ok === false) return { kind: 'deny', reason: 'kix-discipline: 用户拒绝（未确认任务明确），请先记录需求三检契约。' }
+        if (ok === void 0) return { kind: 'deny', reason: 'kix-discipline: 无法向用户提问（无提问通道），已自动拒绝。' }
+        return next()
+      }
+      // remind：放行 + 注入提醒（每会话一次）
+      if (st.remindOnce && st.redReminded) return next()
+      st.redReminded = true
+      // post-execute 注入（见下）；此处仅记录待注入标志
+      st.pendingRemind = true
+      return next()
+    })
+
+    // ── post-execute：注入 remind + green 证据记录 ────────────────────────
+    ctx.on('tools/post-execute', async (exec, result, next) => {
+      const name = exec && exec.name
+      const tool = (name || '').toLowerCase()
+      const agent = exec && exec.agent
+      const st = agent ? stateFor(agent) : undefined
+
+      if (!st || !st.enabled) return next()
+
+      // 测试运行结果：成功 → green 证据（回合内）
+      const args = exec && (exec.arguments ?? exec.args)
+      const cmdText = args && (args.command || args.cmd)
+      if (typeof cmdText === 'string' && isTestCommand(cmdText)) {
+        const ok = result && !result.isError
+        if (ok) st.turnTests++
+        return next()
+      }
+
+      // 待注入的 red remind
+      if (st.pendingRemind) {
+        st.pendingRemind = false
+        const reason = 'kix-discipline: 本次编辑前未记录需求三检契约。若任务模糊或影响面大，请先调用 kix_discipline_spec 记录 goal/xy/assumptions/path/acceptance；字面明确低风险可逆的任务可忽略本提醒直接继续（kix 需求三检只按信号触发，不强制）。'
+        return {
+          kind: 'accept',
+          additionalContexts: [makeUserMessage(reason)],
+        }
+      }
+      return next()
+    })
+
+    // ── turn-stopping：回合结束的 green 提醒（有实现 edit 无测试运行）─────
+    ctx.on('agent/turn-stopping', (payload) => {
+      const agent = payload && payload.agent
+      if (!agent) return
+      const st = stateFor(agent)
+      if (!st.enabled) return
+      // 回合边界重置
+      const hadEdits = st.turnEdits > 0
+      const hadTests = st.turnTests > 0
+      st.turnEdits = 0
+      st.turnTests = 0
+      if (!hadEdits || hadTests) return
+      if (st.remindOnce && st.greenReminded) return
+      st.greenReminded = true
+      const reason = 'kix-discipline: 本回合有实现编辑但未运行测试。交付前验证三问：① 测试镜像真实链路吗 ② 证据维度对吗 ③ 关键 claim 独立验证过吗。运行相关测试后再声称完成（kix 提交前必跑 lint/test）。'
+      agent.steer(makeUserMessage(reason))
+    })
+
+    // ── /kix-discipline 命令 ──────────────────────────────────────────────
+    commands.register({
+      name: 'kix-discipline',
+      description: 'kix 纪律机制状态：status（开关/gate 强度/spec 契约）/ report（本会话纪律事实）/ on|off（durable 开关）',
+      input: { hint: 'status | report | on | off' },
+      handler: async ({ agent, rawInput }) => {
+        const st = agent ? stateFor(agent) : undefined
+        const arg = (rawInput || '').trim().toLowerCase()
+        if (!st) return { kind: 'error', text: 'kix-discipline: 无可用 agent 上下文。' }
+        if (arg === 'on' || arg === 'off') {
+          st.enabled = arg === 'on'
+          return { kind: 'success', text: `kix-discipline: 已${arg === 'on' ? '启用' : '停用'}（本会话）` }
+        }
+        const spec = st.spec || (await st.loadSpec())
+        const specLine = spec && specComplete(spec)
+          ? '✔ 已记录（' + spec.goal.slice(0, 60) + '…）'
+          : '✘ 未记录需求三检契约'
+        const base = [
+          'kix-discipline status @ ' + new Date().toISOString(),
+          'enabled: ' + st.enabled,
+          'intensity: ' + intensity,
+          'spec: ' + specLine,
+          'redReminded: ' + st.redReminded + ' / greenReminded: ' + st.greenReminded,
+          'turnEdits: ' + st.turnEdits + ' / turnTests: ' + st.turnTests,
+        ]
+        if (arg === 'report') {
+          base.push('specFile: ' + (st.specFile || '（无工作区根，仅会话内存）'))
+        }
+        return { kind: 'success', text: base.join('\n') }
+      },
+    })
+
+    ctx.logger?.info?.('[kix-discipline] 纪律门禁已挂载（pre-execute spec gate + turn-stopping green gate + kix_discipline_spec 工具）')
+  },
+}
+
+module.exports.__internals = {
+  isTestCommand,
+  isTestFile,
+  isMutationTool,
+  specComplete,
+  renderSpec,
+  parseSpec,
+  makeState,
+  TEST_COMMAND_PATTERNS,
+  TEST_FILE_PATTERNS,
+  SPEC_FILENAME,
+  SPEC_DIRNAME,
+}

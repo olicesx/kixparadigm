@@ -12,8 +12,9 @@ This edition is delivered in **phased translation**. The resident cognition laye
 | `instructions/glossary.md` | English (canonical term table) |
 | `agents/kixparadigm.agent.md` (main entry role) | English |
 | `DSH-ADAPTATION.md` | English (condensed authoritative mapping) |
+| `PLUGINIZATION-ROADMAP.md` | English (condensed edition; CN full edition in CN preset) |
 | `README.md`, `TRANSLATION-STATUS.md` | English |
-| `plugins/` (kix-guards.js, kix-cost.js, kix-commands.js + tests) | Code — language-neutral |
+| `plugins/` (kix-guards.js, kix-cost.js, kix-commands.js, kix-route.js, kix-discipline.js, kix-orchestration.js, kix-focus.js + tests) | Code — language-neutral |
 
 ## ⏳ Pending (Chinese originals, still fully functional)
 

@@ -6,9 +6,10 @@
 
 ```
 preset/
-├── agent.cordis.yml            ← composition: EN resident cognition layer + full toolset + guards + commands
+├── agent.cordis.yml            ← composition: EN resident cognition layer + full toolset + 7 plugins
 ├── preset.yml                  ← mode-picker metadata (name: kixparadigm-en)
 ├── DSH-ADAPTATION.md           ← authoritative mechanism mapping (EN, condensed)
+├── PLUGINIZATION-ROADMAP.md    ← pluginization roadmap (EN condensed; CN full edition in CN preset)
 ├── instructions/
 │   ├── kixparadigm-core.instructions.md   ← resident cognition layer (EN)
 │   └── glossary.md             ← canonical terminology table (EN)
@@ -16,7 +17,7 @@ preset/
 ├── skills/                     ← 17 skills (CN originals, pending translation)
 ├── prompts/                    ← 5 /kixpower-* flows (CN, pending)
 ├── memories/                   ← 6 methodology memories (CN, pending)
-└── plugins/                    ← kix-guards.js + kix-commands.js + tests (language-neutral)
+└── plugins/                    ← kix-guards + kix-discipline + kix-orchestration + kix-focus + kix-cost + kix-route + kix-commands + kix-stalled (opt-in) + tests (language-neutral)
 ```
 
 ## Install
@@ -31,7 +32,11 @@ After install: `kixparadigm-en doctor` self-checks, `kixparadigm-en uninstall` r
 ## Verify
 
 ```bash
-node plugins/kix-guards.test.js      # 142 assertions
-node plugins/kix-commands.test.js    # 6 assertion groups
-node plugins/kix-cost.test.js        # 24 assertions
+node plugins/kix-guards.test.js        # 164 assertions
+node plugins/kix-commands.test.js      # 6 assertion groups
+node plugins/kix-cost.test.js          # 24 assertions
+node plugins/kix-route.test.js         # 57 assertions
+node plugins/kix-discipline.test.js    # 43 assertions
+node plugins/kix-orchestration.test.js # 25 assertions
+node plugins/kix-focus.test.js         # 32 assertions
 ```
