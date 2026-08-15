@@ -136,3 +136,27 @@
 - **融入 workflow**：`skills/kixpower/templates/kixpower-workflow.template.md`「Preflight：stalled
   门禁」节——机械检测走 /kixst-check（零 token），恢复决策走用户 /kixpower-continue；
   Producer prompt 加模型侧双保险（脚本层无法机械检测，workflow 无 fs/命令能力）。
+
+## §7 遗留事项（诚实清单，2026-08-21 挂账）
+
+> 来源：当日会话实测报告 + 本文件作者对照安装目录 `node_modules/@deepseek-ai/dsh-*` 源码定位。
+> 分类：① 上游 bug（报告对象=DeepSeek 官方）② 工具层怪癖（机制事实，避坑用）。都不是规则。
+
+### 7.1 上游 bug：复合 callId + 活跃会话重放重复 key（pi-ai × conversation engine 交互）
+
+- **现象**：复合 callId 场景下，**活跃会话**重放出现重复 key；磁盘重放是干净的（不触发）。
+- **判定**：pi-ai（`dsh-llm-pi-ai`）与 conversation engine（`dsh-session` 系）的交互问题，非本仓库可修。
+- **规避办法**：**等会话停止后再打开/重放**（stop 后的磁盘重放路径干净）。
+- **根治**：需反馈 DeepSeek 官方（无本地 patch 方案；本文件只记现象与规避，不做机制断言——未读对应源码）。
+- **报告状态**：待整理反馈文案。
+
+### 7.2 工具层怪癖：`cordis_inspect_query` 带 input 查询一律报 `"input" must be an object`
+
+- **现象**：`cordis_inspect_query` 只要带 `input` 就报 `"input" must be an object`（当日两个会话都踩到）。
+- **代码级定位（高置信，对照安装目录源码）**：两层 schema 不一致——
+  - 工具参数层：`dsh-tool-cordis/lib/index.js:6532` 把 `input` 声明为 `type: "json"`；该类型在 `parameterSchemaSpecToJsonSchema` 编译成**注解-only 节点（无 type 约束）**（`dsh-tools/lib/types/schema.js:152-155`）→ 模型看不到类型提示。
+  - 方法校验层：execute 把 `args.input` 原样传入（`dsh-tool-cordis/lib/index.js:6545`）→ host runner `validateInput` 用**方法自身 inputSchema**（如 `SERVICE_INPUT = {type:"object", properties:{service:{type:"string"}}, additionalProperties:false}`）校验 `input ?? {}`（`dsh-cordis-host-runner/lib/index.js:887-888`）→ `dsh-tools/lib/types/json-schema.js:474` 对非 plain record 报 `"input" must be an object`。
+  - **推论**：模型把 input 传成 JSON 字符串（而非对象）即必触发；凡带 input 的查询都踩。**注**：模型实际传字符串这一点是推断（无当日会话日志佐证），但字符串必被拒是代码级确定。
+- **规避**：明确要求模型把 `input` 传成**对象**（如 `{"service":"..."}` 而非 `'{"service":"..."}'`）；或先不传 input 走目录导航，再按需单查。
+- **修复建议**：`dsh-tool-cordis` 的 `input` 参数应声明为 `type: "object"` + `additionalProperties: true`（或补描述「必须传对象」），使工具层 schema 与方法层 inputSchema 一致。属官方包，本地不 patch。
+- **报告状态**：可与 7.1 合并反馈 DeepSeek 官方。

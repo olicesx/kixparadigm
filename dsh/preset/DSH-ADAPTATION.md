@@ -62,9 +62,9 @@ subagent（run_in_background 按需）:
   | 工具 | LLM 路由 | 用途 |
   |---|---|---|
   | `subagent` | 继承主模型（deepseek-official） | 普通分派 / 同厂商观察 |
-  | `subagent_cross` | zai-coding-cn → GLM-5.3（1M 窗口） | **跨厂商正交观察者**（三通道观察、最高置信 claim、平台/库语义断言） |
-  | `subagent_vision` | zai-vision → GLM-4.6V（视觉，Coding Plan 订阅） | **识图补充**（主模型无视觉；图片路径 + 问题 → child 调 read_image 看图） |
-  - 机制：`agentOptions.provider/model` 在 `resolveChildAgentOptions` 中覆盖父模型路由（已实证）；工具行级配置，模型按需选工具即实现"主模型自主选择子 agent 模型"。**「自动选择」的边界（2026-08-15 实证）**：子代理路由必须是精确 (provider, model) 对——`agentOptions` 省略 model 会继承父模型（deepseek-v4-flash → UNKNOWN_MODEL），DSH 无「auto」模型；工具行钉值 = settings.yaml `zai-coding-cn.models` 的当前最新可用模型（现为 glm-5.3），模型线升级时同步 settings 清单 + 钉值
+  | `subagent_cross` | `kix-route:cross` 哨兵 → 运行时自动取反厂商（父 GLM→deepseek 系 / 父 DeepSeek→zai 系） | **跨厂商正交观察者**（三通道观察、最高置信 claim、平台/库语义断言） |
+  | `subagent_vision` | `kix-route:vision` 哨兵 → 运行时自动路由到首个声明 image 输入的模型（zai-vision 偏好） | **识图补充**（主模型无视觉；图片路径 + 问题 → child 调 read_image 看图；无 image 模型时启动报错） |
+  - 机制：`agentOptions.provider/model` 在 `resolveChildAgentOptions` 中覆盖父模型路由（已实证）；工具行级配置，模型按需选工具即实现"主模型自主选择子 agent 模型"。**「自动选择」的落点（v5.9 起 kix-route 自动路由）**：cross/vision/thinker 工具行只钉 `kix-route:<tier>` 哨兵模型名，`plugins/kix-route.js` 在子代理首次请求的 agent/request waterfall 里按 llm 实时目录解析——cross = 父厂商取反、vision = 首个声明 image 输入的模型、thinker = deepseek 系首选。**边界语义（v5.9.1，角色核心能力缺失报错 / 角色仍成立降级）**：cross 在单厂商部署（无任何异厂商 provider）、vision 在全目录无 image 模型时**启动即报错**——错误信息附已注册清单与改用建议（subagent 同厂商复核 + 注明局限 / 配置对应 provider），随 run 失败带回父模型，绝不静默同厂商降级（假独立性比失败更糟）；thinker 无 deepseek 时降级环境默认路由（大预算深思考角色仍成立）+ 一次性告警；解析失败不缓存（中途注册的 provider 下一请求生效）；插件缺失时哨兵直达适配器响亮失败（UNKNOWN_MODEL）。此前「必须钉精确对」是声明层约束（agentOptions 自定义键会被 zod 剥离），waterfall 层可整体改写（kix-cost lite 回退同机制已实证）。候选池 = settings.yaml `llm-pi-ai:` 清单 + pi-ai 内置目录；模型线升级只改 settings
   - 模型路由：`settings.yaml` 的 `llm-pi-ai:` 段配置多 provider profile（pi-ai 适配器内置 `zai-coding-cn`（智谱 GLM-5.3/5.2/5.1/5-turbo，1M 窗口）、`deepseek`、`kimi-coding`、`moonshotai`、`qwen-token-plan` 等目录路由；OpenAI 兼容网关可整体自声明）
   - 已激活 provider：`deepseek-official` + `zai-coding-cn` + `zai-vision`（自定义 profile：`api/coding/paas/v4` 订阅端点，models 列表声明 `glm-4.6v`/`glm-4.6v-flash`/`glm-4.5v`，均声明 image 输入）；`glm-5.3` 可解析（2026-08-15 起 profile 声明，1M 窗口；pi-ai 内置目录尚无该模型，reasoning 档位未声明则按非推理处理，需要档位时在 settings 该条目加 `reasoningEfforts`）、`glm-5.2` 可解析（reasoning: off/low/medium/high/max）；`glm-4.6v` 订阅内实测可用（2026-08-17 识图通过），`glm-5v-turbo` 当前订阅未开放（429 code 1311）
   - 再加其他厂商：`settings.yaml` `llm-pi-ai.providers` 追加 profile + 在 preset 加对应 subagent 工具行即可

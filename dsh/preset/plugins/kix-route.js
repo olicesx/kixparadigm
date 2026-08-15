@@ -14,23 +14,31 @@
 //     model 哨兵时，resolved.provider = 父模型厂商，正好作为取反输入。
 //   - read_image 路线门禁读 session.requestHeader()?.config（waterfall 之后
 //     的真实路由）→ vision 哨兵改写后门禁看到的是真实视觉模型 ✓。
-//   - 本插件缺失/未挂载时哨兵名直达适配器 → UNKNOWN_MODEL 响亮失败，
-//     绝不静默退化成同厂商（cross 语义宁断不假）。
 //
-// 档位解析规则（候选全部来自 llm.listProviders()/listModels() 实时目录）：
+// 档位解析（候选全部来自 llm.listProviders()/listModels() 实时目录）：
 //   - cross：父厂商取反（zhipu→deepseek 系 / deepseek→zai 系 / 其他厂商
 //     → 已注册的任一异厂商），偏好顺序见 CROSS_PROVIDER_ORDER / MODEL_PREFERENCE；
-//     无异厂商可用 → 回退环境默认路由（agentDefaultModel），仍不可用 → 保持
-//     哨兵响亮失败；回退发生时 logger.warn 一次性告警（每 agent 缓存）。
 //   - vision：第一个 inputModalities 声明 image 的模型（zai-vision 优先，
-//     其余 provider 兜底）；找不到 → 环境默认（read_image 会按门禁拒）。
-//   - thinker：deepseek-official 首选（同族深度思考档）；不可用 → 环境默认。
+//     其余 provider 兜底）；
+//   - thinker：deepseek 系 provider（deepseek-official 首选）。
+//
+// 边界语义（单厂商 / 无 deepseek / 无视觉模型的部署，v5.9.1）——核心原则：
+// 角色核心能力缺失 → 报错（信息带回父模型）；角色仍成立 → 降级 + 告警：
+//   - cross 无异厂商（单厂商部署）→ **启动即报错**（throw，错误信息附已注册
+//     provider 清单 + 改用建议，随 run 失败带回父模型）——绝不静默同厂商
+//     降级：cross 的全部价值是厂商正交，假独立性比失败更糟；
+//   - vision 无声明 image 的模型 → 同样启动即报错（附配置建议），不做
+//     无视觉能力的降级（省掉 spawn→read_image 被门禁弹回的空跑）；
+//   - thinker 无 deepseek → 降级环境默认路由 + 一次性告警（角色仍成立：
+//     大预算深思考，GLM 适配器自管思考强度）；
+//   - 解析失败不缓存：部署中途注册的新 provider 下一请求即生效；
+//   - 插件缺失/未挂载时哨兵名直达适配器 → UNKNOWN_MODEL 响亮失败。
 //
 // 与 kix-cost 的关系（顺序无关，双向成立）：
 //   - kix-cost 见到 `kix-route:` 哨兵直接跳过（lite 探测/effort 注入都不碰）；
-//   - 本插件改写到 deepseek-official 且无显式 effort 时，自行调用 kix-cost
-//     导出的 decideEffort 注入（与 kix-cost 规则同源：require('./kix-cost.js')，
-//     不复制规则）。两种 waterfall 顺序下结果一致。
+//   - 本插件改写到 deepseek 且无显式 effort 时，自行调用 kix-cost 导出的
+//     decideEffort 注入（require 带 try/catch 守卫：kix-cost.js 缺失时只跳过
+//     effort 注入，路由解析不受影响）。两种 waterfall 顺序下结果一致。
 //
 // 挂载方式：preset agent.cordis.yml（紧随 kix-cost 行之后）：
 //   - id: kix-route
@@ -40,12 +48,20 @@
 
 'use strict'
 
+// kix-cost 的 effort 规则同源复用（文件缺失/导出变化时静默跳过，不影响路由）。
+let decideEffortShared
+try {
+  decideEffortShared = require('./kix-cost.js').__internals?.decideEffort
+} catch {
+  decideEffortShared = undefined
+}
+
 const SENTINEL_PREFIX = 'kix-route:'
 
-// 厂商判定：provider id 前缀归一（zai-coding-cn/zai-vision → zhipu）。
+// 厂商判定：provider id 前缀归一（zai-*/zhipu-* → zhipu，含 zai-coding-cn/zai-vision）。
 function vendorOf(provider) {
   if (typeof provider !== 'string' || provider === '') return ''
-  if (provider === 'zai-coding-cn' || provider === 'zai-vision') return 'zhipu'
+  if (provider === 'zai' || provider === 'zhipu' || provider.startsWith('zai-') || provider.startsWith('zhipu-')) return 'zhipu'
   return provider.split('-')[0]
 }
 
@@ -63,11 +79,17 @@ const MODEL_PREFERENCE = {
   'zai-vision': ['glm-4.6v', 'glm-4.6v-flash', 'glm-4.5v'],
 }
 
-/** 已注册 provider id 列表（listProviders 条目的 provider 或 name 字段）。 */
+/**
+ * 已注册 provider 路由键列表。
+ * 契约（dsh-llm prepareRoutes 实证）：listProviders() 返回 {id, name}，其中
+ * id === 注册路由键（注册时强制校验），name 是显示名（如 "DeepSeek"）——
+ * 显示名绝不能当路由键用（B1 修复：旧实现读 p.provider ?? p.name 拿到显示名，
+ * 导致 vision 恒假报无识图、thinker 恒降级）。
+ */
 function registeredProviders(llm) {
   try {
     return (llm.listProviders() ?? [])
-      .map((p) => (p && typeof p === 'object' ? p.provider ?? p.name : undefined))
+      .map((p) => (p && typeof p === 'object' ? p.id ?? p.provider : undefined))
       .filter((id) => typeof id === 'string' && id !== '')
   } catch {
     return []
@@ -94,13 +116,17 @@ async function pickModel(llm, provider, { wantImage = false, signal } = {}) {
   } catch {
     return undefined
   }
-  const ids = orderedModels(provider, (listed ?? []).map((m) => m && m.id).filter((id) => typeof id === 'string'))
+  // 契约防御：非数组返回（目录破坏）按空目录处理，不让裸 TypeError 逃出 pickModel
+  const entries = Array.isArray(listed) ? listed : []
+  const ids = orderedModels(provider, entries.map((m) => m && m.id).filter((id) => typeof id === 'string'))
   for (const id of ids) {
+    if (signal?.aborted) return undefined // 取消后不再浪费探测；中止语义由循环层 throwIfAborted 收口
     try {
       const info = await llm.resolveModelInfo(provider, id, signal)
       if (wantImage && !(info.inputModalities ?? []).includes('image')) continue
       return { provider, model: id }
     } catch {
+      if (signal?.aborted) return undefined // abort 引发的解析失败不算「模型不可用」
       // 该模型不可解析 → 试下一个
     }
   }
@@ -127,9 +153,12 @@ async function resolveCrossRoute(llm, parentProvider, signal) {
   return undefined
 }
 
-/** vision：zai-vision 优先，其后任何 provider 中第一个声明 image 输入的模型。 */
+/** vision：zai-vision 优先（仅当已注册），其后任何 provider 中第一个声明 image 输入的模型。 */
 async function resolveVisionRoute(llm, signal) {
-  const order = ['zai-vision', ...registeredProviders(llm).filter((p) => p !== 'zai-vision')]
+  const registered = registeredProviders(llm)
+  const order = registered.includes('zai-vision')
+    ? ['zai-vision', ...registered.filter((p) => p !== 'zai-vision')]
+    : registered
   for (const provider of order) {
     const hit = await pickModel(llm, provider, { wantImage: true, signal })
     if (hit !== undefined) return hit
@@ -137,10 +166,15 @@ async function resolveVisionRoute(llm, signal) {
   return undefined
 }
 
-/** thinker：deepseek-official 首选（同族深度思考），目录内其余 deepseek 模型兜底。 */
+/** thinker：deepseek 系 provider（deepseek-official 首选，其余 deepseek-* 目录序兜底）。 */
 async function resolveThinkerRoute(llm, signal) {
-  if (registeredProviders(llm).includes('deepseek-official')) {
-    const hit = await pickModel(llm, 'deepseek-official', { signal })
+  const registered = registeredProviders(llm)
+  const rest = registered.filter((p) => p !== 'deepseek-official' && vendorOf(p) === 'deepseek')
+  const order = registered.includes('deepseek-official')
+    ? ['deepseek-official', ...rest]
+    : rest
+  for (const provider of order) {
+    const hit = await pickModel(llm, provider, { signal })
     if (hit !== undefined) return hit
   }
   return undefined
@@ -153,12 +187,45 @@ function sentinelTierOf(model) {
   return tier === 'cross' || tier === 'vision' || tier === 'thinker' ? tier : undefined
 }
 
+/**
+ * 档位未解析到候选时的动作判定（纯函数，单元测试入口）：
+ *   - hit 已解析 → use；
+ *   - thinker 未解析 + 环境默认存在 → use（degraded，角色仍成立）；
+ *   - 其余（cross/vision 核心能力缺失，或 thinker 连默认都没有）→ fail
+ *     （failText 由调用方构造，随 run 失败带回父模型）。
+ */
+function decideTierAction(tier, hit, defaultRoute, failText) {
+  if (hit !== undefined) return { kind: 'use', hit }
+  if (tier === 'thinker' && defaultRoute !== undefined) {
+    return { kind: 'use', hit: defaultRoute, degraded: true }
+  }
+  return { kind: 'fail', message: failText }
+}
+
+/** cross 失败信息：附主厂商与已注册清单 + 两条出路（改用 subagent / 配置第二厂商）。 */
+function crossFailText(parentProvider, registered) {
+  const vendor = vendorOf(parentProvider) || '未知'
+  const list = registered.length > 0 ? registered.join(', ') : '无'
+  return `kix-route: subagent_cross 需要与主模型不同厂商的模型（主厂商 ${vendor}；已注册 provider：${list}）。本部署无跨厂商正交验证能力：请改用 subagent 做同厂商复核，并在结论中注明「单厂商部署，无独立第二通道」；或由用户在 settings.yaml 的 llm-pi-ai.providers 配置第二厂商后重试。`
+}
+
+/** vision 失败信息：附配置建议，避免 spawn 后才被 read_image 门禁弹回。 */
+function visionFailText(registered) {
+  const list = registered.length > 0 ? registered.join(', ') : '无'
+  return `kix-route: subagent_vision 需要声明 image 输入的模型，当前目录均未声明（已注册 provider：${list}）。本部署无识图能力：请在 settings.yaml 配置视觉模型（如 zai-vision 的 glm-4.6v），或请用户改用文字描述 / 给出图片路径外的人工处理方案。`
+}
+
+/** thinker 彻底失败（无 deepseek 且无环境默认路由，极端边界）。 */
+function thinkerFailText() {
+  return 'kix-route: subagent_thinker 未解析到 deepseek 系路由，且环境默认路由不可用（agentDefaultModel 缺失）。请检查 settings.yaml 的 llm-pi-ai 配置。'
+}
+
 // ── 插件本体 ────────────────────────────────────────────────────────────────
 
 module.exports = {
   name: 'kix-route',
   apply(ctx) {
-    // 每 agent 缓存一次解析结果（稳定优先：目录中途变化不追新）；degraded 标记防重复告警。
+    // 成功解析按 agent 缓存（稳定优先）；失败不缓存——中途注册的 provider 下一请求即生效。
     const routes = new WeakMap()
 
     ctx.on('agent/request', async (payload, next) => {
@@ -167,57 +234,64 @@ module.exports = {
       const tier = sentinelTierOf(resolved.model)
       if (tier === undefined) return resolved
       const agent = payload.agent
-      if (agent === undefined) return resolved // 无 agent 上下文无从缓存，保持原样（将响亮失败）
+      if (agent === undefined) return resolved // 无 agent 上下文无从处理，保持原样（将响亮失败）
       const opts = agent.options ?? {}
       if ((opts.subagentDepth ?? 0) < 1) return resolved // 哨兵只该出现在子代理；主会话异常路由不碰
+
+      const llm = ctx.get('llm')
+      if (llm === undefined) {
+        throw new Error(`kix-route: llm 服务不可用，无法解析 ${SENTINEL_PREFIX}${tier} 哨兵路由（检查宿主 llm 插件是否加载）`)
+      }
 
       let cached = routes.get(agent)
       if (cached === undefined) {
         cached = { hit: undefined, degraded: false }
         routes.set(agent, cached)
       }
-      const llm = ctx.get('llm')
-      const defaults = ctx.get('agentDefaultModel')
-      const defaultRoute = (() => {
-        if (defaults === undefined) return undefined
-        try {
-          const sel = defaults.currentSelection()
-          return sel !== undefined && sel.provider && sel.model ? { provider: sel.provider, model: sel.model } : undefined
-        } catch {
-          return undefined
-        }
-      })()
 
       let hit = cached.hit
       if (hit === undefined) {
-        if (llm !== undefined) {
-          if (tier === 'cross') hit = await resolveCrossRoute(llm, resolved.provider, payload.signal)
-          else if (tier === 'vision') hit = await resolveVisionRoute(llm, payload.signal)
-          else hit = await resolveThinkerRoute(llm, payload.signal)
-        }
-        // 档位解析失败 → 环境默认路由兜底（cross 语义降级，一次性告警）
-        if (hit === undefined && defaultRoute !== undefined) {
-          hit = defaultRoute
-          if (!cached.degraded) {
-            cached.degraded = true
-            ctx.logger.warn(
-              `kix-route: tier "${tier}" 无可用候选，回退环境默认路由 ${defaultRoute.provider}/${defaultRoute.model}（cross 档此时为同厂商降级，正交验证失效）`,
-            )
+        if (tier === 'cross') hit = await resolveCrossRoute(llm, resolved.provider, payload.signal)
+        else if (tier === 'vision') hit = await resolveVisionRoute(llm, payload.signal)
+        else hit = await resolveThinkerRoute(llm, payload.signal)
+
+        let defaultRoute
+        if (hit === undefined && tier === 'thinker') {
+          const defaults = ctx.get('agentDefaultModel')
+          if (defaults !== undefined) {
+            try {
+              const sel = defaults.currentSelection()
+              if (sel !== undefined && sel.provider && sel.model) {
+                defaultRoute = { provider: sel.provider, model: sel.model }
+              }
+            } catch {
+              defaultRoute = undefined
+            }
           }
         }
-        if (hit !== undefined) cached.hit = hit
-      }
 
-      if (hit === undefined) return resolved // 连默认路由都没有 → 保持哨兵，UNKNOWN_MODEL 响亮失败
+        const failText = tier === 'cross'
+          ? crossFailText(resolved.provider, registeredProviders(llm))
+          : tier === 'vision'
+            ? visionFailText(registeredProviders(llm))
+            : thinkerFailText()
+        const action = decideTierAction(tier, hit, defaultRoute, failText)
+        if (action.kind === 'fail') throw new Error(action.message)
+        hit = action.hit
+        if (action.degraded === true && !cached.degraded) {
+          cached.degraded = true
+          ctx.logger.warn(
+            `kix-route: tier "thinker" 未解析到 deepseek 路由，降级环境默认 ${hit.provider}/${hit.model}（角色仍成立：大预算深思考；适配器自管 effort）`,
+          )
+        }
+        cached.hit = hit
+      }
 
       let config = { ...resolved, provider: hit.provider, model: hit.model }
       // 顺序无关的 effort 注入：改写到 deepseek 且无显式 effort → 与 kix-cost 同源规则
-      if (config.reasoningEffort === undefined) {
-        const decideEffort = require('./kix-cost.js').__internals?.decideEffort
-        if (typeof decideEffort === 'function') {
-          const effort = decideEffort(hit.provider, opts.maxTokens ?? resolved.maxTokens)
-          if (effort !== undefined) config = { ...config, reasoningEffort: effort }
-        }
+      if (config.reasoningEffort === undefined && typeof decideEffortShared === 'function') {
+        const effort = decideEffortShared(hit.provider, opts.maxTokens ?? resolved.maxTokens)
+        if (effort !== undefined) config = { ...config, reasoningEffort: effort }
       }
       return config
     })
@@ -235,4 +309,8 @@ module.exports.__internals = {
   resolveVisionRoute,
   resolveThinkerRoute,
   sentinelTierOf,
+  decideTierAction,
+  crossFailText,
+  visionFailText,
+  thinkerFailText,
 }

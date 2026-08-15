@@ -118,8 +118,8 @@
       ## DSH 适配（触发句常驻；机制细节一律查 `DSH-ADAPTATION.md`（preset 根））
       - **权威映射**：kix 文档中的 Copilot 工具名/机制与本文件冲突时**以本文件为准**；工具名翻译表（run_in_terminal→pwsh、vscode_askQuestions→ask_user_question、runSubagent→subagent 等）见 DSH-ADAPTATION.md §1。
       - **分派**：`runSubagent agentName: "kixpower-xxx"` = `subagent`（无 agentName）+ 把 `agents/kixpower-xxx.agent.md` 角色 body 注入 prompt + [CONTEXT]/[TASK]/[CONSTRAINTS] 任务段（§3）；`subagent_fork` 用于需继承本会话上下文的子代理。
-      - **跨厂商观察者**：三通道观察/最高置信 claim/平台库语义断言 → **`subagent_cross`**（kix-route 按父厂商自动取反路由，运行时解析可用模型）；普通分派用 `subagent`（继承主模型）；`workflow` 的 `agent(prompt, {provider, model})` 可逐调用覆盖（§3）。
-      - **识图**：主模型无视觉，`read_image` 会被路线门禁拒。看图（截图/报错图/图表/UI/OCR）→ 把图片路径 + 问题交 **`subagent_vision`**（GLM-4.6V；§3）。
+      - **跨厂商观察者**：三通道观察/最高置信 claim/平台库语义断言 → **`subagent_cross`**（kix-route 按父厂商自动取反路由，运行时解析可用模型）；普通分派用 `subagent`（继承主模型）；`workflow` 的 `agent(prompt, {provider, model})` 可逐调用覆盖（§3）。本部署仅单厂商时 `subagent_cross` 会启动报错——此时改用 `subagent` 同厂商复核，并在结论中注明「单厂商部署，无独立第二通道」。
+      - **识图**：主模型无视觉，`read_image` 会被路线门禁拒。看图（截图/报错图/图表/UI/OCR）→ 把图片路径 + 问题交 **`subagent_vision`**（kix-route 自动路由到 image 模型；§3）。
       - **UI 发图**：profile 插件 `dsh-vision-bridge` 在点发送时把图片转文本描述，消息以 `📷 [图片自动识别]` 前缀进入会话——**是插件产物不是用户原话**；描述不足时请用户给图片路径用 `subagent_vision` 细看（§3）。
       - **机械门禁**：`plugins/kix-guards.js` 已自动挂载（tools/pre-execute 拦截破坏性 git/SQL/控制平面/未知执行工具；§2）；sandbox + approval 栈是常驻机械层。
       - **slash command（已注册，P1-8）**：`/kixpower-new` 等 5 个命令由 `plugins/kix-commands.js` 注册——UI 敲 `/` 见候选、触发零 token、handler 把 `prompts/kixpower-*.prompt.md` 正文注入为 user 消息（与 `/plan` 同语义）；用户说出对应意图时同样读取对应 prompt 文件执行。
@@ -342,9 +342,11 @@
 
     # ── max 深度思考档（v5.8）：该用 max 的任务仍用 max ──────────────────
     # 同族深度思考档：kix-route 哨兵 `kix-route:thinker` 在首次请求时解析到
-    # deepseek-official 最新可用模型（首选 deepseek-v4-flash，目录序兜底），
-    # deepseek 不可用则回退环境默认路由并告警；kix-route/kix-cost 按预算帽
-    # （128K → max）注入 reasoningEffort。用于需要同族深度思考的高难任务；
+    # deepseek 系最新可用模型（deepseek-official 首选，其余 deepseek-* 兜底）；
+    # deepseek 全缺席的部署 → 降级环境默认路由并告警（thinker 角色仍成立：
+    # 大预算深思考，GLM 适配器自管 effort）；effort 由 kix-route 注入（复用
+    # kix-cost 同源的 decideEffort，按预算帽 128K → max；kix-cost 本体对哨兵
+    # child 只守卫跳过、不注入——两插件任意 waterfall 顺序结果一致）。用于需要同族深度思考的高难任务；
     # 跨厂商正交验证用 `subagent_cross`（自动取反厂商）。
     - id: tool-subagent-thinker
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -362,8 +364,11 @@
     # 子代理首次请求时按运行时目录（llm.listProviders/listModels）解析成
     # 「与父模型不同厂商」的第一个可用模型（父 GLM → deepseek 系；父
     # DeepSeek → zai 系；偏好序见插件 MODEL_PREFERENCE）。主模型换厂商、
-    # 模型线升级、分发到其他部署都不需要改本行；无异厂商可用时回退环境
-    # 默认路由并告警（同厂商降级，正交验证失效 → 宁可看见）。
+    # 模型线升级、分发到其他部署都不需要改本行。边界语义（v5.9.1）：
+    # **单厂商部署**（无任何异厂商 provider 注册）时启动即报错——错误信息
+    # 附已注册清单与改用建议，随 run 失败带回父模型（改用 subagent 同厂商
+    # 复核 + 注明局限 / 配置第二厂商）。绝不静默同厂商降级：cross 的全部
+    # 价值是厂商正交，假独立性比失败更糟。
     # 插件缺失时哨兵名直达适配器 → UNKNOWN_MODEL 响亮失败，不静默降级。
     # v5.8：maxTokens 64K 兜底帽。
     - id: tool-subagent-cross
@@ -383,7 +388,8 @@
     # 在子代理首次请求时解析到第一个「inputModalities 声明 image」的可用
     # 模型（zai-vision 偏好序：glm-4.6v → glm-4.6v-flash → glm-4.5v，其余
     # provider 兜底）；门禁读 waterfall 后的真实路由（requestHeader 配置）
-    # → 改写后放行。无视觉模型可用 → 回退环境默认（read_image 将按门禁拒）。
+    # → 改写后放行。边界（v5.9.1）：全目录无 image 模型 → 启动即报错（附
+    # 配置建议），不做无视觉能力的降级（省掉 spawn→read_image 被弹回的空跑）。
     - id: tool-subagent-vision
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -392,6 +398,9 @@
         backgroundMode: continuable
         agentOptions:
           model: kix-route:vision
+          # 视觉模型普遍 4K 输出帽（settings zai-vision maxTokens 4096）；
+          # 显式钉值同时防止 kix-cost 把无 maxTokens 的 child 误判为 lite 档
+          maxTokens: 4096
 
     - id: tool-subagent-fork
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -479,9 +488,11 @@
 # 工具行不再钉死 (provider, model)：cross/vision/thinker 三行只钉
 # `kix-route:<tier>` 哨兵，本插件在子代理首次请求的 agent/request waterfall
 # 里按 llm 实时目录解析——cross = 父厂商取反、vision = 首个声明 image 输入
-# 的模型、thinker = deepseek 首选；全不可用回退环境默认并告警；插件缺失时
-# 哨兵直达适配器响亮失败（不静默同厂商降级）。与 kix-cost 顺序无关协作
-# （effort 规则同源复用）。见 plugins/kix-route.js 头部注释；
+# 的模型、thinker = deepseek 系首选。边界语义（v5.9.1）：cross 在单厂商部署、
+# vision 在无视觉模型部署启动即报错（错误信息附改用建议，带回父模型——
+# 假独立性比失败更糟）；thinker 无 deepseek 时降级环境默认（角色仍成立）+
+# 告警；插件缺失时哨兵直达适配器响亮失败（不静默同厂商降级）。与 kix-cost
+# 顺序无关协作（effort 规则同源复用）。见 plugins/kix-route.js 头部注释；
 # 单元测试：node plugins/kix-route.test.js。
 - id: kix-route
   name: ./plugins/kix-route.js

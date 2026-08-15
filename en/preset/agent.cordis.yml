@@ -101,7 +101,7 @@
       ## DSH Adaptation (trigger phrases resident; mechanism details always in `DSH-ADAPTATION.md` at the preset root)
       - **Authoritative mapping**: when kix docs' Copilot tool names/mechanisms conflict with this file, THIS FILE wins; the tool-name translation table (run_in_terminal→pwsh, vscode_askQuestions→ask_user_question, runSubagent→subagent, etc.) is in DSH-ADAPTATION.md §1.
       - **Dispatch**: `runSubagent agentName: "kixpower-xxx"` = `subagent` (no agentName) + inject the role body of `agents/kixpower-xxx.agent.md` into the prompt + a [CONTEXT]/[TASK]/[CONSTRAINTS] task block (§3); `subagent_fork` for subagents that must inherit this session's context.
-      - **Cross-vendor observer**: three-channel observation / highest-confidence claims / platform-library semantics assertions → **`subagent_cross`** (kix-route auto-routes to a vendor inverted from the parent's, resolved from live catalogs); ordinary dispatch uses `subagent` (inherits the main model); `workflow`'s `agent(prompt, {provider, model})` can override per call (§3).
+      - **Cross-vendor observer**: three-channel observation / highest-confidence claims / platform-library semantics assertions → **`subagent_cross`** (kix-route auto-routes to a vendor inverted from the parent's, resolved from live catalogs); ordinary dispatch uses `subagent` (inherits the main model); `workflow`'s `agent(prompt, {provider, model})` can override per call (§3). In a single-vendor deployment `subagent_cross` fails at start — switch to a plain `subagent` for same-vendor review and state "single-vendor deployment, no independent second channel" in the conclusion.
       - **Vision**: the main model has no vision; `read_image` is rejected by the routing gate. To look at images (screenshots / error images / charts / UI / OCR) → hand the image path + question to **`subagent_vision`** (auto-routed to the first image-capable model; §3).
       - **UI image upload**: the profile plugin `dsh-vision-bridge` converts images to text descriptions at send time; messages enter the session prefixed `📷 [图片自动识别]` — that is plugin output, not the user's words; when the description is insufficient, ask the user for the image path and inspect with `subagent_vision` (§3).
       - **Mechanical guards**: `plugins/kix-guards.js` is auto-mounted (tools/pre-execute interception of destructive git/SQL/control-plane/unknown-exec tools; §2); the sandbox + approval stack is the resident mechanical layer.
@@ -329,12 +329,15 @@
 
     # ── max deep-thinking tier (v5.8): tasks that need max still get max ──────
     # Same-family deep thinking: the `kix-route:thinker` sentinel resolves to
-    # the newest usable deepseek-official model at the child's first request
-    # (deepseek-v4-flash preferred, catalog order as backup); when deepseek is
-    # unavailable it falls back to the environment default route with a warning.
-    # kix-route/kix-cost inject reasoningEffort by budget cap (128K → max).
-    # For same-family deep-thinking hard tasks; cross-vendor orthogonal
-    # verification uses `subagent_cross` (auto inverted-vendor routing).
+    # the newest usable deepseek-family model at the child's first request
+    # (deepseek-official preferred, other deepseek-* as backup); deployments
+    # with no deepseek at all degrade to the environment default route with a
+    # warning (the role still stands: big-budget deep thinking, GLM adapter
+    # manages effort). Effort is injected by kix-route itself (reusing kix-cost's
+    # same-source decideEffort, budget cap 128K → max; kix-cost only guards-and-
+    # skips sentinel children, never injects — identical results under any
+    # waterfall order). For same-family deep-thinking hard tasks; cross-vendor
+    # orthogonal verification uses `subagent_cross` (auto inverted-vendor routing).
     - id: tool-subagent-thinker
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -353,9 +356,13 @@
     # DIFFERENT from the parent's (parent GLM → deepseek family; parent
     # DeepSeek → zai family; preference order in the plugin's MODEL_PREFERENCE).
     # Main-model vendor switches, model-line upgrades, and distribution to other
-    # deployments all need zero edits here; with no foreign vendor available it
-    # falls back to the environment default route with a warning (same-vendor
-    # degradation, orthogonal verification void — better visible than silent).
+    # deployments all need zero edits here. Boundary semantics (v5.9.1): in a
+    # **single-vendor deployment** (no foreign provider registered) it FAILS AT
+    # START — the error lists registered providers + what to do instead and
+    # reaches the parent via the failed run (use a plain subagent for same-vendor
+    # review with an explicit caveat / configure a second vendor). Never silently
+    # degrade to same-vendor: cross's entire value is vendor orthogonality;
+    # false independence is worse than failure.
     # If the plugin is missing, the sentinel reaches the adapter verbatim and
     # fails LOUD with UNKNOWN_MODEL; never silently degrades to same-vendor.
     # v5.8: 64K safety cap.
@@ -377,9 +384,10 @@
     # child's first request to the first usable model whose inputModalities
     # declares image (zai-vision preference: glm-4.6v → glm-4.6v-flash →
     # glm-4.5v, then any other provider). The gate reads the POST-waterfall real
-    # route (requestHeader config), so it passes after the rewrite. With no
-    # vision model available it falls back to the environment default (the
-    # read_image gate will then refuse image reads).
+    # route (requestHeader config), so it passes after the rewrite. Boundary
+    # (v5.9.1): with no image-declaring model anywhere it FAILS AT START (with
+    # setup advice) — no vision-less degradation (skips the spawn →
+    # read_image-gate bounce round-trip entirely).
     - id: tool-subagent-vision
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -388,6 +396,9 @@
         backgroundMode: continuable
         agentOptions:
           model: kix-route:vision
+          # vision models commonly cap output at 4K (settings zai-vision maxTokens 4096);
+          # pinning it also stops kix-cost from misjudging a maxTokens-less child as lite
+          maxTokens: 4096
 
     - id: tool-subagent-fork
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -478,11 +489,14 @@
 # only a `kix-route:<tier>` sentinel; this plugin resolves it in the child's
 # first agent/request waterfall against the live llm catalog — cross = vendor
 # inverted from the parent, vision = first model declaring image input,
-# thinker = deepseek preferred; falls back to the environment default with a
-# warning when nothing resolves; a missing plugin fails LOUD on the sentinel
-# (never silently degrades to same-vendor). Cooperates with kix-cost under any
-# waterfall order (effort rule reused from the same source). See
-# plugins/kix-route.js; unit tests: node plugins/kix-route.test.js.
+# thinker = deepseek preferred. Boundary semantics (v5.9.1): cross in a
+# single-vendor deployment and vision with no image model FAIL AT START (the
+# error carries what-to-do-instead advice back to the parent — false
+# independence is worse than failure); thinker without deepseek degrades to the
+# environment default (role still stands) with a warning; a missing plugin
+# fails LOUD on the sentinel (never silently degrades to same-vendor).
+# Cooperates with kix-cost under any waterfall order (effort rule reused from
+# the same source). See plugins/kix-route.js; unit tests: node plugins/kix-route.test.js.
 - id: kix-route
   name: ./plugins/kix-route.js
 

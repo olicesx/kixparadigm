@@ -42,6 +42,10 @@ const HEAVY_MAXTOKENS = 98304   // thinker 行预算帽阈值（≥ → max）
 const LITE_MAXTOKENS = 8192     // lite 行预算帽（≤ → 机械档，需自动选型探测）
 const HEAVY_EFFORT = 'max'
 const CHILD_EFFORT = 'high'
+// kix-route 哨兵前缀（与 kix-route.js 的 SENTINEL_PREFIX 同值；不 require 引入
+// 是为了避免 cost→route 的运行时依赖方向。kix-route.test.js 断言两处一致，
+// 前缀一旦变更测试当场翻红）。
+const KIX_ROUTE_SENTINEL_PREFIX = 'kix-route:'
 
 // ── 纯判定函数（模块级：单元测试经 __internals 直接验证）───────────────
 
@@ -68,7 +72,8 @@ function isLiteTier(opts) {
 async function probeRoute(llm, provider, model, signal) {
   try {
     const providers = llm.listProviders()
-    const known = providers.some((p) => p.provider === provider || p.name === provider)
+    // listProviders entries are {id, name}: id is the route key, name is a display name (never a key)
+    const known = providers.some((p) => (p.id ?? p.provider) === provider)
     if (!known) return false
     await llm.resolveModelInfo(provider, model, signal)
     return true
@@ -100,7 +105,7 @@ module.exports = {
       // file's exported decideEffort after rewriting to deepseek). Skip here so
       // the two listeners agree under ANY waterfall order: seen first, the
       // sentinel makes us skip; seen after the rewrite, effort already exists.
-      if (typeof resolved.model === 'string' && resolved.model.startsWith('kix-route:')) return resolved
+      if (typeof resolved.model === 'string' && resolved.model.startsWith(KIX_ROUTE_SENTINEL_PREFIX)) return resolved
 
       let config = resolved
       const llm = ctx.get('llm')
@@ -138,4 +143,4 @@ module.exports = {
   },
 }
 
-module.exports.__internals = { decideEffort, isSubagentChild, isLiteTier, probeRoute }
+module.exports.__internals = { KIX_ROUTE_SENTINEL_PREFIX, decideEffort, isSubagentChild, isLiteTier, probeRoute }
