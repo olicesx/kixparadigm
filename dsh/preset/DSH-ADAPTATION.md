@@ -62,11 +62,11 @@ subagent（run_in_background 按需）:
   | 工具 | LLM 路由 | 用途 |
   |---|---|---|
   | `subagent` | 继承主模型（deepseek-official） | 普通分派 / 同厂商观察 |
-  | `subagent_zhipu` | zai-coding-cn → GLM-5.2（1M 窗口） | **跨厂商正交观察者**（三通道观察、最高置信 claim、平台/库语义断言） |
+  | `subagent_zhipu` | zai-coding-cn → GLM-5.3（1M 窗口） | **跨厂商正交观察者**（三通道观察、最高置信 claim、平台/库语义断言） |
   | `subagent_vision` | zai-vision → GLM-4.6V（视觉，Coding Plan 订阅） | **识图补充**（主模型无视觉；图片路径 + 问题 → child 调 read_image 看图） |
-  - 机制：`agentOptions.provider/model` 在 `resolveChildAgentOptions` 中覆盖父模型路由（已实证）；工具行级配置，模型按需选工具即实现"主模型自主选择子 agent 模型"
-  - 模型路由：`settings.yaml` 的 `llm-pi-ai:` 段配置多 provider profile（pi-ai 适配器内置 `zai-coding-cn`（智谱 GLM-5.2/5.1/5-turbo，1M 窗口）、`deepseek`、`kimi-coding`、`moonshotai`、`qwen-token-plan` 等目录路由；OpenAI 兼容网关可整体自声明）
-  - 已激活 provider：`deepseek-official` + `zai-coding-cn` + `zai-vision`（自定义 profile：`api/coding/paas/v4` 订阅端点，models 列表声明 `glm-4.6v`/`glm-4.6v-flash`/`glm-4.5v`，均声明 image 输入）；`glm-5.2` 可解析（reasoning: off/low/medium/high/max）；`glm-4.6v` 订阅内实测可用（2026-08-17 识图通过），`glm-5v-turbo` 当前订阅未开放（429 code 1311）
+  - 机制：`agentOptions.provider/model` 在 `resolveChildAgentOptions` 中覆盖父模型路由（已实证）；工具行级配置，模型按需选工具即实现"主模型自主选择子 agent 模型"。**「自动选择」的边界（2026-08-15 实证）**：子代理路由必须是精确 (provider, model) 对——`agentOptions` 省略 model 会继承父模型（deepseek-v4-flash → UNKNOWN_MODEL），DSH 无「auto」模型；工具行钉值 = settings.yaml `zai-coding-cn.models` 的当前最新可用模型（现为 glm-5.3），模型线升级时同步 settings 清单 + 钉值
+  - 模型路由：`settings.yaml` 的 `llm-pi-ai:` 段配置多 provider profile（pi-ai 适配器内置 `zai-coding-cn`（智谱 GLM-5.3/5.2/5.1/5-turbo，1M 窗口）、`deepseek`、`kimi-coding`、`moonshotai`、`qwen-token-plan` 等目录路由；OpenAI 兼容网关可整体自声明）
+  - 已激活 provider：`deepseek-official` + `zai-coding-cn` + `zai-vision`（自定义 profile：`api/coding/paas/v4` 订阅端点，models 列表声明 `glm-4.6v`/`glm-4.6v-flash`/`glm-4.5v`，均声明 image 输入）；`glm-5.3` 可解析（2026-08-15 起 profile 声明，1M 窗口；pi-ai 内置目录尚无该模型，reasoning 档位未声明则按非推理处理，需要档位时在 settings 该条目加 `reasoningEfforts`）、`glm-5.2` 可解析（reasoning: off/low/medium/high/max）；`glm-4.6v` 订阅内实测可用（2026-08-17 识图通过），`glm-5v-turbo` 当前订阅未开放（429 code 1311）
   - 再加其他厂商：`settings.yaml` `llm-pi-ai.providers` 追加 profile + 在 preset 加对应 subagent 工具行即可
   - **UI 发图无缝层（profile 插件 dsh-vision-bridge，2026-08-17 启用，不属于 preset）**：
     `~/.dsh/profiles/web/cordis.patch.yml` insert；源码 `~/.dsh/profiles/web/plugins/dsh-vision-bridge/`
@@ -130,7 +130,7 @@ kix 的原始编排假设只有 runSubagent；DSH 提供更结构化的原生能
 
 ## 7. 已知限制（诚实声明）
 
-1. ~~跨厂商模型不可用~~ → **已启用**：`subagent_zhipu` 工具行（zai-coding-cn/GLM-5.2）已注册，主模型自主选择；新增厂商 = settings 加 profile + preset 加工具行（见 §3）
+1. ~~跨厂商模型不可用~~ → **已启用**：`subagent_zhipu` 工具行（zai-coding-cn/GLM-5.3）已注册，主模型自主选择；新增厂商 = settings 加 profile + preset 加工具行（见 §3）
 2. **hooks/*.ps1 不自动触发**——但 DSH 有完整等价机制，且 **preset 已内置 `plugins/kix-guards.js`（v2，2026-08-21 接线补全）**（`tools/pre-execute` 监听器，blast-radius 核心门禁的 JS 移植）：破坏性 SQL（含 UPDATE without WHERE）/ 终端数据库客户端保守拦截 / git 写保护（force push 完整检测 -f/+refs/--mirror，修复 v1 静默失效）/ main 分支保护（commit/push）+ commit 时真实分支检查 / **commit budget**（reflog 计数，hard cap 10 / progress.md 预算 / 冷启动 3）/ **MCP GitHub 远程写保护**（main/master deny、无 branch deny、mutation ask）/ **人类确认点 ask**（reset --hard/clean -f/branch -D/stash drop/checkout --/restore/普通 push → approval 服务）/ 控制平面保护 / 未知执行工具拦截 / run_code 代码体检查，单元回归 128 组断言通过（源仓库 `plugins/kix-guards.test.js`，2026-08-21 实测：v3 修复 3 漏拦 + 7 误伤反例全过）。sandbox + approval 栈仍是常驻机械层
 3. **slash command（/kixpower-*）已注册为 DSH 原生命令**（P1-8，2026-08-21）：`plugins/kix-commands.js` 注册 5 命令（kixpower-new/import/continue/review/kixpower），敲 `/` 见候选、触发后 handler 读 `prompts/*.prompt.md` 剥离 frontmatter 注入 user 消息（与 /plan 同语义，零 token）。「无 UI 注册」过期文案已于 2026-08-22 全量修复（persona §DSH 适配、kixpower/SKILL.md 适配注记），不再残留
 4. **CodeGraphy / GitHub MCP 无对应**——降级 grep/read + gh CLI

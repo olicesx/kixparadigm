@@ -33,7 +33,7 @@ description: "kixParadigm — AI 自编排最小范式 + 统一入口，适合�
 
 **跨厂商模型可叠加为正交杠杆**（最高置信 claim 用；平台/库语义、语言分派、类型转换等模型间差异大的领域优先上）：
 
-> **DSH 适配注记**：下方模型字符串与 `runSubagent` 的 `model` 参数是 VS Code Copilot 机制。DSH 中跨厂商正交杠杆**已启用**：preset 注册了 `subagent_zhipu` 工具行（zai-coding-cn → GLM-5.2，1M 窗口），主模型三通道观察/最高置信 claim 时自主选用它作为跨厂商观察者（主 DeepSeek + 观察 GLM = 跨厂商取反）；普通分派用 `subagent`（继承主模型）。`workflow` 的 `agent(prompt, {provider, model})` 亦支持每次调用级覆盖。新增厂商 = settings.yaml `llm-pi-ai:` 加 profile + preset 加工具行。判据与权衡原则原样保留。
+> **DSH 适配注记**：下方模型字符串与 `runSubagent` 的 `model` 参数是 VS Code Copilot 机制。DSH 中跨厂商正交杠杆**已启用**：preset 注册了 `subagent_zhipu` 工具行（zai-coding-cn → GLM-5.3，1M 窗口，钉值跟随 settings.yaml 最新可用模型），主模型三通道观察/最高置信 claim 时自主选用它作为跨厂商观察者（主 DeepSeek + 观察 GLM = 跨厂商取反）；普通分派用 `subagent`（继承主模型）。`workflow` 的 `agent(prompt, {provider, model})` 亦支持每次调用级覆盖。新增厂商 = settings.yaml `llm-pi-ai:` 加 profile + preset 加工具行。判据与权衡原则原样保留。
 
 - 候选（2026-08-05 实测可用，Copilot 环境）：**`GLM-5.2 (CodingPlan) (gcmp.zhipu)`**（备选 `GLM-5.2 (gcmp.dashscope)`）/ **`DeepSeek-V4-Flash (gcmp.deepseek)`**（备选 `DeepSeek-V4-Flash (gcmp.dashscope)`）；按主 agent 厂商**取反**——主跑 DeepSeek 用 GLM-5.2，主跑智谱系用 V4 Flash，两者都非主厂商时选便宜的
 - 判据：优先取与主模型**解分布差异**最大者（跨厂商 > 同厂商不同代际 > 自验证）

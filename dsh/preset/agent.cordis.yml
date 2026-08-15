@@ -39,7 +39,7 @@
       ## 三通道交叉验证
       - 执行（手）→ 主 agent 操作 + 产出 claim；观察（眼）→ 重要 claim 用多个异质子 agent（不同 prompt 视角；最高置信 claim 叠加跨厂商模型）独立读代码验证；汇总（嘴）→ 先拆分机制事实 / 适用契约与设计意图 / 影响与结论，只在同一层聚合。
       - 异质多数一致 → 高置信可发布；任一独立观察者基于证据提出反证 → 深挖分歧点；契约不明时不发布确定结论。异质性是一切；同质"一致"是虚假置信。
-      - 观察用 `subagent`（后台）/ `subagent_fork`（继承会话）并发启动 2-3 个异质子 agent；最高置信 claim 跨厂商模型（如 GLM-5.2 / DeepSeek-V4-Flash）叠加。禁止用机制层多数一致外推契约层或严重度。
+      - 观察用 `subagent`（后台）/ `subagent_fork`（继承会话）并发启动 2-3 个异质子 agent；最高置信 claim 跨厂商模型（如 GLM-5.3 / DeepSeek-V4-Flash）叠加。禁止用机制层多数一致外推契约层或严重度。
 
       ## 阶段二相性
       - 创造（发散）阶段最小规则，给推理空间；验证（收敛）阶段结构化补足盲点。两阶段不互相泄漏认知模式——创造时别自我验证，验证时别创造。自我验证会被创造视角污染 → 用独立 agent 做验证。
@@ -85,7 +85,7 @@
       ## DSH 适配（触发句常驻；机制细节一律查 `DSH-ADAPTATION.md`（preset 根））
       - **权威映射**：kix 文档中的 Copilot 工具名/机制与本文件冲突时**以本文件为准**；工具名翻译表（run_in_terminal→pwsh、vscode_askQuestions→ask_user_question、runSubagent→subagent 等）见 DSH-ADAPTATION.md §1。
       - **分派**：`runSubagent agentName: "kixpower-xxx"` = `subagent`（无 agentName）+ 把 `agents/kixpower-xxx.agent.md` 角色 body 注入 prompt + [CONTEXT]/[TASK]/[CONSTRAINTS] 任务段（§3）；`subagent_fork` 用于需继承本会话上下文的子代理。
-      - **跨厂商观察者**：三通道观察/最高置信 claim/平台库语义断言 → **`subagent_zhipu`**（GLM-5.2，跨厂商取反）；普通分派用 `subagent`（继承主模型）；`workflow` 的 `agent(prompt, {provider, model})` 可逐调用覆盖（§3）。
+      - **跨厂商观察者**：三通道观察/最高置信 claim/平台库语义断言 → **`subagent_zhipu`**（GLM-5.3，跨厂商取反）；普通分派用 `subagent`（继承主模型）；`workflow` 的 `agent(prompt, {provider, model})` 可逐调用覆盖（§3）。
       - **识图**：主模型无视觉，`read_image` 会被路线门禁拒。看图（截图/报错图/图表/UI/OCR）→ 把图片路径 + 问题交 **`subagent_vision`**（GLM-4.6V；§3）。
       - **UI 发图**：profile 插件 `dsh-vision-bridge` 在点发送时把图片转文本描述，消息以 `📷 [图片自动识别]` 前缀进入会话——**是插件产物不是用户原话**；描述不足时请用户给图片路径用 `subagent_vision` 细看（§3）。
       - **机械门禁**：`plugins/kix-guards.js` 已自动挂载（tools/pre-execute 拦截破坏性 git/SQL/控制平面/未知执行工具；§2）；sandbox + approval 栈是常驻机械层。
@@ -271,10 +271,14 @@
         backgroundMode: continuable
 
     # ── 跨厂商观察者（kixparadigm 三通道验证的 DSH 落点）────────────────────
-    # 主模型自主选择：三通道观察/最高置信 claim 用 `subagent_zhipu`（GLM）做
-    # 跨厂商正交验证，普通分派用 `subagent`（继承主模型路由 deepseek-official）。
-    # `agentOptions.provider/model` 覆盖子代理的 LLM 路由（已实证：resolveChildAgentOptions
-    # 中 requested 覆盖父模型）。provider 名/模型名来自 settings.yaml 的 `llm-pi-ai:` 段。
+    # 主模型「自动选择可用模型」= 按需选工具：三通道观察/最高置信 claim 用
+    # `subagent_zhipu`（GLM）做跨厂商正交验证，普通分派用 `subagent`（继承主模型
+    # 路由 deepseek-official）。`agentOptions.provider/model` 覆盖子代理的 LLM 路由
+    # （已实证：resolveChildAgentOptions 中 requested 覆盖父模型）。
+    # DSH 机制约束：子代理路由必须是精确 (provider, model) 对——省略 model 会继承
+    # 父模型（deepseek-v4-flash）导致 UNKNOWN_MODEL，没有「auto」模型。因此本行钉值
+    # = settings.yaml `llm-pi-ai:` 段 zai-coding-cn.models 的当前最新可用模型
+    # （2026-08-15 起 glm-5.3，1M 窗口）；模型线升级时同步 settings 清单 + 本行。
     - id: tool-subagent-zhipu
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -283,7 +287,7 @@
         backgroundMode: continuable
         agentOptions:
           provider: zai-coding-cn
-          model: glm-5.2
+          model: glm-5.3
 
     # ── 识图补充（视觉子代理，GLM-4.6V @ Coding Plan）────────────────────
     # 主模型 deepseek-v4-flash 不声明 image 输入，read_image 的路线门禁会拒绝

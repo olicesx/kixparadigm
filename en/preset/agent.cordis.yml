@@ -39,7 +39,7 @@
       ## Three-Channel Cross-Validation
       - Execute (hands) → the main agent operates and produces claims; Observe (eyes) → verify important claims with multiple heterogeneous subagents (different prompt angles; cross-vendor model stacking for the highest-confidence claims) reading the code independently; Synthesize (mouth) → first separate mechanical facts / applicable contracts & design intent / impact & conclusions, and aggregate only within the same layer.
       - Heterogeneous majority agreement → high confidence, publishable; any independent observer raises an evidence-based counterclaim → dig into the divergence; never publish definitive conclusions when the contract is unclear. Heterogeneity is everything; homogeneous "agreement" is false confidence.
-      - For observation, launch 2-3 heterogeneous subagents concurrently with `subagent` (background) / `subagent_fork` (inherits session); stack cross-vendor models (e.g. GLM-5.2 / DeepSeek-V4-Flash) for the highest-confidence claims. Never extrapolate mechanism-layer majority agreement to contract-layer or severity conclusions.
+      - For observation, launch 2-3 heterogeneous subagents concurrently with `subagent` (background) / `subagent_fork` (inherits session); stack cross-vendor models (e.g. GLM-5.3 / DeepSeek-V4-Flash) for the highest-confidence claims. Never extrapolate mechanism-layer majority agreement to contract-layer or severity conclusions.
 
       ## Phase Duality
       - The creative (divergent) phase runs with minimal rules, leaving room for reasoning; the verification (convergent) phase structurally fills blind spots. The two phases must not leak cognitive modes into each other — don't self-verify while creating, don't create while verifying. Self-verification is polluted by the creative view → use independent agents for verification.
@@ -85,7 +85,7 @@
       ## DSH Adaptation (trigger phrases resident; mechanism details always in `DSH-ADAPTATION.md` at the preset root)
       - **Authoritative mapping**: when kix docs' Copilot tool names/mechanisms conflict with this file, THIS FILE wins; the tool-name translation table (run_in_terminal→pwsh, vscode_askQuestions→ask_user_question, runSubagent→subagent, etc.) is in DSH-ADAPTATION.md §1.
       - **Dispatch**: `runSubagent agentName: "kixpower-xxx"` = `subagent` (no agentName) + inject the role body of `agents/kixpower-xxx.agent.md` into the prompt + a [CONTEXT]/[TASK]/[CONSTRAINTS] task block (§3); `subagent_fork` for subagents that must inherit this session's context.
-      - **Cross-vendor observer**: three-channel observation / highest-confidence claims / platform-library semantics assertions → **`subagent_zhipu`** (GLM-5.2, cross-vendor contradiction); ordinary dispatch uses `subagent` (inherits the main model); `workflow`'s `agent(prompt, {provider, model})` can override per call (§3).
+      - **Cross-vendor observer**: three-channel observation / highest-confidence claims / platform-library semantics assertions → **`subagent_zhipu`** (GLM-5.3, cross-vendor contradiction); ordinary dispatch uses `subagent` (inherits the main model); `workflow`'s `agent(prompt, {provider, model})` can override per call (§3).
       - **Vision**: the main model has no vision; `read_image` is rejected by the routing gate. To look at images (screenshots / error images / charts / UI / OCR) → hand the image path + question to **`subagent_vision`** (GLM-4.6V; §3).
       - **UI image upload**: the profile plugin `dsh-vision-bridge` converts images to text descriptions at send time; messages enter the session prefixed `📷 [图片自动识别]` — that is plugin output, not the user's words; when the description is insufficient, ask the user for the image path and inspect with `subagent_vision` (§3).
       - **Mechanical guards**: `plugins/kix-guards.js` is auto-mounted (tools/pre-execute interception of destructive git/SQL/control-plane/unknown-exec tools; §2); the sandbox + approval stack is the resident mechanical layer.
@@ -272,10 +272,14 @@
         backgroundMode: continuable
 
     # ── 跨厂商观察者（kixparadigm 三通道验证的 DSH 落点）────────────────────
-    # 主模型自主选择：三通道观察/最高置信 claim 用 `subagent_zhipu`（GLM）做
-    # 跨厂商正交验证，普通分派用 `subagent`（继承主模型路由 deepseek-official）。
-    # `agentOptions.provider/model` 覆盖子代理的 LLM 路由（已实证：resolveChildAgentOptions
-    # 中 requested 覆盖父模型）。provider 名/模型名来自 settings.yaml 的 `llm-pi-ai:` 段。
+    # 主模型「自动选择可用模型」= 按需选工具：三通道观察/最高置信 claim 用
+    # `subagent_zhipu`（GLM）做跨厂商正交验证，普通分派用 `subagent`（继承主模型
+    # 路由 deepseek-official）。`agentOptions.provider/model` 覆盖子代理的 LLM 路由
+    # （已实证：resolveChildAgentOptions 中 requested 覆盖父模型）。
+    # DSH 机制约束：子代理路由必须是精确 (provider, model) 对——省略 model 会继承
+    # 父模型（deepseek-v4-flash）导致 UNKNOWN_MODEL，没有「auto」模型。因此本行钉值
+    # = settings.yaml `llm-pi-ai:` 段 zai-coding-cn.models 的当前最新可用模型
+    # （2026-08-15 起 glm-5.3，1M 窗口）；模型线升级时同步 settings 清单 + 本行。
     - id: tool-subagent-zhipu
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -284,7 +288,7 @@
         backgroundMode: continuable
         agentOptions:
           provider: zai-coding-cn
-          model: glm-5.2
+          model: glm-5.3
 
     # ── 识图补充（视觉子代理，GLM-4.6V @ Coding Plan）────────────────────
     # 主模型 deepseek-v4-flash 不声明 image 输入，read_image 的路线门禁会拒绝

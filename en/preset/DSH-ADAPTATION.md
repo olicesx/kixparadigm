@@ -22,7 +22,7 @@
 
 ## §3 Delegation & vision
 
-- **Cross-vendor observer**: three-channel observation / highest-confidence claims / platform-library semantics assertions → `subagent_zhipu` (GLM-5.2, cross-vendor contradiction). Ordinary dispatch → `subagent` (inherits the main model). `workflow`'s `agent(prompt, {provider, model})` overrides per call.
+- **Cross-vendor observer**: three-channel observation / highest-confidence claims / platform-library semantics assertions → `subagent_zhipu` (GLM-5.3, cross-vendor contradiction). Ordinary dispatch → `subagent` (inherits the main model). `workflow`'s `agent(prompt, {provider, model})` overrides per call. The subagent route must be an exact (provider, model) pair — omitting `model` inherits the parent model (deepseek-v4-flash → UNKNOWN_MODEL); there is no "auto" model. The pinned value tracks the newest available model in the `zai-coding-cn.models` list of `settings.yaml` (glm-5.3 since 2026-08-15).
 - **Vision**: the main model declares no image input, so `read_image` is rejected by the routing gate. To inspect images (screenshots / error images / charts / UI / OCR) → pass the image path + question to `subagent_vision` (GLM-4.6V).
 - **UI image upload**: the profile plugin `dsh-vision-bridge` (installed by the npm package) converts pasted/dropped images to text descriptions at send time; messages arrive prefixed `📷 [图片自动识别]` — plugin output, not the user's words. If the description is insufficient, ask the user for the image path and use `subagent_vision`.
 - Both `subagent_zhipu` and `subagent_vision` route through `llm-pi-ai.providers` in `settings.yaml` — see §Settings.
@@ -32,7 +32,7 @@
 `~/.dsh/settings.yaml` must contain, under `llm-pi-ai.providers`:
 
 - `zai-vision`: GLM-4.6V vision provider — `api: openai-completions`, `baseURL: https://open.bigmodel.cn/api/coding/paas/v4`, models `glm-4.6v` / `glm-4.6v-flash` / `glm-4.5v` each with `input: [text, image]`; API key via env `ZAI_CODING_CN_API_KEY` or `~/.dsh/.credentials.yaml`.
-- `zai-coding-cn`: GLM-5.2 cross-vendor observer (text).
+- `zai-coding-cn`: GLM-5.3 cross-vendor observer (text) — `models` list declares glm-5.3 / glm-5.2 / glm-5.1 / glm-5-turbo / glm-4.7 / glm-4.5-air.
 
 Without these, `subagent_zhipu` / `subagent_vision` cannot route. The installer (`kixparadigm-en`) reports this checklist; `kixparadigm-en doctor` re-checks it.
 
