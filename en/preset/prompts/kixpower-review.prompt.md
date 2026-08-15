@@ -186,12 +186,10 @@ reviewer: kixpower-orchestrator
 5. `APPROVE` 还要求两个独立 agent 均未发现 blocking/major；否则拒绝 approve
 6. 复核通过后才进入阶段 3 发布 gate
 
-**Dev 子 agent 调用模板**（Tri-Block）：
+**Dev 子 agent 调用模板**（Tri-Block；DSH：用 `subagent_cross` 自动取反厂商 = 异质第二视角，不写死模型字符串）：
 
 ```
-工具: runSubagent
-agentName: "kixpower-reviewer"
-model: "GLM-5.2 (CodingPlan) (gcmp.zhipu)"
+工具: subagent_cross
 prompt: |
   [CONTEXT]
   handoff_mode: review
@@ -208,12 +206,10 @@ prompt: |
   只输出 YAML：claims: [{id, mechanism: {status, evidence}, contract: {status, evidence}, impact: {status, evidence}, rebuttal}]；status 仅允许 confirmed|disputed|unknown
 ```
 
-**QA 子 agent 调用模板**（Tri-Block）：
+**QA 子 agent 调用模板**（Tri-Block；DSH：用 `subagent` 继承主模型 = 同厂商视角，与 Dev 的跨厂商视角形成异质对）：
 
 ```
-工具: runSubagent
-agentName: "kixpower-reviewer"
-model: "DeepSeek-V4-Flash (gcmp.deepseek)"
+工具: subagent
 prompt: |
   [CONTEXT]
   handoff_mode: review

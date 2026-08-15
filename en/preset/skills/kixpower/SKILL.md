@@ -5,6 +5,8 @@ description: "Kixpower — AI 多智能体协作编排（v5.7）。采用 DAG �
 ---
 
 > **DSH 适配注记**：本文件从 VS Code Copilot 导入。工具名/机制映射（runSubagent→subagent、run_in_terminal→pwsh、vscode_askQuestions→ask_user_question、hooks 不自动触发（已由 kix-guards 原生替代）、跨厂商模型字符串不适用（用 `subagent_cross` 工具行）、slash command 已注册为 DSH 原生命令）见 preset 根 `DSH-ADAPTATION.md`，冲突时以该文件为准。
+>
+> **2026-08-16 插件化改造注记**：本文件的编排纪律已插件化——机械门禁 `kix-guards`、纪律 gate `kix-discipline`、**编排交接门禁 `kix-orchestration`**（subagent 交接前校验 sprint marker/plan/progress/blocker/QA 完成度，对应 Copilot 侧 validate-handoff.ps1 的有界移植）、成本分层 `kix-cost`、路由 `kix-route`。本文件保留编排认知与方法（路由索引/流程模板/团队手册），与插件冲突时以插件行为准。改造总览见 preset 根 `PLUGINIZATION-ROADMAP.md`。
 
 # Kixpower — Skill 入口（路由索引）
 

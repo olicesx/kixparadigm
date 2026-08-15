@@ -44,8 +44,30 @@
 | 文件写入拦截 | `fs/write-intent` / `fs/edit-intent` 事件 | 可替代 block-source-edit（拦截 write/edit 工具） |
 | `chat.useCustomAgentHooks` | 无开关——监听器按 scope 挂载即生效（scope-filtered：agent-scoped 监听器只收到该 agent 的调用） | 天然支持"不同角色不同 hook"（producer 禁写源码、QA 禁写业务代码…） |
 
-**hooks/*.ps1 的现状**：保留为参考实现 + 手动机械检查（经 `pwsh` 调用，输入 JSON 按 hook 文档构造）。要把它们变成自动拦截，用上面的事件监听器重写对应逻辑（JS 版）并挂到 preset 的 agent 层——这是"DSH 原生机械门禁"的正确形态。
+**hooks/*.ps1 的现状（2026-08-16 更新）**：9 个 Copilot hooks 中，
+- ✅ **blast-radius-check.ps1** → `plugins/kix-guards.js`（pre-execute，5 大门禁/164 断言）
+- ✅ **validate-handoff.ps1**（核心通用部分：sprint marker/plan/progress/blocker/QA 完成度）→ `plugins/kix-orchestration.js`（pre-execute，25 断言，2026-08-16）
+- ⚠️ **validate-handoff 深度部分**（worktree 登记 / plan_snapshot_sha / l2_gate_manifest_sha256 / stash 基线 / reverify marker）**不移植**——绑定 Copilot 的 runSubagent+agentName 分派格式，DSH 是 prompt 注入，过度移植 = 负债（见 PLUGINIZATION-ROADMAP.md §5 P2 决策）
+- ⚠️ **block-source-edit / block-dev-authority-edit / block-source-edit-qa** → 角色边界，DSH subagent 无角色标记，保留为 prompt 硬约束（kix-guards v3 已决策不接）
+- ❌ **validate-qa-signoff / qa-freshness / cleanup-qa-session / auto-update-progress** → DSH 无对应编排流程（L2 manifest/QA session 是 Copilot 特有），不移植
+要把剩余 hooks 变成自动拦截，用 `tools/pre-execute`/`post-execute` 事件监听器重写对应逻辑（JS 版）并挂到 preset 的 agent 层——这是"DSH 原生机械门禁"的正确形态。
 autoApprove 全开 → 对应 DSH 权限预设（本部署 `danger-full-access`）；`ask_user_question` 仍是发布/合并/破坏性操作前的确认闸。
+
+**纪律 gate 插件（kix-discipline，2026-08-16 新增）**：需求三检/验证 gate 从 prompt 说教改为机制强制（见 `PLUGINIZATION-ROADMAP.md` P0）：
+- `tools/pre-execute`：实现编辑（edit/write）前查需求三检契约（spec）在档；无 spec + 首次实现编辑 → `remind`（默认，放行+注入提醒一次）/ `ask`（聊天内提问）/ `block`（deny）。测试文件永远放行
+- `kix_discipline_spec` 工具：模型记录契约（goal/xy/assumptions/path/acceptance 五字段，对应 kix 需求三检①XY ②前提 ③路径），写工作区 `kix-discipline/spec.md`（跨会话可查）
+- `agent/turn-stopping`：回合结束有实现编辑但无测试运行 → 注入「交付前验证三问」提醒（remindOnce）
+- `/kix-discipline` 命令：status/report/on|off
+- 强度默认 `remind`（限制越少越好；字面明确低风险可逆任务可忽略提醒直接执行）；`ask`/`block` 需在 agent.cordis.yml 该行 config 显式配置
+- 边界：按 agent scope 挂载，不覆盖子代理会话；与 kix-guards 同款（见 §9 已知限制①）
+
+**极简+渐进披露插件（kix-focus，2026-08-16 新增，三层递进 P4）**：把模型每轮可见工具面从 ~85 个（~108KB schema，估算 ~30.8K token）裁到常驻核心集，量化 **-81.6%**（`scripts/quantify-focus.cjs` 可复跑）：
+- **Phase 1 裁剪**：`tools.restrict({ allow })` —— allow 只列**全局工具**（RESTRICT_ALLOW ~11 个：edit/write/pwsh/read/grep/glob/ask_user_question/todo_write/skill/web_search）；subagent 五档与 kix_capability_* 是 **scope 注册工具，自动可见，不列入 allow**（DSH restrict 契约：scope-local 名列入会 fail）。MCP（GitHub/Playwright/Context7/Semgrep）、workflow/goal/ralph/job_*/cordis_* 按需。`tools/change` 事件重试（MCP 可能晚于插件注册）。restrict 只影响模型可见面，scope 工具与门禁插件不受影响
+- **Phase 2 渐进披露**：`kix_capability_search`（用**全局视图** `schemas(undefined)` 列出被裁剪工具，返回分组元数据不含全 schema）+ `kix_capability_call`（`get(name, undefined)` 全局存在性检查 + 经 `ctx.tools.execute` 代理执行，走完整 pre-execute→guards→execute→post-execute 管线，门禁依然拦截；**传播 `rootCallId`**（嵌套执行树归属），带 agent 调用非 model-direct 不会被 UNKNOWN_TOOL 拒绝）
+- **感知设计（2026-08-16 修订）**：**不挂 pre-execute deny**——restrict 已保证被裁剪工具对模型不可见（直呼=UNKNOWN_TOOL 到不了 pre-execute），且 capability_call 内部子调用必须放行（否则代理永远失败）；引导由 call 返回与 persona 触发句承担
+- **Phase 3 PTC 协同**：保持 `tool-presentation mode: both`；kix 红线「验证/观察用 native 直呼（证据可回放）」不变；capability_call 亦可被 run_code SDK 子分派调用（子分派过门禁）
+- 配置：`enableRestrict: false` 关闭裁剪（仅保留 search/call）；`extraResidentTools` 追加常驻
+- 与 kix-guards 交互：capability_call/search 已入 KNOWN_SAFE_TOOLS 白名单（防未来正则误伤）；被代理工具的每次子调用仍过 kix-guards 门禁
 
 ## 3. 团队编排（runSubagent agentName → DSH subagent + prompt 注入）
 
@@ -127,6 +149,23 @@ kix 的原始编排假设只有 runSubagent；DSH 提供更结构化的原生能
 
 **记忆（6 个，preset `memories/`）**：原 3 个 + **新增 2 个通用**：kix-review-patterns.md（审查方法论，私有项目 PR 实证）、tech-patterns.md（Windows/Unity/开发工具模式）+ **dsh-capability-map.md**（DSH 机制事实地图，kix×DSH 任务先查；2026-08-15 补入 preset）。
 **不迁移**（领域专属，内部系统与运维记忆 5 个：机器配置 / 内部业务公式 / 数据库链路模式等，名字从略）。
+
+### §6.1 迁移完整性审计（2026-08-16，用户"迁移是否失真"质疑驱动）
+
+对 `~/.copilot/`（VS Code Copilot 原始配置）、`%APPDATA%\Code\User\prompts\`、`~/.claude/` 与 `dsh/preset/` 做全量对比：
+
+| 层面 | 对比方法 | 结论 |
+|---|---|---|
+| agents（6 角色） | 内容级 diff（去空白 + 中文词） | ✅ **DSH 是超集**（orchestrator 等均 0 独有词；DSH 追加了适配注记） |
+| skills（23 vs 17） | 目录对比 | ⚠️ 7 个未迁移，其中 6 个领域专属（Unity/RPGMaker/脚手架），`git-guardrails` 已被 kix-guards 替代（见上） |
+| kixparadigm SKILL.md | 章节对比（含 84KB .bak-20260804 旧版） | ✅ DSH 是超集（bak 独有词为措辞差异；DSH 还多「实践回收」子节） |
+| kixpower 脚本/tests/templates | 目录对比 | ✅ 完全一致（templates DSH 还多 `kixpower-workflow.template.md`） |
+| prompts（5 个） | 大小 + 内容 diff（VS Code 用户级目录） | ✅ DSH 是超集（4 个 0 独有词；review 独有 2 通用词非机制） |
+| instructions | 大小对比 | ✅ 一致（DSH 8,017B vs Copilot 7,604B，差异为适配注记） |
+| hooks 自动化（9 个） | 功能映射 | ❌→✅ **真实失真已补**：blast-radius→kix-guards；validate-handoff 核心→kix-orchestration（2026-08-16）；其余按 kix 哲学决策不移植（见 §2） |
+| `~/.claude/` | 目录扫描 | 无 kix 资产（skills 为空 learned 目录；homunculus 空） |
+
+**结论**：文件层面迁移完整（DSH 是超集）；唯一的真实失真是 **hooks 自动化的丢失**——Copilot 侧 9 个 PreToolUse/PostToolUse hooks 自动触发，迁移后 8 个变"仅 prompt 约束"。已由 `kix-orchestration` 插件补上核心通用部分（见 §2 hooks 现状），其余为 Copilot 特有流程（worktree/SHA/manifest 深度校验）或角色边界（prompt 硬约束），按"规则是负债"有意不移植。
 
 ## 7. 已知限制（诚实声明）
 

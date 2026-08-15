@@ -24,7 +24,7 @@ hooks:
       timeout: 10
 ---
 
-> **DSH 适配注记**：本角色定义从 VS Code Copilot 导入，在 DeepSeek Harness 中作为 subagent 分派的 prompt 模板使用（DSH 的 subagent 无 agentName 参数，把本文件角色 body 注入 prompt 即可）。文档中的工具名/机制映射见 preset 根 DSH-ADAPTATION.md（runSubagent→subagent、run_in_terminal→pwsh、vscode_askQuestions→ask_user_question、hooks 需手动调用）。角色职责、硬约束、可编辑范围原样生效。
+> **DSH 适配注记**：本角色定义从 VS Code Copilot 导入，在 DeepSeek Harness 中作为 subagent 分派的 prompt 模板使用（DSH 的 subagent 无 agentName 参数，把本文件角色 body 注入 prompt 即可）。文档中的工具名/机制映射见 preset 根 DSH-ADAPTATION.md（runSubagent→subagent/subagent_cross、run_in_terminal→pwsh、vscode_askQuestions→ask_user_question、codegraphy_*→grep/read）。**机械门禁（Guardrails 表中 blast_radius_* / tool_failure 熔断）已由 `plugins/kix-guards.js` 自动强制（tools/pre-execute），orchestrator 不必自行实现 hook**；跨厂商子代理用 `subagent_cross`（kix-route 自动取反厂商），不写死模型字符串。角色职责、硬约束、可编辑范围原样生效。
 
 # Kixpower Orchestrator — 全流程编排器
 
@@ -93,21 +93,21 @@ L1/L2 是单 Sprint 内的；L4 是跨 Sprint 的复利效应（build learning l
 
 借鉴 Loop Engineering（Data Science Dojo 2026 Guide）、Magentic-One Inner/Outer Loop、9 Ways Agents Break in Production（2026.05），以下是**不可协商**的硬限制。任一触发立即停止推进并按指定动作处理。
 
-| Guardrail | 阈值 | 触发动作 |
-|---|---|---|
-| **max_subagent_calls_per_session** | 10 次 | 停止调用子 agent，做 handoff，告知用户开新对话 |
-| **max_tokens_per_session** | 窗口 × 0.88（默认 1M 模型=880K） | 立即 handoff，不再调用任何子 agent。**v3.7 改为百分比**：见 TEAM_CONVENTIONS.md「模型上下文窗口约定」 |
-| **max_tokens_per_subagent_run** | 窗口 × 0.25（1M 模型=250K） | 单次 run 超阈值 → 中止该 run，计入 `single_subagent_retry_cap`，分析是否 plan.md 拆得不够细 |
-| **no_progress_threshold** | 连续 2 轮子 agent 返回相同 status（artifacts 变更数为 0 且 progress.md 未变） | 标记 `silent_failure`，强制停，分析根因 |
-| **tool_failure_circuit_breaker** | 同一工具失败 3 次 | 跳过该工具，降级（如 CodeGraphy → grep_search），记入 progress.md |
-| **single_subagent_retry_cap** | 单个 stage 的子 agent 最多重试 1 次（指 Producer/Dev/QA 三大阶段） | 仍失败 → Blocked 区块，交回用户 |
-| **l2_verification_retry_cap** | L2 Verification Loop 内的 rubric-retry 最多 2 次（独立预算，不计入 stage retry） | 超出 → 转 Inner/Outer Dual Loop |
-| **blast_radius_commit_budget** | **task_sizing 派生**（v5.0 公式：`dag_layers + strong_coupling_count + bug_reserve`，硬上限 10）| `blast-radius-check.ps1` hook 三级回退（progress.md → plan.md task_sizing → 冷启动兜底 3），超 hard_cap=10 硬阻止，超 derived 阻止可调，超 warn_threshold 软警告。v5.0 详见 TEAM_CONVENTIONS.md §Task Sizing。**反过拟合注**：旧 v4.x 公式 `ceil(task_count/3)+...` 对 dae Sprint1(k=7) 恰得 5，与被批的旧硬编码常数 5 巧合相等（因果倒置），v5.0 改用 δ 驱动后得 6，证明有信息增量 |
-| **blast_radius_branch** | 必须在 feature branch | hook 硬拦在 main/master 的 commit |
-| **blast_radius_force_push** | git push --force | hook 硬拦，需用户确认 |
-| **blast_radius_destructive_sql** | DROP/TRUNCATE/DELETE without WHERE | hook 硬拦 |
-| **max_parallelism** | 并行 `runSubagent` 同时调用 ≤ **dag.ω**（v5.0：默认由 DAG 最大反链宽度实时决定） | **v5.0 反过拟合改造**：旧版默认 5 来自「SWE-bench 平均 ω=3.4 + Anthropic 5 parallel」——把论文某 benchmark 均值当全局常数，正是 AdaptOrch 反对的静态化。AdaptOrch 的 ω(G_T) 是**每个任务 DAG 自己的结构属性**（max antichain width），应由 Producer 实时计算写入 plan.md，每个 Sprint 不同。冷启动（dag.ω 缺失）回退项目历史均值，再无则 3（保守）。kixpower 有 worktree 隔离 + target_rules 互斥，协调开销低。超限 → 拆批。**可配置**：PROJECT_BRIEF.md `max_parallelism` 覆盖。实际上限 = `min(user_setting, dag.ω, 8)`，8 是 API-safe 软帽 |
-| **synthesis_iteration_cap** | 并行输出的 synthesis 重试 ≤ 5 次 | AdaptOrch Proposition 2 终止保证：每轮 γ += 0.2，5 轮后 γ > 1.0 强制转 hierarchical（单 arbiter），数学上保证终止。**v5.0 注**：γ 步长 0.2 与 cap 5 的 0.2×5=1.0 是凑数关系，未来应改为 `γ_step = f(CS_history)`（CS 下降慢则大步长）+ 「连续 2 轮 CS 无改善」动态终止，本期保留常数 |
+| Guardrail | 阈值 | 触发动作 | DSH 承载 |
+|---|---|---|---|
+| **max_subagent_calls_per_session** | 10 次 | 停止调用子 agent，做 handoff，告知用户开新对话 | 模型自律 |
+| **max_tokens_per_session** | 窗口 × 0.88（默认 1M 模型=880K） | 立即 handoff，不再调用任何子 agent。**v3.7 改为百分比**：见 TEAM_CONVENTIONS.md「模型上下文窗口约定」 | 模型自律（compaction 由 harness 自动触发） |
+| **max_tokens_per_subagent_run** | 窗口 × 0.25（1M 模型=250K） | 单次 run 超阈值 → 中止该 run，计入 `single_subagent_retry_cap`，分析是否 plan.md 拆得不够细 | 模型自律（工具行 maxTokens 兜底） |
+| **no_progress_threshold** | 连续 2 轮子 agent 返回相同 status（artifacts 变更数为 0 且 progress.md 未变） | 标记 `silent_failure`，强制停，分析根因 | 模型自律（可配 kix-stalled） |
+| **tool_failure_circuit_breaker** | 同一工具失败 3 次 | 跳过该工具，降级（如 CodeGraphy → grep_search），记入 progress.md | 模型自律 |
+| **single_subagent_retry_cap** | 单个 stage 的子 agent 最多重试 1 次（指 Producer/Dev/QA 三大阶段） | 仍失败 → Blocked 区块，交回用户 | 模型自律 |
+| **l2_verification_retry_cap** | L2 Verification Loop 内的 rubric-retry 最多 2 次（独立预算，不计入 stage retry） | 超出 → 转 Inner/Outer Dual Loop | 模型自律 |
+| **blast_radius_commit_budget** | **task_sizing 派生**（v5.0 公式：`dag_layers + strong_coupling_count + bug_reserve`，硬上限 10）| `blast-radius-check.ps1` hook 三级回退（progress.md → plan.md task_sizing → 冷启动兜底 3），超 hard_cap=10 硬阻止，超 derived 阻止可调，超 warn_threshold 软警告。v5.0 详见 TEAM_CONVENTIONS.md §Task Sizing。**反过拟合注**：旧 v4.x 公式 `ceil(task_count/3)+...` 对 dae Sprint1(k=7) 恰得 5，与被批的旧硬编码常数 5 巧合相等（因果倒置），v5.0 改用 δ 驱动后得 6，证明有信息增量 | ✅ **kix-guards 插件强制**（commit budget：reflog 计数 / hard cap 10 / progress.md 预算 / 冷启动 3） |
+| **blast_radius_branch** | 必须在 feature branch | hook 硬拦在 main/master 的 commit | ✅ **kix-guards 插件强制**（真实分支检查） |
+| **blast_radius_force_push** | git push --force | hook 硬拦，需用户确认 | ✅ **kix-guards 插件强制**（force push 检测；需确认时聊天内提问） |
+| **blast_radius_destructive_sql** | DROP/TRUNCATE/DELETE without WHERE | hook 硬拦 | ✅ **kix-guards 插件强制**（语句级判定） |
+| **max_parallelism** | 并行 `runSubagent` 同时调用 ≤ **dag.ω**（v5.0：默认由 DAG 最大反链宽度实时决定） | **v5.0 反过拟合改造**：旧版默认 5 来自「SWE-bench 平均 ω=3.4 + Anthropic 5 parallel」——把论文某 benchmark 均值当全局常数，正是 AdaptOrch 反对的静态化。AdaptOrch 的 ω(G_T) 是**每个任务 DAG 自己的结构属性**（max antichain width），应由 Producer 实时计算写入 plan.md，每个 Sprint 不同。冷启动（dag.ω 缺失）回退项目历史均值，再无则 3（保守）。kixpower 有 worktree 隔离 + target_rules 互斥，协调开销低。超限 → 拆批。**可配置**：PROJECT_BRIEF.md `max_parallelism` 覆盖。实际上限 = `min(user_setting, dag.ω, 8)`，8 是 API-safe 软帽 | 模型自律 |
+| **synthesis_iteration_cap** | 并行输出的 synthesis 重试 ≤ 5 次 | AdaptOrch Proposition 2 终止保证：每轮 γ += 0.2，5 轮后 γ > 1.0 强制转 hierarchical（单 arbiter），数学上保证终止。**v5.0 注**：γ 步长 0.2 与 cap 5 的 0.2×5=1.0 是凑数关系，未来应改为 `γ_step = f(CS_history)`（CS 下降慢则大步长）+ 「连续 2 轮 CS 无改善」动态终止，本期保留常数 | 模型自律 |
 
 > Token 水位线预警表（已存在，下方）和本表协同：水位线是**软警告**，本表是**硬熔断**。
 

@@ -11,7 +11,7 @@ hooks:
 			timeout: 10
 ---
 
-> **DSH 适配注记**：本角色定义从 VS Code Copilot 导入，在 DeepSeek Harness 中作为 subagent 分派的 prompt 模板使用（DSH 的 subagent 无 agentName 参数，把本文件角色 body 注入 prompt 即可）。文档中的工具名/机制映射见 preset 根 DSH-ADAPTATION.md（runSubagent→subagent、run_in_terminal→pwsh、vscode_askQuestions→ask_user_question、hooks 需手动调用）。角色职责、硬约束、可编辑范围原样生效。
+> **DSH 适配注记**：本角色定义从 VS Code Copilot 导入，在 DeepSeek Harness 中作为 subagent 分派的 prompt 模板使用（DSH 的 subagent 无 agentName 参数，把本文件角色 body 注入 prompt 即可）。文档中的工具名/机制映射见 preset 根 DSH-ADAPTATION.md（runSubagent→subagent/subagent_cross、run_in_terminal→pwsh、vscode_askQuestions→ask_user_question）。**frontmatter 的 hooks 块不自动触发**——blast-radius 等机械门禁已由 `plugins/kix-guards.js`（tools/pre-execute）原生强制。角色职责、硬约束、可编辑范围原样生效。
 
 # kixparadigm — AI 自编排范式主入口
 

@@ -99,6 +99,9 @@ kix 体系分两层，本仓库把两层 + 生态依赖一次性装齐：
 | **执行层（怎么执行）** | `kixpower` | 多智能体协作编排：Producer 规划 → Dev 实现 → QA 验证，Sprint 化、DAG 拓扑、4 层 loop、可验证 gate |
 | **生态辅助** | `handoff` / `write-a-skill` / `improve-codebase-architecture` 等 17 技能 | 会话交接、技能创建、架构改进、TDD/教学/排查等通用方法论 |
 | **机械门禁** | `kix-guards` 插件 | commit budget、feature branch、force push、危险 SQL、控制面文件保护、人类确认点（164 组断言；v5 聊天内提问 + v4 GitHub 只读误拦修复） |
+| **纪律机制化** | `kix-discipline` 插件 | 需求三检契约 gate + 验证 gate：实现编辑前查 spec 契约、回合结束无测试提醒、`kix_discipline_spec` 契约工具、`/kix-discipline` 命令（43 组断言，2026-08-16 插件化改造 P0） |
+| **编排交接门禁** | `kix-orchestration` 插件 | subagent 交接前校验 sprint marker / plan+progress / blocker / QA 完成度（validate-handoff.ps1 的有界移植，25 组断言，2026-08-16 P2 补缺） |
+| **极简+渐进披露** | `kix-focus` 插件 | 三层递进：tools.restrict 把每轮工具面从 85 个（~108KB schema）裁到 ~18 个常驻核心集；`kix_capability_search` 按需查目录 + `kix_capability_call` 代理执行（走完整门禁管线）；与 PTC/Code Mode 协同（32 组断言，2026-08-16 P4） |
 | **成本纪律** | `kix-cost` 插件 | 子代理思考强度归一化（thinker→max、其余 deepseek→high）+ lite 档首选路由探测自动回退（24 组断言，v5.8） |
 | **原生命令** | `kix-commands` 插件 | `/kixpower-*` 五命令注册为 DSH 原生命令（零 token 触发，读 `prompts/` 注入流程） |
 | **stalled 检测** | `kix-stalled` 插件（可选） | `/kixst-check` 命令 + `kix_stalled_check` 工具：只读检测停滞 Sprint（candidate，默认注释挂载 = opt-in，`scripts/install-kix-stalled.ps1` 启用） |
@@ -125,8 +128,9 @@ kixparadigm/
 │   │   ├── agent.cordis.yml         ← 组成（persona 常驻认知层 + 全部能力行）
 │   │   ├── preset.yml               ← roster 显示元数据
 │   │   ├── DSH-ADAPTATION.md        ← 权威机制映射（工具名/门禁/编排/vision）
+│   │   ├── PLUGINIZATION-ROADMAP.md ← 插件化改造路线图（2026-08-16）
 │   │   ├── skills/  agents/  prompts/  instructions/  memories/
-│   │   └── plugins/                 ← kix-guards.js + kix-commands.js + kix-stalled.js（opt-in）+ 测试
+│   │   └── plugins/                 ← kix-guards + kix-discipline + kix-orchestration + kix-focus + kix-cost + kix-route + kix-commands + kix-stalled（opt-in）+ 测试
 │   ├── vision-bridge/               ← dsh-vision-bridge 插件源码（client + server + package.json）
 │   └── README-DSH.md                ← DSH 部署说明
 │
@@ -144,7 +148,7 @@ kixparadigm/
 ## 🧪 开发与验证
 
 ```bash
-npm test                                  # 门禁 164 断言 + 命令 6 组断言 + 成本 24 断言 + 路由 57 断言
+npm test                                  # 门禁 164 断言 + 命令 6 组断言 + 成本 24 断言 + 路由 57 断言 + 纪律 43 断言 + 编排 25 断言 + 聚焦 28 断言
 node scripts/verify-guards.js             # 已安装 preset 与 bundle 门禁对照
 node scripts/verify-vision-bridge-resolution.cjs  # vision-bridge 加载链全链路
 pwsh -File .\scripts\sync-dsh-preset.ps1 -DryRun   # 预览 preset 差异

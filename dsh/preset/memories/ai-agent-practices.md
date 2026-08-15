@@ -1,5 +1,12 @@
 # AI Agent 编码实践经验（通用，跨项目适用）
 
+> **DSH 适配注记（2026-08-16 插件化改造）**：本文件是方法论记忆（历史经验记录），其中
+> Copilot 工具名（`replace_string_in_file`→`edit`、`read_file`→`read`、`grep_search`→`grep`、
+> `run_in_terminal`→`pwsh`、`runSubagent`→`subagent`/`subagent_cross`、`vscode_askQuestions`→
+> `ask_user_question`）在 DeepSeek Harness 中按 preset 根 `DSH-ADAPTATION.md` §1 映射理解；
+> **经验语义原样适用**（编辑方式、GBK 伪象、WSL 双真相、token 纪律等教训不随工具名变化）。
+> 本文件按需读取，不常驻。
+
 ## 编辑方式
 
 - **源码文件编辑首选 `replace_string_in_file`**，不受 shell 转义影响

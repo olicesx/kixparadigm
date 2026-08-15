@@ -8,11 +8,19 @@
 
 ```
 kixparadigm/                      ← 本 preset
-├── agent.cordis.yml              ← 组成（persona 常驻认知层 + 全部能力行 + kix-guards 门禁）
+├── agent.cordis.yml              ← 组成（persona 常驻认知层 + 全部能力行 + 6 插件）
 ├── preset.yml                    ← 展示元数据
 ├── DSH-ADAPTATION.md             ← 权威 DSH 适配层（工具映射/门禁/编排/限制）
+├── PLUGINIZATION-ROADMAP.md      ← 插件化改造路线图（2026-08-16）
 ├── plugins/
-│   └── kix-guards.js             ← 机械门禁（tools/pre-execute 自动拦截，blast-radius 移植）
+│   ├── kix-guards.js             ← 机械门禁（tools/pre-execute 自动拦截，blast-radius 移植）
+│   ├── kix-discipline.js         ← 纪律机制化（需求三检契约 gate + 验证 gate，2026-08-16）
+│   ├── kix-orchestration.js      ← 编排交接门禁（sprint marker/plan/progress/blocker 校验，2026-08-16）
+│   ├── kix-focus.js              ← 极简+渐进披露（restrict 裁剪 + capability_search/call，2026-08-16）
+│   ├── kix-cost.js               ← 成本分层（子代理思考强度归一化 + lite 自动选型）
+│   ├── kix-route.js              ← 子代理路由（cross/vision/thinker 哨兵解析）
+│   ├── kix-commands.js           ← /kixpower-* 原生命令
+│   └── kix-stalled.js            ← 停滞检测（opt-in）
 ├── instructions/
 │   └── kixparadigm-core.instructions.md   ← 常驻认知层原件
 ├── skills/                       ← 17 个技能（挂到本 preset 的 skill 目录）

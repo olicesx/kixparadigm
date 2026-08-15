@@ -3,7 +3,7 @@ description: "🔍 [v5.7] PR 审查模式：独立 worktree deterministic gate +
 agent: "kixpower-orchestrator"
 ---
 
-> **DSH 适配注记**：本流程从 VS Code Copilot 导入，在 DeepSeek Harness 中执行。文档中的工具名/机制按 preset 根 `DSH-ADAPTATION.md` 映射（run_in_terminal→pwsh、read_file→read、grep_search→grep、replace_string_in_file→edit、create_file→write、vscode_askQuestions→ask_user_question、runSubagent→subagent（prompt 注入 agents/*.agent.md 角色 body）、mcp_github_*→gh CLI、codegraphy_*→grep/read）。`{{input}}` 即用户输入。`/kixpower-*` 已注册为 DSH 原生命令（kix-commands 插件）：用户敲 `/` 可见候选，触发后本文件正文经剥离 frontmatter 注入为 user 消息，模型按流程执行。
+> **DSH 适配注记**：本流程从 VS Code Copilot 导入，在 DeepSeek Harness 中执行。工具名已按 preset 根 `DSH-ADAPTATION.md` 映射为 DSH 原生（run_in_terminal→`pwsh`、read_file→`read`、grep_search→`grep`、replace_string_in_file→`edit`、create_file→`write`、vscode_askQuestions→`ask_user_question`、runSubagent→`subagent`/`subagent_cross`（prompt 注入 agents/*.agent.md 角色 body）、mcp_github_*→`mcp__github__*` 或 gh CLI、codegraphy_*→`grep`/`read`）；**跨厂商复核不再写死模型字符串，用 `subagent_cross` 工具行（kix-route 自动取反厂商）**。`{{input}}` 即用户输入。`/kixpower-*` 已注册为 DSH 原生命令（kix-commands 插件）：用户敲 `/` 可见候选，触发后本文件正文经剥离 frontmatter 注入为 user 消息，模型按流程执行。
 
 执行 **模式 4：PR 审查**。
 
@@ -186,12 +186,10 @@ reviewer: kixpower-orchestrator
 5. `APPROVE` 还要求两个独立 agent 均未发现 blocking/major；否则拒绝 approve
 6. 复核通过后才进入阶段 3 发布 gate
 
-**Dev 子 agent 调用模板**（Tri-Block）：
+**Dev 子 agent 调用模板**（Tri-Block；DSH：用 `subagent_cross` 自动取反厂商 = 异质第二视角，不写死模型字符串）：
 
 ```
-工具: runSubagent
-agentName: "kixpower-reviewer"
-model: "GLM-5.2 (CodingPlan) (gcmp.zhipu)"
+工具: subagent_cross
 prompt: |
   [CONTEXT]
   handoff_mode: review
@@ -208,12 +206,10 @@ prompt: |
   只输出 YAML：claims: [{id, mechanism: {status, evidence}, contract: {status, evidence}, impact: {status, evidence}, rebuttal}]；status 仅允许 confirmed|disputed|unknown
 ```
 
-**QA 子 agent 调用模板**（Tri-Block）：
+**QA 子 agent 调用模板**（Tri-Block；DSH：用 `subagent` 继承主模型 = 同厂商视角，与 Dev 的跨厂商视角形成异质对）：
 
 ```
-工具: runSubagent
-agentName: "kixpower-reviewer"
-model: "DeepSeek-V4-Flash (gcmp.deepseek)"
+工具: subagent
 prompt: |
   [CONTEXT]
   handoff_mode: review
@@ -245,7 +241,7 @@ prompt: |
 
 #### 🔴 步骤 0：发布前用户确认 gate（MUST，不可跳过）
 
-> 所有评论内容（行内 + PR 级汇总）准备完毕后、调用 GitHub 写工具**之前**，orchestrator 必须调用 `vscode_askQuestions` 让用户确认。禁止"准备好就直接发布"。
+> 所有评论内容（行内 + PR 级汇总）准备完毕后、调用 GitHub 写工具**之前**，orchestrator 必须调用 `ask_user_question` 让用户确认。禁止"准备好就直接发布"。
 
 > **全权委托语义（2026-08-12 实证）**：用户"全权委托/自由审阅"授权**执行**审查，**不豁免**本确认 gate；仅当用户显式声明豁免（如"跳过发布确认"）才可跳过。委托 ≠ 授权默认跳过安全 gate。
 
@@ -279,7 +275,7 @@ prompt: |
 **POST 前必跑清单**（用户确认通过后、每条 review/comment 发布前自检）：
 
 1. **GET 校验**：发之前先 `gh api repos/<owner>/<repo>/pulls/<N>/reviews --jq '.[].id'` 看本次会话已发布的 review ID 列表，对比即将发布的，避免重复 POST
-2. **exit code 0 即成功**：`run_in_terminal` sync 模式下，**exit code 0 + 无 stderr error = 已成功**。PowerShell 长命令回显被截断（残留如 `d" -Raw -Encoding utf8`）**不是失败信号**，禁止据此重试
+2. **exit code 0 即成功**：`pwsh` sync 模式下，**exit code 0 + 无 stderr error = 已成功**。PowerShell 长命令回显被截断（残留如 `d" -Raw -Encoding utf8`）**不是失败信号**，禁止据此重试
 3. **UTF-8 body**：保留正文语言、`✅`/`🔴`/`📋` 和 em dash；优先通过 GitHub typed tool 的 body 字段发送，不做 ASCII 降级
 4. **gh CLI 仅作降级**：typed tool 不可用时，多行 body 才写 UTF-8 JSON 并用 `--input`；禁止 `gh api -F body="$var"`
 5. **记录已发布 ID**：每条 POST 成功后立即记下返回的 review/comment ID 到会话笔记

@@ -8,7 +8,7 @@ npm i -g kixparadigm-en
 
 Installs automatically:
 
-1. **Preset** → `~/.dsh/.agent-presets/kixparadigm-en/` — English resident cognition layer (Three-Channel Cross-Validation, Phase Duality, Rules Are Liabilities, Triple Requirement Check, Pre-Code Decision Chain, AI Blind-Spot Map, Process Routing Signals, CEO Team Orchestration) + full coding-agent toolset + mechanical guards (`kix-guards`) + native `/kixpower-*` commands (`kix-commands`) + vision bridge
+1. **Preset** → `~/.dsh/.agent-presets/kixparadigm-en/` — English resident cognition layer (Three-Channel Cross-Validation, Phase Duality, Rules Are Liabilities, Triple Requirement Check, Pre-Code Decision Chain, AI Blind-Spot Map, Process Routing Signals, CEO Team Orchestration) + full coding-agent toolset + mechanical guards (`kix-guards`) + discipline gates (`kix-discipline`: requirement-contract gate + verification gate, 2026-08-16 pluginization P0) + orchestration handoff gates (`kix-orchestration`) + minimal/progressive-disclosure tool surface (`kix-focus`: resident trimming + capability search/call) + native `/kixpower-*` commands (`kix-commands`) + vision bridge
 2. **vision-bridge** → `~/.dsh/profiles/web/plugins/dsh-vision-bridge/` (junction + `cordis.patch.yml` entry)
 3. **Settings checklist** → warns if `zai-vision` / `zai-coding-cn` providers are missing from `settings.yaml` (preferred candidates for `subagent_vision` / `subagent_cross`; since v5.9 kix-route auto-resolves from whatever is registered)
 

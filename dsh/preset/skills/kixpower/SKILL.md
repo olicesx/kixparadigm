@@ -78,6 +78,6 @@ description: "Kixpower — AI 多智能体协作编排（v5.7）。采用 DAG �
 | ⑮ | lite 首选路由（zai/glm-4.7）首次请求自动探测，不可用回退环境默认路由（跨环境分发不挂） | `plugins/kix-cost.js` |
 | ⑯ | 思考强度归一化：`subagent_thinker`（≥98K 帽）→ max；其余 deepseek 子代理 → high（适配器默认 high/256K，64K 帽是跑飞防线） | `plugins/kix-cost.js`（agent/request waterfall） |
 | ⑰ | per-role 预算帽：subagent/cross/fork 64K、thinker 128K、lite 8K | 各工具行 `agentOptions.maxTokens` |
-| ⑱ | 禁轮询空转 / 观察者门控（1→分歧+1，并发≤3）/ [EFFORT]+[BUDGET] 标注 / outputSchema 回流 / 跨会话结论复用 / 同会话去重 | persona「成本纪律」节（agent.cordis.yml） |
-| ⑲ | 等待步骤零思考：job_output/list_agents 等待是检查点不是思考点；后台任务运行期间做其他独立工作（实测：单次 job_output 等待烧 12,998 思考） | persona「成本纪律」节（agent.cordis.yml） |
+| ⑱ | 禁轮询空转 / 观察者门控（1→分歧+1，并发≤3）/ [EFFORT]+[BUDGET] 标注 / outputSchema 回流 / 跨会话结论复用 / 同会话去重 | persona「成本纪律」节（agent.cordis.yml，P1 压缩为选择层；机制由 kix-cost/kix-route 插件强制） |
+| ⑲ | 等待步骤零思考：job_output/list_agents 等待是检查点不是思考点；后台任务运行期间做其他独立工作（实测：单次 job_output 等待烧 12,998 思考） | persona「成本纪律」节（agent.cordis.yml，同上） |
 | ⑳ | review 流程阶段 2 取证分工：orchestrator 判断 + `subagent_lite` 并行机械取证（只读/检索/核对/枚举走 lite，禁止 orchestrator 逐文件通读 diff） | `prompts/kixpower-review.prompt.md` 阶段 2 |
