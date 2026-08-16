@@ -91,7 +91,7 @@ if (persona !== undefined) {
 }
 
 const pkg = JSON.parse(read('package.json'))
-if (pkg.version !== '1.2.11') fail(`en/package.json 版本应为 1.2.11，实际 ${pkg.version}`)
+if (pkg.version !== '1.2.13') fail(`en/package.json 版本应为 1.2.13，实际 ${pkg.version}`)
 else ok(`en/package.json 版本 ${pkg.version}`)
 if (!pkg.engines || pkg.engines.node !== '>=20.16.0') fail('en/package.json engines.node 应为 >=20.16.0')
 else ok('en/package.json engines.node >=20.16.0')

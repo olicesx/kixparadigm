@@ -494,6 +494,13 @@ function isTerminalControlPlaneWrite(text) {
 function repoRootFromText(text) {
   const m = /\bgit\b[^;&|]*?\s-C\s+(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(text)
   if (m) return m[1] || m[2] || m[3]
+  // v10（2026-08-17，WSL2 E2E 边界修复）：`cd <repo> && git commit`（无 -C）
+  // 且会话 cwd 非仓库根时，旧实现解析不到仓库根 → commit 的 main/预算检查
+  // 静默跳过。提取 `cd <dir>` 作为候选仓库根——cd 必须位于命令位
+  // （行首或 &&/;/|/|| 之后），避免 `echo cd /tmp` 误匹配；调用方 gitRead
+  // 对非仓库目录失败返回 null → 自然 fail-safe 跳过（0% 误伤）。
+  const cdm = /(?:^|[;&|]\s*)cd\s+(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(text)
+  if (cdm) return cdm[1] || cdm[2] || cdm[3]
   return undefined
 }
 
@@ -630,8 +637,13 @@ module.exports = {
     ])
 
     // 危险 git 子命令（写操作；branch 亦含破坏性 -D 分支删除）
+    // v10.1（2026-08-17，部署 E2E 复验实锤）：补上 `commit`——原清单缺它，
+    // isGitWrite() 对纯 `git commit` 返回 false → 2b 门禁整体跳过 → 分支/
+    // 预算检查（checkGitCommit，v10 的 cd 解析落点）对普通 commit 永不执行，
+    // main 分支直接 commit 静默放行（此前 v10 修复只覆盖了 resolveRepoRoot，
+    // 单测也只测 repoRootFromText 未测整链，缺陷长期潜伏）。
     const DANGEROUS_GIT = new Set([
-      'push', 'reset', 'rebase', 'merge', 'cherry-pick', 'revert', 'clean',
+      'push', 'commit', 'reset', 'rebase', 'merge', 'cherry-pick', 'revert', 'clean',
       'checkout', 'restore', 'stash', 'branch', 'rm', 'mv', 'gc', 'prune', 'reflog',
       'update-ref', 'symbolic-ref', 'commit-tree', 'fast-import',
       'hash-object', 'replace', 'am', 'apply', 'pull',
