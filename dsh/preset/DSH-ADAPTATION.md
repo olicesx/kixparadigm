@@ -66,12 +66,13 @@ autoApprove 全开 → 对应 DSH 权限预设（本部署 `danger-full-access`�
 - 边界：按 agent scope 挂载，不覆盖子代理会话；与 kix-guards 同款（见 §9 已知限制①）
 
 **极简+渐进披露插件（kix-focus，2026-08-16 新增，三层递进 P4）**：把模型每轮可见工具面从 ~85 个（~108KB schema，估算 ~30.8K token）裁到常驻核心集，量化 **-81.6%**（`scripts/quantify-focus.cjs` 可复跑）：
-- **Phase 1 裁剪**：`tools.restrict({ allow })` —— allow 只列**全局工具**（RESTRICT_ALLOW ~11 个：edit/write/pwsh/read/grep/glob/ask_user_question/todo_write/skill/web_search）；subagent 五档与 kix_capability_* 是 **scope 注册工具，自动可见，不列入 allow**（DSH restrict 契约：scope-local 名列入会 fail）。MCP（GitHub/Playwright/Context7/Semgrep）、workflow/goal/ralph/job_*/cordis_* 按需。`tools/change` 事件重试（MCP 可能晚于插件注册）。restrict 只影响模型可见面，scope 工具与门禁插件不受影响
+- **Phase 1 裁剪**：`tools.restrict({ allow })` —— allow 只列**全局工具**（RESTRICT_ALLOW ~11 个：edit/write/pwsh/read/grep/glob/ask_user_question/todo_write/skill/web_search）；subagent 五档与 kix_capability_* 是 **scope 注册工具，自动可见，不列入 allow**（DSH restrict 契约：scope-local 名列入会 fail）。MCP（GitHub/Playwright/Context7/Semgrep）、workflow/goal/ralph/cordis_* 按需（job_* 2026-08-17 起常驻，见下）。`tools/change` 事件重试（MCP 可能晚于插件注册）。restrict 只影响模型可见面，scope 工具与门禁插件不受影响
 - **Phase 2 渐进披露**：`kix_capability_search`（用**全局视图** `schemas(undefined)` 列出被裁剪工具，返回分组元数据不含全 schema）+ `kix_capability_call`（`get(name, undefined)` 全局存在性检查 + 经 `ctx.tools.execute` 代理执行，走完整 pre-execute→guards→execute→post-execute 管线，门禁依然拦截；**传播 `rootCallId`**（嵌套执行树归属），带 agent 调用非 model-direct 不会被 UNKNOWN_TOOL 拒绝）
 - **感知设计（2026-08-16 修订）**：**不挂 pre-execute deny**——restrict 已保证被裁剪工具对模型不可见（直呼=UNKNOWN_TOOL 到不了 pre-execute），且 capability_call 内部子调用必须放行（否则代理永远失败）；引导由 call 返回与 persona 触发句承担
 - **Phase 3 PTC 协同**：保持 `tool-presentation mode: both`；kix 红线「验证/观察用 native 直呼（证据可回放）」不变；capability_call 亦可被 run_code SDK 子分派调用（子分派过门禁）
 - 配置：`enableRestrict: false` 关闭裁剪（仅保留 search/call）；`extraResidentTools` 追加常驻
 - 与 kix-guards 交互：capability_call/search 已入 KNOWN_SAFE_TOOLS 白名单（防未来正则误伤）；被代理工具的每次子调用仍过 kix-guards 门禁
+- **2026-08-17（决策 A+B，用户原则：简单机械不影响思考的工具常驻，有认知负担的工具机制化自动激活）**：job_*（job_output/job_list/job_kill）**常驻化**——后台任务随时可用（修 tool-jobs 曾 disabled 时 run_in_background 报 "background jobs unavailable: no job controller serves this agent" 的组成矛盾）；subagent 细分档位与 goal **首次使用自动激活**——capability_call 代理未挂载的可激活工具时自动 `ctx.plugin` 挂载并继续执行（激活由**机制**兜底，模型无需记住先 kix_tool_activate；下一轮起可直呼；kix_tool_activate 保留为显式预激活，kix_tool_deactivate 卸载）
 
 ## 3. 团队编排（runSubagent agentName → DSH subagent + prompt 注入）
 
@@ -142,9 +143,9 @@ CEO「挑成员」在 DSH 的最终落点：**主模型 = 编曲者，成员 = a
 
 | 成员档 | 人名句柄 | 契约（蒸馏自 agents/*.agent.md，单一权威仍在文件） | 激活 |
 |---|---|---|---|
-| `subagent_dev` | Nova/Sage/Milo 三合一 | 按 plan 编码、target_rules 内写、不越权、不替 QA 签署；每任务自跑 deterministic gate | `kix_tool_activate { tool: subagent_dev }` |
-| `subagent_qa` | Ivy | 不写业务源码、证据门禁、signoff 工件（PASS/CONDITIONAL/FAIL/REVERIFY_REQUIRED 证据绑定） | `kix_tool_activate { tool: subagent_qa }` |
-| `subagent_reviewer` | 无名 | 只读 + 反方辩护三层（L1 反驳预演 / L2 深度下钻 / L3 语言模型压测）+ rebuttal 输出 | `kix_tool_activate { tool: subagent_reviewer }` |
+| `subagent_dev` | Nova/Sage/Milo 三合一 | 按 plan 编码、target_rules 内写、不越权、不替 QA 签署；每任务自跑 deterministic gate | 首次使用自动激活（kix_capability_call 代理即挂载）／kix_tool_activate 预激活 |
+| `subagent_qa` | Ivy | 不写业务源码、证据门禁、signoff 工件（PASS/CONDITIONAL/FAIL/REVERIFY_REQUIRED 证据绑定） | 首次使用自动激活（kix_capability_call 代理即挂载）／kix_tool_activate 预激活 |
+| `subagent_reviewer` | 无名 | 只读 + 反方辩护三层（L1 反驳预演 / L2 深度下钻 / L3 语言模型压测）+ rebuttal 输出 | 首次使用自动激活（kix_capability_call 代理即挂载）／kix_tool_activate 预激活 |
 
 **三项不建行决策**：producer 不建行（S7 已证 CEO 自规划通常够；真需要 Remy 级规划，主线程读一次 `agents/kixpower-producer.agent.md`）；orchestrator 不建行（协调留在主线程——DSH 主 agent 有全套编排工具，物化协调子代理 = 雇个协调员协调自己；636 行 orchestrator.agent.md 是 Copilot 时代残留，不建行不蒸馏）；dev 三人合一档（Nova/Sage/Milo 内部切换本就发生在同一 agent body）。
 

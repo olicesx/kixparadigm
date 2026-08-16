@@ -76,7 +76,8 @@
 
       ## Arranger Model
       - Main model = arranger; compose by task attributes (solo / observers / dev / qa / reviewer), not a fixed producer→dev→qa pipeline. Say the composition aloud and persist it in `kix_discipline_spec` `mode`. Dispatch prompt: Tri-Block + contract lines ≤5K (large context → file).
-      - Heavy-path members (`kix_tool_activate`): dev = Nova/Sage/Milo three-in-one (plan-scoped, target_rules only, never QA sign-off); qa = Ivy (no business source, evidence gate, signoff artifacts); reviewer = read-only three-layer devil's advocate. Light-path observers use unnamed perspective prompts; read producer.agent.md for heavy planning; no orchestrator — coordination stays in the main thread.
+      - Handoff metadata: when dispatching Sprint-orchestrated subagents (dev/qa/reviewer etc.), the dispatch prompt's contract lines MUST carry `current_sprint: N` (N read from docs/.kixpower-current-sprint in the workspace) — kix-orchestration's handoff gate (marker consistency / plan+progress existence / QA completion) only fires on that metadata line; observer/light-path dispatches without a sprint omit it.
+      - Heavy-path members (auto-activate on first use via `kix_capability_call`, or pre-activate with `kix_tool_activate`): dev = Nova/Sage/Milo three-in-one (plan-scoped, target_rules only, never QA sign-off); qa = Ivy (no business source, evidence gate, signoff artifacts); reviewer = read-only three-layer devil's advocate. Light-path observers use unnamed perspective prompts; read producer.agent.md for heavy planning; no orchestrator — coordination stays in the main thread.
       - Mis-composition mid-flight → recompose once and say it.
       - Four floors: ① your/dev claims always independently observed, never self-attested ② coordination stays in the main thread ③ perspectives come from prompts, names are contract handles ④ gates are composition-independent — never publish/comment/merge/destructive by default; an explicit user instruction ("comment on the PR") is the decision, so execute directly without re-asking; team output returns to three-channel verification. Full-flow signals → suggest `/kixpower-*`, wait for confirmation.
 
@@ -89,7 +90,7 @@
       ## DSH Adaptation
       - Dispatch: `subagent` with `agents/*.agent.md` role body + Tri-Block; `subagent_fork` to inherit session context. Cross-vendor → `subagent_cross`; vision → `subagent_vision` (path + question); `📷 [图片自动识别]` is vision-bridge output, not user words.
       - Mounted gates: kix-guards (dangerous git/SQL/control-plane/unknown-exec), kix-discipline, kix-orchestration; `/kixpower-*` zero-token.
-      - Tool surface: kix-focus keeps file/execution, ask_user_question/todo_write/skill, subagent + subagent_cross, subagent control, discovery resident. Lite/thinker/vision/fork/reviewer/qa/dev, jobs, goal → `kix_tool_activate`, then `kix_tool_deactivate`; web_search and MCP via `kix_capability_call`; workflow/ralph need `disabled` removed + restart.
+      - Tool surface: kix-focus keeps file/execution, ask_user_question/todo_write/skill, subagent + subagent_cross, subagent control, background jobs (jobs resident), discovery resident. Lite/thinker/vision/fork/reviewer/qa/dev and goal are unmounted by default and **auto-activate on first use** — `kix_capability_call { tool: subagent_qa, arguments: {…} }` mounts and runs it, directly callable from the next turn; explicit `kix_tool_activate` still works, `kix_tool_deactivate` unloads. web_search and MCP via `kix_capability_call`; workflow needs `disabled` removed + restart.
       - Native first: workflow for multi-stage, goal for long-horizon, plan mode for planning, run_in_background + job_output for long tasks. Verification/observation stay native (evidence replayable); on deny, stop.
 
       ## Resources
@@ -133,13 +134,21 @@
 # Only the model-facing controls. The task REGISTRY stays on the host plane:
 # its producers sit outside any realm this file could put it in — `tool-bash`
 # above resolves it with `ctx.get`, and an entry-local realm here is invisible
-# to every sibling row, so `run_in_background` would answer "background jobs
-# unavailable" while these controls sat in the catalog. The registry is keyed by
-# owning agent anyway, so one host instance serves every session. What a preset
-# chooses is whether its agent can collect and stop background work at all.
+# to every sibling row. The registry is keyed by owning agent anyway, so one
+# host instance serves every session. What a preset chooses is whether its
+# agent can collect and stop background work at all.
+# 2026-08-16 first shipped disabled (progressive-surface plan A); measured
+# lesson: while disabled, even STARTING a background job fails — `run_in_background`
+# answers "background jobs unavailable: no job controller serves this agent
+# (load @deepseek-ai/dsh-tool-jobs in its composition)", contradicting the
+# persona's "long tasks via run_in_background + job_output". 2026-08-17 decision
+# (user principle: simple mechanical tools without cognitive burden stay
+# resident): job_* is a pure mechanical control surface (start/collect/stop
+# running work, no decision burden) → resident. workflow/goal and the subagent
+# tiers stay disabled by default; first use auto-activates them via kix-focus
+# (kix_capability_call mounts on demand — the model never has to remember).
 - id: tool-jobs
   name: '@deepseek-ai/dsh-tool-jobs'
-  disabled: true
 
 # ── skills ──────────────────────────────────────────────────────────────────
 
@@ -170,8 +179,10 @@
 # session. What a preset chooses is whether its agent can call the goal tool.
 # 2026-08-15 trimming decision: goal is low-frequency heavy → disabled by
 # default (main-agent surface keeps only paradigm essentials; restrict cannot
-# trim scope tools, so disabled is the only trimming lever). Remove `disabled`
-# and restart to enable long-goal continuation.
+# trim scope tools, so disabled is the only trimming lever). As of 2026-08-17
+# first use auto-activates: kix_capability_call { tool: create_goal } mounts
+# and runs it (or kix_tool_activate { tool: goal } pre-activates). No restart
+# needed for either.
 - id: tool-goal
   name: '@deepseek-ai/dsh-tool-goal'
   disabled: true
@@ -276,9 +287,12 @@
     # Mechanical reading/format checks/simple lookups → `subagent_lite` (slim
     # composition): the `persona` field replaces the ~17k-token resident persona
     # with a ~60-token mechanical persona (per-child persona shadowing);
-    # `toolFilter` trims the 82-tool catalog (17.2k tokens) to read/grep/glob/pwsh
-    # (1.6k tokens) — per-step fixed overhead drops from ~34.3k to ~5.9k (measured,
-    # ↓83%). Model tier (preferred zai-coding-cn/glm-4.7): **auto-selected** —
+    # `toolFilter` trims the 82-tool catalog (17.2k tokens) to read/grep/glob plus
+    # the platform shell (1.6k tokens) — per-step fixed overhead drops from ~34.3k
+    # to ~5.9k (measured, ↓83%). 2026-08-17 WSL2 E2E fix: the hardcoded `pwsh`
+    # (a Windows tool) made tools.restrict() report "unknown global tool" on Linux
+    # deployments, breaking the lite tier → platform-conditional via
+    # `!!js process.platform`. Model tier (preferred zai-coding-cn/glm-4.7): **auto-selected** —
     # this preset ships to different environments, so `plugins/kix-cost.js` probes
     # the preferred route on the child's first request; if unavailable (provider or
     # model missing) it falls back to the environment default route (deepseek
@@ -304,7 +318,7 @@
           what the task asks. No extra analysis, no suggestions, no speculation.
           Return concise factual results with file:line evidence when relevant.
         toolFilter:
-          allow: [ read, grep, glob, pwsh ]
+          allow: [ read, grep, glob, !!js "process.platform === 'win32' ? 'pwsh' : 'bash'" ]
         agentOptions:
           provider: zai-coding-cn
           model: glm-4.7
@@ -402,8 +416,9 @@
     # three layers (2026-08-17: three questions made explicit layers) +
     # structured rebuttal output. The "before publishing a claim" adversarial
     # channel (compare: kix-guards guards operations, kix-discipline guards
-    # edits). Disabled by default (progressive surface), activate via
-    # kix_tool_activate { tool: subagent_reviewer }.
+    # edits). Disabled by default (progressive surface); first use auto-activates
+    # (kix_capability_call { tool: subagent_reviewer, arguments: {…} } mounts and
+    # runs it) or kix_tool_activate pre-activates.
     - id: tool-subagent-reviewer
       name: '@deepseek-ai/dsh-tool-subagent'
       disabled: true
@@ -452,7 +467,8 @@
     # (single source of truth, reviewer precedent); composition traces go to
     # the mode field of kix_discipline_spec (members + one-line reason); the
     # four floor invariants live in the persona Arranger Model section.
-    # Disabled by default (progressive surface), kix_tool_activate on demand.
+    # Disabled by default (progressive surface); first use auto-activates
+    # (kix_capability_call mounts) or kix_tool_activate pre-activates.
     - id: tool-subagent-qa
       name: '@deepseek-ai/dsh-tool-subagent'
       disabled: true
@@ -533,8 +549,10 @@
         maxDepth: provider-managed
 
     # 2026-08-15 trimming decision: workflow/ralph/goal are low-frequency heavy
-    # → disabled by default. goal activates via kix_tool_activate (measured
-    # 2026-08-16: activate → callable next turn → deactivate, closed loop).
+    # → disabled by default. goal first use auto-activates via kix-focus
+    # (kix_capability_call { tool: create_goal } mounts and runs it; or
+    # kix_tool_activate { tool: goal } pre-activates — measured 2026-08-16:
+    # activate → callable next turn → deactivate, closed loop).
     # workflow/ralph depend on workflowEngine (provided inside this isolate
     # realm); a dynamically mounted fiber outside the realm cannot resolve it,
     # so activation fails honestly — remove `disabled` and restart when needed.

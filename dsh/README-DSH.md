@@ -74,13 +74,10 @@ pwsh -File .\scripts\sync-dsh-preset.ps1 -Force
 npm test                                        # 一致性守护 + 全插件回归（zh）
 node scripts\check-dsh-consistency.cjs          # persona 预算 / 文档计数 / zh-en 插件一致性
 node --test dsh\vision-bridge\test.js           # vision-bridge 纯逻辑回归 6 用例
-node .\dsh\preset\plugins\kix-guards.test.js      # 机械门禁 210 组断言（v9 软约束）
-node .\dsh\preset\plugins\kix-commands.test.js    # 命令注册 6 组断言
-node .\dsh\preset\plugins\kix-cost.test.js        # 成本纪律 28 组断言
-node .\dsh\preset\plugins\kix-route.test.js       # 跨厂商路由 68 组断言（v8）
-node .\dsh\preset\plugins\kix-discipline.test.js  # 纪律 gate 68 组断言
-node .\dsh\preset\plugins\kix-orchestration.test.js # 编排交接 69 组断言（v8）
-node .\dsh\preset\plugins\kix-focus.test.js       # 极简/渐进披露 73 组断言
+node scripts\run-plugin-tests.cjs               # 全部插件测试（自动发现 *.test.js，逐文件直跑：
+                                                #   guards 210 / commands 6 / cost 28 / route 68 /
+                                                #   discipline 68 / orchestration 69 / focus 83 组断言；
+                                                #   单文件仍可 node .\dsh\preset\plugins\<name>.test.js 直跑）
 ```
 
 preset 挂载校验（roster `standingKeyFor`）在 DSH 会话内用 cordis 工具集执行。

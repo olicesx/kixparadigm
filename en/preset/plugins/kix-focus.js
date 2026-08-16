@@ -32,8 +32,18 @@
 //     决定去留；依赖 workflowEngine isolate realm，动态激活不可用，唯一
 //     启用路径 = 取消 disabled 重启）；goal 默认 disabled + 按需激活
 //     （kix_tool_activate 运行时 ctx.plugin 挂载，下一轮直呼；实测闭环）。
-//     ralph 已移除（极低频 + 可替代，负债判定，2026-08-16）。job_*/subagent
-//     -control 是范式日常路径 → 保留挂载并纳入语义常驻集。
+//     ralph 已移除（极低频 + 可替代，负债判定，2026-08-16）。
+//   - 2026-08-17 决策（用户拍板 A+B，原则：简单机械、不影响思考的工具常驻，
+//     有认知负担的工具机制化自动激活）：
+//       * tool-jobs 常驻化（job_* 纯机械控制面：启动/回收/停止已跑任务）——
+//         此前默认 disabled 实测导致 run_in_background 直接报
+//         "background jobs unavailable: no job controller serves this agent"，
+//         persona 与组成互相矛盾；常驻后此错消失，job_* 纳入语义常驻集。
+//       * subagent 细分档位（lite/thinker/vision/fork/reviewer/qa/dev）与
+//         goal 保持默认 disabled + **首次使用自动激活**：kix_capability_call
+//         代理调用未挂载的可激活工具时自动 ctx.plugin 挂载并继续执行——
+//         激活由机制兜底，模型无需记住先 kix_tool_activate；下一轮起可直呼，
+//         kix_tool_deactivate 仍可卸载。显式 kix_tool_activate 保留为预激活。
 //
 // 挂载：agent.cordis.yml 一行（同款相对路径）：
 //   - id: kix-focus
@@ -70,14 +80,17 @@ const RESTRICT_ALLOW = [
 // 2026-08-15 精简：workflow/goal 低频重型 → 默认 disabled（主 agent 工具面
 // 只留范式必需；restrict 裁不到 scope 工具，disabled 是唯一精简手段）。
 // 2026-08-16：workflow 临时启用（自发使用测试）；ralph 移除。
-// 2026-08-16 渐进面（方案 A，用户拍板）：subagent_lite/thinker/vision/fork
-// 与 tool-jobs 默认 disabled + 按需激活（inject 宿主服务，动态挂载可行，
-// 与 goal 同机制）。此处只列仍挂载的 scope 工具。
+// 2026-08-17 决策（用户拍板 A+B）：tool-jobs 常驻（job_* 纯机械控制面，
+// 无认知负担）纳入语义常驻集；subagent 细分档位与 goal 保持 disabled +
+// 首次使用自动激活（kix_capability_call 代理即挂载）。此处只列常驻挂载的
+// scope 工具。
 const SCOPE_RESIDENT = [
   // plan mode realm（挂载，先规划用 plan mode）
   'exit_plan_mode',
   // tool-subagent-control（挂载：三通道观察者管理）
   'list_agents', 'send_message', 'interrupt_agent',
+  // tool-jobs（2026-08-17 常驻：后台任务启动/回收/停止）
+  'job_output', 'job_list', 'job_kill',
 ]
 
 // 常驻语义全集 = RESTRICT_ALLOW + scope 注册的观察/发现/编排工具（自动可见）
@@ -120,19 +133,19 @@ const CAPABILITY_GROUPS = [
   {
     id: 'orchestration',
     title: '重型编排（workflow/goal）',
-    hint: 'workflow 已挂载（直接可用，批量扇出/多阶段编排）；goal 默认未挂载，可按需激活（kix_tool_activate，下一轮直呼，kix_tool_deactivate 卸载）',
+    hint: 'workflow 已挂载（直接可用，批量扇出/多阶段编排；未挂载的部署需取消 disabled 重启）；goal 默认未挂载，**首次使用自动激活**（kix_capability_call { tool: create_goal } 即挂载并执行，或 kix_tool_activate { tool: goal } 预激活）',
     tools: ['workflow', 'create_goal', 'update_goal', 'get_goal', 'exit_plan_mode'],
   },
   {
     id: 'subagent-tiers',
     title: '子代理细分档位（lite/thinker/vision/fork/reviewer/qa/dev）',
-    hint: '默认未挂载（渐进面），按需激活：kix_tool_activate { tool: subagent_lite } 等；reviewer = 反方辩护三层只读审查（结论发布前对抗检查）；qa = Ivy 验收+签署（不写业务源码、证据门禁、signoff 工件）；dev = Nova/Sage/Milo 三合一编码（按 plan、target_rules 内写、不替 QA 签署）——qa/dev/reviewer 即编曲成员菜单',
+    hint: '默认未挂载，**首次使用自动激活**：kix_capability_call { tool: subagent_lite, arguments: {...} } 即挂载并执行、下一轮起可直呼（或 kix_tool_activate 预激活）；reviewer = 反方辩护三层只读审查（结论发布前对抗检查）；qa = Ivy 验收+签署（不写业务源码、证据门禁、signoff 工件）；dev = Nova/Sage/Milo 三合一编码（按 plan、target_rules 内写、不替 QA 签署）——qa/dev/reviewer 即编曲成员菜单',
     tools: ['subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork', 'subagent_reviewer', 'subagent_qa', 'subagent_dev'],
   },
   {
     id: 'jobs',
     title: '后台任务（job_output/job_list/job_kill）',
-    hint: '默认未挂载（渐进面），按需激活：kix_tool_activate { tool: jobs }，激活后下一轮直呼；长任务仍可 pwsh run_in_background 启动',
+    hint: '常驻、可直接调用：长任务用 pwsh run_in_background: true 启动，job_output/job_list/job_kill 回收与停止',
     tools: ['job_output', 'job_list', 'job_kill'],
   },
   {
@@ -156,7 +169,7 @@ const CAPABILITY_GROUPS = [
   {
     id: 'vision',
     title: '识图（read_image / subagent_vision）',
-    hint: '主模型无视觉时用 subagent_vision（默认未挂载，kix_tool_activate { tool: subagent_vision } 激活）；read_image 按需',
+    hint: '主模型无视觉时用 subagent_vision（默认未挂载，首次使用自动激活：kix_capability_call { tool: subagent_vision, arguments: {...} }）；read_image 按需',
     tools: ['read_image', 'subagent_vision'],
   },
 ]
@@ -297,7 +310,8 @@ function makeUserMessage(text) {
 const ACTIVATABLE_TOOLS = {
   workflow: { package: '@deepseek-ai/dsh-tool-workflow', config: {} },
   goal: { package: '@deepseek-ai/dsh-tool-goal', config: {} },
-  // 2026-08-16 渐进面（方案 A）：细分档位 + 后台任务默认 disabled，按需激活。
+  // 2026-08-16 渐进面（方案 A）细分档位默认 disabled；2026-08-17 决策升级为
+  // 首次使用自动激活（kix_capability_call 代理即挂载，见 capability_call）。
   // config 与 agent.cordis.yml 对应行保持一致（toolName 决定注册的工具名）。
   subagent_lite: {
     package: '@deepseek-ai/dsh-tool-subagent',
@@ -412,10 +426,20 @@ Report: what changed / gate results / known issues, tables over prose.`,
       agentOptions: { maxTokens: 65536 },
     },
   },
-  jobs: {
-    package: '@deepseek-ai/dsh-tool-jobs',
-    config: {},
-  },
+  // 2026-08-17：jobs 已从可激活清单移除——tool-jobs 常驻化（组成启用），
+  // 再动态挂载会与服务实例冲突；job_* 直接可用，无需激活。
+}
+
+// 工具名 → 激活键。ACTIVATABLE_TOOLS 的键是**激活名**（goal/subagent_qa…），
+// 而 capability_call 收到的是**工具名**：细分档位的工具名==激活名（toolName
+// 决定），goal 包则注册 create_goal/update_goal/get_goal 三个工具名。
+// 2026-08-17 WSL2 E2E 实锤：缺此映射时 capability_call({tool:'create_goal'})
+// 查不到激活键 → 报"工具不存在"，goal 首次使用自动激活失效。
+const GOAL_TOOL_NAMES = new Set(['create_goal', 'update_goal', 'get_goal'])
+function activationKeyFor(toolName) {
+  if (ACTIVATABLE_TOOLS[toolName]) return toolName
+  if (GOAL_TOOL_NAMES.has(toolName)) return 'goal'
+  return null
 }
 
 // 默认包解析：从 dsh 入口（process.argv[1] = bin.js）的 node_modules 解析
@@ -578,16 +602,16 @@ module.exports = {
             denyCount: restrictDenyCount,
             error: restrictError,
           },
-          guidance: '用 kix_capability_call { tool, arguments } 代理调用选中的全局按需工具（MCP 等，走完整门禁管线）；scope 常驻工具（subagent/subagent_cross/子代理控制）可直接调用；workflow 已挂载可直接调用（批量扇出）；subagent 细分档位/jobs/goal 用 kix_tool_activate 按需激活（激活后下一轮直呼）。',
+          guidance: '用 kix_capability_call { tool, arguments } 代理调用选中的按需工具（MCP 等，走完整门禁管线）；scope 常驻工具（subagent/subagent_cross/子代理控制/后台任务 jobs）可直接调用；workflow 已挂载可直接调用（批量扇出）；subagent 细分档位与 goal 首次使用自动激活——kix_capability_call 代理即挂载并执行、下一轮起可直呼（也可 kix_tool_activate 预激活，kix_tool_deactivate 卸载）。',
         }
       },
     })
     ctx.effect(() => disposeSearch)
 
-    // ── Phase 2：kix_capability_call（代理执行，常驻）────────────────────
+    // ── Phase 2：kix_capability_call（代理执行 + 首次使用自动激活，常驻）──
     const disposeCall = tools.register({
       name: 'kix_capability_call',
-      description: '代理调用一个按需披露的全局工具（渐进披露的调用面）：执行目标工具并返回其结果。走完整 pre-execute→guards→execute→post-execute 管线（kix 门禁依然拦截）。工具名必须是 kix_capability_search 返回的按需工具（MCP/cordis_* 等全局工具）；scope 常驻工具（workflow/goal/job_* 等）请直接调用，本工具会拒绝。',
+      description: '代理调用一个按需披露的工具（渐进披露的调用面）：执行目标工具并返回其结果。走完整 pre-execute→guards→execute→post-execute 管线（kix 门禁依然拦截）。MCP/cordis_* 等全局按需工具直接代理执行；未挂载的 subagent 细分档位与 goal（subagent_lite/thinker/vision/fork/reviewer/qa/dev、create_goal 等）会**首次使用自动激活**——本调用即挂载并执行、下一轮起可直接调用；scope 常驻工具（workflow/job_* 等）请直接调用，本工具会拒绝。',
       parameters: {
         // tools.register 原样投影 parameters（不做 ValueSchemaSpec 转换）：
         // 必须传合法 JSON Schema，含顶层 type: 'object'。arguments 用 object +
@@ -609,13 +633,37 @@ module.exports = {
         const toolArgs = (args && args.arguments) || {}
         if (!toolName) return { ok: false, error: 'kix_capability_call: 必须提供 tool 名。' }
 
-        // 目标工具必须在按需集（常驻工具应直接调用，不让代理绕一层）
-        if (resident.has(toolName)) {
+        // 存在性检查 **agent 视图优先、全局视图兜底**：dsh-tools 的
+        // `get(name, scope)`——scope 省略或显式 undefined 都是**全局视图**
+        //（`peek(undefined)` 返回 undefined、`chainLayers(undefined)` 无覆盖层；
+        // 源码 + API 文档实证，2026-08-17）。而 scope 工具（动态挂载的细分档位、
+        // job_* 等）注册在 agent 层，只在 **agent 视图** 可见——agent 视图 =
+        // 全局 ∪ 祖先层 ∪ 自身层，一把可见全部。
+        // 最初只用 `tools.get(name, undefined)`（全局）：自动激活已成功挂载
+        // fiber 但复查永远 undefined → 报"工具不存在"（WSL2 E2E 实锤）；随后
+        // 的 `get(name) || get(name, undefined)` 也无效——两者机械等同，均为
+        // 全局视图。必须传 exec.agent。
+        const agentScope = exec && exec.agent
+        const def = (agentScope ? tools.get(toolName, agentScope) : null) || tools.get(toolName, undefined)
+        // 常驻且已挂载的工具应直接调用，不让代理绕一层
+        if (resident.has(toolName) && def) {
           return { ok: false, error: `kix-focus: ${toolName} 是常驻工具，请直接调用（无需代理）。` }
         }
-        // 目标工具必须存在（全局视图：restrict 不影响存在性检查）
-        const def = tools.get(toolName, undefined)
-        if (!def) {
+        // 2026-08-17 首次使用自动激活：未挂载的细分档位/goal（ACTIVATABLE_TOOLS）
+        // 经代理调用时由机制自动挂载（ctx.plugin，fiber 随 agent ctx 存活）并
+        // 继续执行本调用——激活由机制兜底，模型无需先 kix_tool_activate；
+        // 下一轮起可直接调用。常驻但未挂载的名字（如 en 版 workflow）也走此
+        // 路径，挂载失败时诚实报错附建议（isolate realm 依赖无法动态激活）。
+        let autoActivated = false
+        const actKey = activationKeyFor(toolName)
+        if (!def && actKey) {
+          const r = await ensureActivated(actKey)
+          if (!r.ok) return { ok: false, tool: toolName, error: r.error }
+          autoActivated = true
+        }
+        // 目标工具必须存在（agent 视图优先；restrict 不影响存在性检查）
+        const def2 = (agentScope ? tools.get(toolName, agentScope) : null) || tools.get(toolName, undefined)
+        if (!def2) {
           return { ok: false, error: `kix-focus: 工具 ${toolName} 不存在。先用 kix_capability_search 确认。` }
         }
         // 2026-08-17 决策记录（外部审查 5.6 提出"call 白名单"，评估后不做）：
@@ -640,27 +688,71 @@ module.exports = {
           ...exec && exec.rootCallId !== void 0 ? { rootCallId: exec.rootCallId } : {},
           ...exec && exec.signal !== void 0 ? { signal: exec.signal } : {},
         })
-        return { ok: !result.isError, tool: toolName, result }
+        return {
+          ok: !result.isError,
+          tool: toolName,
+          ...(autoActivated
+            ? { autoActivated: true, note: `kix-focus: ${toolName} 首次使用自动激活，下一轮起可直接调用（kix_tool_deactivate 卸载）。` }
+            : {}),
+          result,
+        }
       },
     })
     ctx.effect(() => disposeCall)
 
-    // ── Phase 2 扩展：kix_tool_activate / kix_tool_deactivate（按需激活）───
-    // scope 工具（goal/subagent 细分档位/jobs）默认 disabled，经此按需运行时
-    // 挂载：activate 解析包 → ctx.plugin 挂载 → 下一轮直呼；deactivate 卸载。
-    // 激活集合挂在 ctx.effect，会话/插件卸载时自动清理。
+    // ── Phase 2 扩展：首次使用自动激活 + kix_tool_activate/deactivate ──────
+    // scope 工具（goal/subagent 细分档位）默认 disabled。2026-08-17 决策
+    // （用户拍板 A+B）：激活由**机制**兜底——capability_call 首次代理调用时
+    // 自动挂载（ensureActivated），模型无需记住先激活；kix_tool_activate 保留
+    // 为显式预激活，kix_tool_deactivate 卸载。
+    // ⚠️ 不要挂 ctx.effect 自动清理：工具 execute 的 effect 域在本次调用
+    // 结束时触发清理，会立即卸载刚激活的插件（实测 2026-08-15/16：
+    // workflow/ralph/goal 激活全部返回 ok:true 但下一轮全不可见——根因
+    // 即此）。挂载的 fiber 随 agent ctx 自动销毁（ctx dispose 时卸载），
+    // 无需手动 effect；显式卸载走 kix_tool_deactivate。
     const activated = new Map()
     const resolvePkg = typeof cfg.resolvePkg === 'function' ? cfg.resolvePkg : defaultResolvePkg
+    // 挂载一个可激活工具并登记。返回 { ok:true } 或 { ok:false, error }。
+    // ctx.plugin() 返回 Fiber & PromiseLike<Fiber>：必须 await 取 Fiber，
+    // 卸载用 fiber.dispose()（方法，返回 Promise）——不可把未 await 的
+    // PromiseLike 当函数调用（实测 2026-08-15：dispose is not a function）。
+    // fiber.state：PENDING=0 LOADING=1 ACTIVE=2 FAILED=3 DISPOSED=4
+    // UNLOADING=5。非 ACTIVE = 依赖服务不可达——workflow inject
+    // workflowEngine，该服务在 delegation group 的 isolate realm 内提供，
+    // realm 外动态挂载的 fiber 解析不到、停在 PENDING（实测 2026-08-16：
+    // goal 激活成功且下一轮可见；workflow 激活后工具永不注册）。
+    // 诚实边界：回滚并报错附建议，绝不返回假成功。
+    async function ensureActivated(name) {
+      const entry = ACTIVATABLE_TOOLS[name]
+      if (!entry) {
+        return { ok: false, error: `kix-focus: ${name || '(空)'} 不可按需激活。可激活：${Object.keys(ACTIVATABLE_TOOLS).join(' / ')}` }
+      }
+      try {
+        const pkg = resolvePkg(entry.package)
+        const fiber = await ctx.plugin(pkg, entry.config)
+        if (fiber.state !== 2 /* ACTIVE */) {
+          fiber.dispose().catch(() => {})
+          return {
+            ok: false,
+            error: `kix-focus: 激活 ${name} 未生效（fiber 状态 ${fiber.state}，依赖服务不可达——${name} 需要 workflowEngine 等 isolate realm 内服务，动态激活不可用）。请取消 agent.cordis.yml 中对应行的 disabled 并重启。`,
+          }
+        }
+        activated.set(name, fiber)
+        return { ok: true }
+      } catch (e) {
+        return { ok: false, error: `kix-focus: 激活 ${name} 失败：${e && e.message ? e.message : String(e)}` }
+      }
+    }
     const disposeActivate = tools.register({
       name: 'kix_tool_activate',
       // 2026-08-17 枚举 bug 修复：描述枚举曾漏 subagent_reviewer（集合有、
       // 描述无——模型照描述行事即永远激活不了它）；现与 ACTIVATABLE_TOOLS
       // 键集合同步（测试有回归防线），新增 qa/dev 一并列入。
-      description: '按需激活一个默认未挂载的 scope 工具（渐进面）：goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev / jobs；qa/dev/reviewer = 编曲成员菜单（Ivy 验收签署 / Nova·Sage·Milo 三合一编码 / 反方辩护三层只读审查）。workflow 依赖 isolate realm 服务、动态激活不可用（激活会报错，直接挂载可用）。运行时挂载其工具包，激活后下一轮请求即可直接调用（无需代理）。用 kix_tool_deactivate 卸载。',
+      description: '显式预激活一个默认未挂载的 scope 工具（细分档位与 goal）：goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev；qa/dev/reviewer = 编曲成员菜单（Ivy 验收签署 / Nova·Sage·Milo 三合一编码 / 反方辩护三层只读审查）。2026-08-17 起这些工具首次使用时已由 kix_capability_call 自动激活，本工具仅用于想提前挂载的场景（jobs 已常驻、无需激活）。workflow 依赖 isolate realm 服务、动态激活不可用（激活会报错，直接挂载可用）。运行时挂载其工具包，激活后下一轮请求即可直接调用（无需代理）。用 kix_tool_deactivate 卸载。',
       parameters: {
         type: 'object',
         properties: {
-          tool: { type: 'string', description: '要激活的工具名（goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev / jobs）' },
+          tool: { type: 'string', description: '要激活的工具名（goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev）' },
         },
         required: ['tool'],
       },
@@ -670,54 +762,26 @@ module.exports = {
       },
       async execute(args) {
         const name = args && args.tool ? String(args.tool) : ''
-        const entry = ACTIVATABLE_TOOLS[name]
-        if (!entry) {
+        if (!ACTIVATABLE_TOOLS[name]) {
           return { ok: false, error: `kix-focus: 不可按需激活 ${name || '(空)'}。可激活：${Object.keys(ACTIVATABLE_TOOLS).join(' / ')}` }
         }
         if (activated.has(name)) {
           return { ok: false, error: `kix-focus: ${name} 已激活，可直接调用。用 kix_tool_deactivate 卸载。` }
         }
-        try {
-          const pkg = resolvePkg(entry.package)
-          // ctx.plugin() 返回 Fiber & PromiseLike<Fiber>：必须 await 取 Fiber，
-          // 卸载用 fiber.dispose()（方法，返回 Promise）——不可把未 await 的
-          // PromiseLike 当函数调用（实测 2026-08-15：dispose is not a function）。
-          // ⚠️ 不要挂 ctx.effect 自动清理：工具 execute 的 effect 域在本次调用
-          // 结束时触发清理，会立即卸载刚激活的插件（实测 2026-08-15/16：
-          // workflow/ralph/goal 激活全部返回 ok:true 但下一轮全不可见——根因
-          // 即此）。挂载的 fiber 随 agent ctx 自动销毁（ctx dispose 时卸载），
-          // 无需手动 effect；显式卸载走 kix_tool_deactivate。
-          const fiber = await ctx.plugin(pkg, entry.config)
-          // fiber.state：PENDING=0 LOADING=1 ACTIVE=2 FAILED=3 DISPOSED=4
-          // UNLOADING=5。非 ACTIVE = 依赖服务不可达——workflow inject
-          // workflowEngine，该服务在 delegation group 的 isolate realm 内提供，
-          // realm 外动态挂载的 fiber 解析不到、停在 PENDING（实测 2026-08-16：
-          // goal 激活成功且下一轮可见；workflow 激活后工具永不注册）。
-          // 诚实边界：回滚并报错附建议，绝不返回假成功。
-          if (fiber.state !== 2 /* ACTIVE */) {
-            fiber.dispose().catch(() => {})
-            return {
-              ok: false,
-              tool: name,
-              error: `kix-focus: 激活 ${name} 未生效（fiber 状态 ${fiber.state}，依赖服务不可达——${name} 需要 workflowEngine 等 isolate realm 内服务，动态激活不可用）。请取消 agent.cordis.yml 中对应行的 disabled 并重启。`,
-            }
-          }
-          activated.set(name, fiber)
-          return { ok: true, tool: name, note: activationNote(name) }
-        } catch (e) {
-          return { ok: false, tool: name, error: `kix-focus: 激活 ${name} 失败：${e && e.message ? e.message : String(e)}` }
-        }
+        const r = await ensureActivated(name)
+        if (!r.ok) return { ok: false, tool: name, error: r.error }
+        return { ok: true, tool: name, note: activationNote(name) }
       },
     })
     ctx.effect(() => disposeActivate)
 
     const disposeDeactivate = tools.register({
       name: 'kix_tool_deactivate',
-      description: '卸载一个已激活的 scope 工具（goal/subagent 细分档位含编曲成员 qa/dev/reviewer/jobs）：下一轮请求起不再可见。',
+      description: '卸载一个已激活的 scope 工具（goal/subagent 细分档位含编曲成员 qa/dev/reviewer）：下一轮请求起不再可见。jobs 已常驻、无需也卸载不了。',
       parameters: {
         type: 'object',
         properties: {
-          tool: { type: 'string', description: '要卸载的工具名（goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev / jobs）' },
+          tool: { type: 'string', description: '要卸载的工具名（goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev）' },
         },
         required: ['tool'],
       },
@@ -757,6 +821,8 @@ module.exports.__internals = {
   CAPABILITY_GROUPS,
   FALLBACK_GROUP,
   ACTIVATABLE_TOOLS,
+  GOAL_TOOL_NAMES,
+  activationKeyFor,
   isOnDemand,
   projectToolMeta,
   matchedToolMeta,

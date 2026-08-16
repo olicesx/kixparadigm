@@ -33,11 +33,8 @@ After install: `kixparadigm-en doctor` self-checks. `kixparadigm-en uninstall` r
 
 ```bash
 node scripts/check-consistency.cjs    # persona budget / doc-link / syntax guard (v1.2.11)
-node plugins/kix-guards.test.js        # 210 assertions (v9 soft constraints)
-node plugins/kix-commands.test.js      # 6 assertion groups
-node plugins/kix-cost.test.js          # 28 assertions
-node plugins/kix-route.test.js         # 68 assertions (v8)
-node plugins/kix-discipline.test.js    # 68 assertions
-node plugins/kix-orchestration.test.js # 69 assertions (v8)
-node plugins/kix-focus.test.js         # 73 assertions
+node scripts/run-plugin-tests.cjs     # all plugin tests (auto-discovers *.test.js, runs one file per
+                                      #   process: guards 210 / commands 6 / cost 28 / route 68 /
+                                      #   discipline 68 / orchestration 69 / focus 83 assertions;
+                                      #   single files still run directly via `node plugins/<name>.test.js`)
 ```
