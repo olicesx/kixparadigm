@@ -666,7 +666,9 @@
 #     机械多步），kix 红线「验证/观察用 native 直呼（证据可回放）」不变；
 #     capability_call 亦可被 run_code SDK 子分派调用（子分派过门禁）。
 # 关闭裁剪（仅保留 search/call）：config: { enableRestrict: false }。
-# 单元测试：node plugins/kix-focus.test.js（69 断言，含枚举同步回归防线）。
+# 单元测试：node plugins/kix-focus.test.js（73 断言，含枚举同步回归防线 +
+#   symlink 部署跨平台解析：候选根链 argv[1]→realpath→插件文件，2026-08-17
+#   WSL2 E2E 发现修复）。
 - id: kix-focus
   name: ./plugins/kix-focus.js
 

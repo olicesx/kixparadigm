@@ -28,6 +28,19 @@
 
 **下一轮观测**（规则是负债回收面）：① mode 字段实际使用率与组合分布（过度组合/默认独奏双向漂移）；② 编曲成员档激活后的真实分派质量（契约是否守住，对照 agents/*.agent.md 单一权威）；③ `/kixpower-*` 注入链实地证据（v6 遗留，档位激活≠流程跑通）。
 
+### v7 补记（2026-08-17 WSL2 部署 E2E：发现并修复 symlink 解析 bug，两轮闭环）
+
+> 部署：v1.2.9 九文件同步至 WSL2 `~/.dsh/.agent-presets/{kixparadigm,kixparadigm-en}`，WSL 内双 preset 单测全绿（68/69→73/67），dsh web 从 /root 重启（setsid 脱离 + stdin 重定向，规避 wsl.exe 后台进程随调用退出被杀）。
+
+**第一轮（发现）**：GUI 驱动新会话（kixparadigm preset，/root/kix-v129-e2e 工作区）执行四步冒烟——`kix_tool_activate` 三档全报 `Cannot find module '@deepseek-ai/dsh-tool-subagent'`（require stack: /usr/local/bin/dsh）；`kix_discipline_spec` mode 字段落盘正常。**根因**：WSL2 的 dsh 是符号链接安装（/usr/local/bin/dsh → /usr/local/lib/node_modules/@deepseek-ai/dsh/lib/bin.js），Node 模块解析不跟随 symlink——createRequire(argv[1]) 沿 /usr/local/bin 向上找 node_modules 全落空，而包嵌套在真实路径 dsh/node_modules/ 下。Windows npm shim 直接传 bin.js 真实路径，故此前所有动态激活闭环实测（Windows）从未暴露——**影响全部动态激活档位（goal/lite/thinker/vision/fork/reviewer/qa/dev/jobs）的跨平台 bug**。
+
+**修复**：`kix-focus.js` `defaultResolvePkg` 候选根链逐个尝试——argv[1] 原样（Windows 布局零变化）→ `realpathSync(argv[1])`（symlink 部署）→ `__filename`（兜底），全落空抛最后错误。+4 断言（候选链顺序/去重/junction-symlink 端到端复现实测 bug 场景/全落空抛错），73/73。模型在第一轮的行为本身即范式证据：如实上报失败、不用 subagent/cross 替代未挂载工具、不静默绕道。
+
+**第二轮（闭环）**：同会话重跑四步——**激活[3/3] · reviewer 派发[成功]（前台返回 FIXTURE.md 原文 + L1 反驳预演/L2 深度探查/L3 语言模型压力测试三句确认，三层 persona 注入链走通）· spec[ok]（mode=「solo+reviewer：E2E 第二轮」落盘 /root/kix-discipline/spec.md）· 卸载[3/3]**。
+
+**附带发现（非 bug，操作注意）**：① wsl.exe 启动后台进程必须 `setsid` + `</dev/null`（stdin 管道随 wsl.exe 退出关闭会带走进程）+ 启动 cwd 决定 sandbox workspaceRoot（从 Windows 目录起 wsl 会把 /mnt/c 路径带进 WSL 侧）；② `pkill -f 'dsh --profile'` 会自匹配调用方命令行（改 `^node /usr/local/bin/dsh` 精确锚定）。
+
+
 **改动文件**：`dsh/preset/agent.cordis.yml`、`dsh/preset/plugins/{kix-discipline,kix-focus,kix-orchestration}.js` + 三 `.test.js`、`dsh/preset/DSH-ADAPTATION.md`（新增 §3.2）、`dsh/preset/DSH-FUSION-MATRIX.md`（行 11 判定更新为已机制化）、en 侧同构七文件 + `en/preset/DSH-ADAPTATION.md`；安装目录 `~/.dsh/.agent-presets/{kixparadigm,kixparadigm-en}` 同步。
 
 ---
