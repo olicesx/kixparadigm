@@ -40,7 +40,7 @@ npm i -g kixparadigm
 
 The install does everything automatically:
 
-1. **Preset** → `~/.dsh/.agent-presets/kixparadigm/` (full preset: persona cognition layer + 17 skills + 6 roles + 5 commands + guard/command plugins + 6 memories)
+1. **Preset** → `~/.dsh/.agent-presets/kixparadigm/` (full preset: persona cognition layer + 17 skills + 6 roles + 5 commands + guard/command plugins + 4 memories)
 2. **vision-bridge** → `~/.dsh/profiles/web/plugins/dsh-vision-bridge/` (junction created automatically, `cordis.patch.yml` entry registered)
 3. **Checklist**: warns when `settings.yaml` lacks the `zai-vision` / `zai-coding-cn` providers (fill them in per `DSH-ADAPTATION.md`)
 
@@ -98,17 +98,19 @@ kix is layered in two, and this repository ships both layers plus the ecosystem 
 | **Cognition layer (how to think)** | `kixparadigm` | Resident cognition paradigm: Three-Channel Cross-Validation, Phase Duality, Rules Are Liabilities, Triple Requirement Check (no sycophancy), Pre-Code Decision Chain, AI Blind-Spot Map. Active in every session |
 | **Execution layer (how to execute)** | `kixpower` | **Arranger model (v1.2.9)**: the main model freely picks members + flow — dev/qa/reviewer activatable member tiers (names as contract handles) + kixpower sprint flow (heavy path), DAG topology, 4-level loop, verifiable gates; four floor invariants (observation independence / coordination in main thread / perspectives from prompts / gates unchanged) |
 | **Ecosystem skills** | `handoff` / `write-a-skill` / `improve-codebase-architecture` and 17 more | Session handoff, skill authoring, architecture improvement, TDD/teaching/diagnosis methodology |
-| **Mechanical guards** | `kix-guards` plugin | Commit budget, feature branch, force push, dangerous SQL, control-plane file protection, human confirmation points (218 assertions; v5 in-chat questions + v4 GitHub read-only false-positive fix; v6 gh CLI write protection + repeated-attempt auto-deny; v7 commit-budget triple fix — reflog %gs counting of commit-type entries only / stale sprint-pointer fallback / plan.md max_commits fallback + cold-start warn) |
+| **Mechanical guards** | `kix-guards` plugin | Commit budget, feature branch, force push, dangerous SQL, control-plane file protection, human confirmation points (232 assertions; v5 in-chat questions + v4 GitHub read-only false-positive fix; v6 gh CLI write protection + repeated-attempt auto-deny; v7 commit-budget triple fix; v8 command-position SQL detection, read-only control-plane allow, configurable GitHub prefix) |
 | **Discipline mechanism** | `kix-discipline` plugin | Triple-check contract gate + verification gate: spec contract checked before implementation edits, end-of-turn no-test reminder, `kix_discipline_spec` contract tool (v1.2.9 optional `mode` field = arranger trace: member composition + one-line reason), `/kix-discipline` command (68 assertions, 2026-08-16 pluginization P0; v2 reject/handoff ask; mode placeholder round-trip + header-regex escaping fix 2026-08-17) |
-| **Orchestration handoff gate** | `kix-orchestration` plugin | Pre-dispatch checks (sprint marker / plan+progress / blocker / QA completeness); v2 QA return-side consistency (subagent/end); v3 producer_closeout evidence chain; v4 sleep-waiting-for-subagent one-shot reminder (**v4.1 platform-agnostic**: dual command shapes always tested, no tool-name gating; WSL2-verified positive+negative, 67 assertions) |
+| **Orchestration handoff gate** | `kix-orchestration` plugin | Pre-dispatch checks (sprint marker / plan+progress / blocker / QA completeness); v2 QA return-side consistency (subagent/end); v3 producer_closeout evidence chain; v4 sleep-waiting-for-subagent one-shot reminder (**v4.1 platform-agnostic**: dual command shapes always tested, no tool-name gating; WSL2-verified positive+negative); v8 negative-semantics QA completion guard (69 assertions) |
 | **Minimal + progressive disclosure** | `kix-focus` plugin | Three tiers: tools.restrict trims the per-turn tool surface from 85 (~108KB schema) to ~18 resident core; `kix_capability_search` on-demand catalog (v4 param-name metadata + long-tail fallback groups) + `kix_capability_call` proxied execution (full guard pipeline); kix_tool_activate on-demand member tiers (v1.2.9 enumeration-sync regression guard + **cross-platform symlink-install resolution fix**: candidate-root chain argv[1]→realpath→plugin file, WSL2 E2E two-round closed loop); PTC/Code Mode interop (73 assertions, 2026-08-16 P4) |
 | **Cost discipline** | `kix-cost` plugin | Subagent reasoning-effort normalization (thinker→max, other deepseek→high) + lite-tier preferred-route probing with automatic fallback (28 assertions, v5.8; multi-round fallback-route cache fix 2026-08-17) |
-| **Routing layer** | `kix-route` plugin | Sentinel model names (`kix-route:cross/vision/thinker`) → runtime route resolution: cross-vendor inversion / vision model / deep-thinking tier; configurable preference tables (`modelPreference`/`crossProviderOrder` via plugin config, 2026-08-17) (67 assertions, v5.9.1) |
+| **Routing layer** | `kix-route` plugin | Sentinel model names (`kix-route:cross/vision/thinker`) → runtime route resolution: cross-vendor inversion / vision model / deep-thinking tier; configurable preference tables (`modelPreference`/`crossProviderOrder` via plugin config, 2026-08-17) (68 assertions, v5.9.1) |
 | **Native commands** | `kix-commands` plugin | `/kixpower-*` five commands registered as DSH native commands (zero-token trigger, inject flows from `prompts/`) |
 | **Stalled detection** | `kix-stalled` plugin (optional) | `/kixst-check` command + `kix_stalled_check` tool: read-only detection of stalled sprints (candidate, commented-out mount = opt-in, enable via `scripts/install-kix-stalled.ps1`) |
 | **Vision compensation** | `dsh-vision-bridge` plugin | When the main model has no vision, pasted/dropped images are auto-converted to text descriptions before submit (GLM-4.6V, server HTTP + client dock) |
 
 **In one sentence**: kixparadigm gives the AI the freedom of "how to think" plus blind-spot compensation; kixpower gives "how to execute" structured team orchestration; the guard and vision plugins make DSH a complete host for kix.
+
+> **v1.2.10 rectification (DSH editions)**: fixes the KIX self-audit "0% false-positive" counterexamples — QA completion detection now excludes negated statements; control-plane guard only blocks write intent (`grep/cat/ls ~/.dsh` pass); terminal SQL uses command-position + SQL-payload statement analysis; GitHub MCP prefix is configurable; cross-vendor routing skips unregistered preference candidates; uninstalling one bilingual package no longer removes the shared vision-bridge; `engines` aligned with `process.getBuiltinModule`; resident persona second debt pass down to ~1.8K tokens (CN, was ~3.1K); persona-budget / doc-count / bilingual-parity guard and CI added; vision-bridge got regression tests and a complete-code-fence cleanup fix.
 
 ---
 
@@ -154,7 +156,8 @@ kixparadigm/
 ## 🧪 Development & verification
 
 ```bash
-npm test                                  # full plugin regression: guards 218 + discipline 68 + orchestration 67 + focus 73 + cost 28 + route 67 assertions
+npm test                                  # consistency guard + full regression: installer 12 + vision-bridge 6 + guards 232 + discipline 68 + orchestration 69 + focus 73 + cost 28 + route 68 assertions (+ commands 6 groups)
+node scripts/check-dsh-consistency.cjs       # persona budget / doc counts / bilingual plugin parity guard
 node scripts/verify-guards.js             # compare installed preset vs bundle guards
 node scripts/verify-vision-bridge-resolution.cjs  # vision-bridge load-chain full path
 pwsh -File .\scripts\sync-dsh-preset.ps1 -DryRun   # preview preset diffs

@@ -1,4 +1,4 @@
-// kix-guards — kixparadigm 机械门禁的 DSH 原生实现（v7，2026-08-16）
+// kix-guards — kixparadigm 机械门禁的 DSH 原生实现（v8，v1.2.10）
 //
 // 移植自 kixpower 的 blast-radius-check.ps1 / block-source-edit.ps1 核心门禁，
 // 以 DSH `tools/pre-execute` 监听器形态自动拦截（等价 Copilot PreToolUse hook）。
@@ -45,6 +45,14 @@
 //     原拒绝原因 +「禁止重复尝试」，不再反复提问。memo 存插件闭包（每
 //     agent scope 一份 = 每会话独立），只记录拒绝（用户放行的不记录）。
 // v7（2026-08-16，dae 仓库实测误报驱动；0% 误报纪律）：
+// v8（v1.2.10 自审整改；0% 误报反例回归）：
+//   - 终端破坏性 SQL 改为「DB 客户端命令位 + SQL payload 语句级判定」：
+//     echo/grep/字符串字面量不再误拦；显式 SQL 交给 isDestructiveSql 剥字符串/
+//     注释；管道喂 SQL（echo DROP | psql）仍拦；DELETE/UPDATE 带 WHERE 放行。
+//   - 控制平面保护改为只拦明确写意图（写/删/改动词或 shell 重定向命中目标）；
+//     grep/cat/ls/Get-Content 等只读诊断放行。
+//   - GitHub MCP 工具前缀可经 config.githubToolPrefix 配置（默认 mcp__github__）。
+//
 //   - 修复「reflog 计数惩罚历史修整」：改用 reflog subject（%gs）口径，
 //     只数 commit 类条目。reset / merge / pull / checkout / rebase 不再
 //     计入（它们不创建 commit 对象；reset+recommit / rebase 是推荐的历史
@@ -85,8 +93,6 @@ const execFileP = promisify(execFile)
 const COMMIT_HARD_CAP = 10          // 9 Ways 防线：绝对硬上限，不可配
 const COMMIT_BUDGET_DEFAULT = 3     // 冷启动兜底（δ 未知时的保守值）
 
-const DB_CLIENTS = /(?:\b|^)(psql|mysql|mariadb|sqlite3|sqlcmd|clickhouse-client|duckdb)\b/
-
 // ── v3 纯判定函数（模块级：单元测试经 __internals 直接验证）───────────────
 
 // 剥 SQL 字符串/注释噪音（ps1 332-335 同序列）
@@ -112,11 +118,128 @@ function isDestructiveSql(text) {
   return false
 }
 
-// 终端数据库客户端：无法可靠静态解析，含破坏性关键字一律硬拦（ps1 310 行同款：
-// 直接对命令文本做关键字检测，不剥引号——剥引号会把 SQL 内容也剥掉）。
+// 终端数据库客户端（命令位判定 + SQL payload 语句级判定，v8）。
+// v8 修复（0% 误报回归）：旧实现只要命令文本同时出现 DB 客户端名与破坏性
+// 关键字就拦，导致 echo/grep/字符串字面量等只读或无关命令被误判。现改为：
+//   1. 按 shell 分隔符拆段，识别「命令位」上的 DB 客户端（sudo/env 前缀兼容）；
+//   2. 优先提取 -c/--command/-e/--execute/-Q/--query 的 SQL payload，
+//      交给 isDestructiveSql 做剥字符串/注释后的语句级判定；
+//   3. 无显式 payload 时，仅当前一段通过管道喂给 DB 客户端且含破坏性
+//      关键字才拦（如 `echo DROP TABLE | psql`）。
+//   `cat migration.sql | psql`、`grep psql`、`echo "psql DROP"` 不再误拦。
 const DESTRUCTIVE_SQL_KEYWORD = /\b(?:DELETE|UPDATE|DROP|TRUNCATE|ALTER)\b/i
+const DB_CLIENT_NAMES = new Set(['psql', 'mysql', 'mariadb', 'sqlite3', 'sqlcmd', 'clickhouse-client', 'duckdb'])
+const SQL_PAYLOAD_FLAGS = new Set(['-c', '--command', '-e', '--execute', '-Q', '--query'])
+
+/** quote-aware shell 拆段：返回 [{ text, sepBefore }]；sepBefore 为 ;/&&/||/|/newline 或 null。 */
+function splitShellSegments(text) {
+  const parts = []
+  let cur = ''
+  let pendingSep = null
+  let quote = null
+  let escaped = false
+  const flush = () => {
+    const value = cur.trim()
+    if (value) parts.push({ text: value, sepBefore: pendingSep })
+    cur = ''
+    pendingSep = null
+  }
+  const s = String(text || '')
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (quote) {
+      cur += ch
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === quote) quote = null
+      continue
+    }
+    if (ch === "'" || ch === '"') { quote = ch; cur += ch; continue }
+    if (ch === '\\' && i + 1 < s.length) { cur += ch + s[i + 1]; i++; continue }
+    if (ch === ';' || ch === '\n' || ch === '\r') { flush(); pendingSep = ';'; continue }
+    if (ch === '&' && s[i + 1] === '&') { flush(); pendingSep = '&&'; i++; continue }
+    if (ch === '|' && s[i + 1] === '|') { flush(); pendingSep = '||'; i++; continue }
+    if (ch === '|') { flush(); pendingSep = '|'; continue }
+    cur += ch
+  }
+  flush()
+  return parts
+}
+
+/** quote-aware shell 分词（去掉外层引号；保留内部转义后的内容）。 */
+function shellTokens(segment) {
+  const tokens = []
+  let cur = ''
+  let quote = null
+  let escaped = false
+  const s = String(segment || '')
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (quote) {
+      if (escaped) { cur += ch; escaped = false }
+      else if (ch === '\\') escaped = true
+      else if (ch === quote) quote = null
+      else cur += ch
+      continue
+    }
+    if (ch === "'" || ch === '"') { quote = ch; continue }
+    if (ch === '\\' && i + 1 < s.length) { cur += s[i + 1]; i++; continue }
+    if (/\s/.test(ch)) { if (cur) { tokens.push(cur); cur = '' } continue }
+    cur += ch
+  }
+  if (cur) tokens.push(cur)
+  return tokens
+}
+
+function commandBasename(token) {
+  const value = String(token || '')
+  return value.replace(/^["']|["']$/g, '').replace(/\.exe$/i, '').split(/[\\/]/).pop().toLowerCase()
+}
+
+/** 返回 { name, args }：跳过赋值前缀与 sudo/env/command 及它们的前置旗标。 */
+function leadingCommand(tokens) {
+  const list = Array.isArray(tokens) ? tokens : []
+  let i = 0
+  while (i < list.length) {
+    const t = list[i]
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) { i++; continue }
+    if (/^(?:sudo|doas|env|command)$/i.test(t)) { i++; continue }
+    break
+  }
+  while (i < list.length && list[i].startsWith('-')) {
+    i += (i + 1 < list.length && !list[i + 1].startsWith('-')) ? 2 : 1
+  }
+  if (i >= list.length) return undefined
+  return { name: commandBasename(list[i]), args: list.slice(i + 1) }
+}
+
+/** 提取显式 SQL payload（flag value 或 --flag=value）。 */
+function extractSqlPayload(tokens) {
+  for (let i = 0; i < tokens.length; i++) {
+    const raw = tokens[i]
+    const eq = raw.match(/^(--[a-z-]+)=(.*)$/i)
+    if (eq && SQL_PAYLOAD_FLAGS.has(eq[1].toLowerCase())) return eq[2]
+    if (SQL_PAYLOAD_FLAGS.has(raw.toLowerCase())) {
+      if (i + 1 < tokens.length && !tokens[i + 1].startsWith('-')) return tokens[i + 1]
+    }
+  }
+  return undefined
+}
+
 function isTerminalDestructiveSql(text) {
-  return DB_CLIENTS.test(text) && DESTRUCTIVE_SQL_KEYWORD.test(text)
+  const parts = splitShellSegments(text)
+  for (let i = 0; i < parts.length; i++) {
+    const tokens = shellTokens(parts[i].text)
+    const cmd = leadingCommand(tokens)
+    if (!cmd || !DB_CLIENT_NAMES.has(cmd.name)) continue
+    const payload = extractSqlPayload(tokens.slice(1))
+    if (payload !== undefined) {
+      if (isDestructiveSql(payload)) return true
+      continue
+    }
+    if (parts[i].sepBefore === '|' && i > 0 && DESTRUCTIVE_SQL_KEYWORD.test(parts[i - 1].text)) return true
+  }
+  return false
 }
 
 // v3：git 子命令解析式检测（修复 -C/-c/git.exe 绕过；ps1 Get-KixGitCommandPartsAll 的简化）
@@ -222,6 +345,10 @@ function stableArgs(args) {
     .join('&')
 }
 
+function escapeRegex(text) {
+  return String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 // ps1 检查 3：force push 完整检测（--force / -f / push +refs 语法 / --mirror）。
 // 只在真实 push 子命令上下文判定；带 (?<![\w-]) 前缀断言（abc--force 不算）。
 function isForcePush(text) {
@@ -276,6 +403,83 @@ function targetsControlPlane(text) {
     low.includes('$env:userprofile/.dsh') ||
     low.includes('%userprofile%/.dsh')
   )
+}
+
+// ── v8：终端控制平面保护只拦「写意图」────────────────────────────────────
+// 旧实现仅凭命令文本出现 ~/.dsh / agent.cordis.yml 就 deny，grep/cat/ls 等
+// 只读诊断被误拦，违反机械层 0% 误报纪律。写意图判定：
+//   1. shell 重定向目标命中控制平面 → deny；
+//   2. 明确写/删/改动词，且控制平面路径位于其作用对象（删除/移动类任一
+//      参数命中；cp/install/ln/git-clone 只认最后一个非旗标参数 = 目标）→ deny。
+const CONTROL_PLANE_MODIFY_ANY = new Set([
+  'rm', 'del', 'erase', 'rd', 'rmdir', 'remove-item', 'ri',
+  'mv', 'move', 'move-item', 'mi', 'ren', 'rename', 'rename-item',
+  'touch', 'mkdir', 'md', 'new-item', 'ni', 'chmod', 'chown', 'icacls',
+  'attrib', 'set-content', 'sc', 'add-content', 'ac', 'clear-content', 'clc',
+  'out-file', 'set-item', 'si', 'tee',
+])
+const CONTROL_PLANE_DEST_LAST = new Set([
+  'cp', 'copy', 'copy-item', 'cpi', 'robocopy', 'install',
+  'ln', 'link', 'wget', 'curl', 'iwr', 'invoke-webrequest',
+])
+const DOWNLOAD_OUTPUT_FLAGS = new Set(['-o', '--output', '--output-document', '-outfile', '--outfile'])
+function downloadOutputTarget(args) {
+  for (let i = 0; i < args.length; i++) {
+    const raw = args[i]
+    if (DOWNLOAD_OUTPUT_FLAGS.has(raw.toLowerCase())) {
+      if (i + 1 < args.length) return args[i + 1]
+      continue
+    }
+    const eq = raw.match(/^(--output|--output-document|--outfile)=(.*)$/i)
+    if (eq) return eq[2]
+  }
+  return undefined
+}
+function lastNonFlagArg(args) {
+  for (let i = args.length - 1; i >= 0; i--) {
+    if (!args[i].startsWith('-')) return args[i]
+  }
+  return undefined
+}
+function redirectTargetsControlPlane(text) {
+  const re = /(?:[12]?>>?|&>)\s*(?:"([^"]*)"|'([^']*)'|([^\s;&|]+))/g
+  let m
+  while ((m = re.exec(text))) {
+    const target = m[1] || m[2] || m[3]
+    if (target && targetsControlPlane(target)) return true
+  }
+  return false
+}
+function isTerminalControlPlaneWrite(text) {
+  const t = String(text || '')
+  if (redirectTargetsControlPlane(t)) return true
+  const parts = splitShellSegments(t)
+  for (const part of parts) {
+    const tokens = shellTokens(part.text)
+    const cmd = leadingCommand(tokens)
+    if (!cmd) continue
+    if (CONTROL_PLANE_MODIFY_ANY.has(cmd.name)) {
+      if (cmd.args.some((a) => targetsControlPlane(a))) return true
+      continue
+    }
+    if (cmd.name === 'wget' || cmd.name === 'curl' || cmd.name === 'iwr' || cmd.name === 'invoke-webrequest') {
+      const out = downloadOutputTarget(cmd.args)
+      if (out && targetsControlPlane(out)) return true
+      continue
+    }
+    if (CONTROL_PLANE_DEST_LAST.has(cmd.name)) {
+      const dest = lastNonFlagArg(cmd.args)
+      if (dest && targetsControlPlane(dest)) return true
+      if ((cmd.name === 'mv' || cmd.name === 'move' || cmd.name === 'move-item' || cmd.name === 'mi') &&
+        cmd.args.some((a) => targetsControlPlane(a))) return true
+      continue
+    }
+    if (cmd.name === 'git' && /^clone$/i.test(cmd.args[0] || '')) {
+      const dest = lastNonFlagArg(cmd.args.slice(1))
+      if (dest && targetsControlPlane(dest)) return true
+    }
+  }
+  return false
 }
 
 // 仓库根解析：git -C 参数提取（budget/分支检查共用）
@@ -383,7 +587,12 @@ function resolveSprintContextPaths(docsRoot, currentSprint) {
 module.exports = {
   name: 'kix-guards',
   inject: ['tools'],
-  apply(ctx) {
+  apply(ctx, config) {
+    const cfg = config || {}
+    // v8：GitHub MCP 命名前缀可配置（不同部署命名不是 mcp__github__ 时，
+    // 旧硬编码会让整个 GitHub 写保护静默失效）。
+    const GH_PREFIX = String(cfg.githubToolPrefix || 'mcp__github__')
+    const GH_RE = new RegExp('^' + escapeRegex(GH_PREFIX))
     const DENY = (reason) => ({ kind: 'deny', reason })
     const ASK = (reason) => ({ kind: 'ask', reason })
     // v6：会话内重复尝试记忆（key → 原拒绝原因；只记录拒绝，用户放行不记）
@@ -537,20 +746,20 @@ module.exports = {
     // `.*request_` 把 get_pull_request_files/comments/reviews/status 等只读
     // 工具误判为 mutation（日志实测：PR 审查会话中 get_pull_request_files 被
     // ASK，agent 被迫全程绕道 gh CLI，只读调用被拒会打断审查流程）。
-    const GITHUB_READ = /^mcp__github__(get|list|search)_/
-    const GITHUB_WRITE = /^mcp__github__(create_or_update_file|delete_file|push_files)$/
+    const GITHUB_READ = new RegExp('^' + escapeRegex(GH_PREFIX) + '(get|list|search)_')
+    const GITHUB_WRITE = new RegExp('^' + escapeRegex(GH_PREFIX) + '(create_or_update_file|delete_file|push_files)$')
     const GITHUB_MUTATION = new Set([
-      'mcp__github__create_issue',
-      'mcp__github__create_pull_request',
-      'mcp__github__create_pull_request_review',
-      'mcp__github__create_repository',
-      'mcp__github__create_branch',
-      'mcp__github__update_issue',
-      'mcp__github__update_pull_request_branch',
-      'mcp__github__add_issue_comment',
-      'mcp__github__merge_pull_request',
-      'mcp__github__fork_repository',
-    ])
+      'create_issue',
+      'create_pull_request',
+      'create_pull_request_review',
+      'create_repository',
+      'create_branch',
+      'update_issue',
+      'update_pull_request_branch',
+      'add_issue_comment',
+      'merge_pull_request',
+      'fork_repository',
+    ].map((suffix) => GH_PREFIX + suffix))
     function checkGitHubWrite(name, args) {
       if (GITHUB_READ.test(name)) return undefined
       if (GITHUB_WRITE.test(name)) {
@@ -623,7 +832,7 @@ module.exports = {
       let memoKey = null
       if (TERMINAL_TOOLS.has(tool) && text) memoKey = 'term::' + normalizeMemo(text)
       else if (EDIT_TOOLS.has(tool) && pathArg) memoKey = 'edit::' + normalizeMemo(pathArg)
-      else if (name && /^mcp__github__/.test(name)) memoKey = 'ghub::' + name + '::' + stableArgs(args)
+      else if (name && GH_RE.test(name)) memoKey = 'ghub::' + name + '::' + stableArgs(args)
       if (memoKey && denyMemo.has(memoKey)) {
         return DENY(`BLAST RADIUS: 该操作此前已被拒绝（${denyMemo.get(memoKey)}）。禁止重复尝试；如确需执行，请向用户说明原因并等待其明确指示。`)
       }
@@ -679,8 +888,8 @@ module.exports = {
             if (decision) return decision
           }
         }
-        // 2c. 控制平面保护
-        if (targetsControlPlane(text)) {
+        // 2c. 控制平面保护（v8：只拦明确写意图，grep/cat/ls 等只读诊断放行）
+        if (isTerminalControlPlaneWrite(text)) {
           return deny('CONTROL PLANE: 禁止通过命令改写用户级 Agent/Skill/Prompt/Hook/设置。')
         }
         // 2d. gh CLI（GitHub CLI）写保护（v6：堵「经 pwsh 调 gh 绕过 MCP GitHub 门禁」）
@@ -710,7 +919,7 @@ module.exports = {
       }
 
       // 5. MCP GitHub 远程写保护（v5：mutation 的 ask 级门禁改为聊天内提问）
-      if (name && /^mcp__github__/.test(name)) {
+      if (name && GH_RE.test(name)) {
         const decision = checkGitHubWrite(name, args)
         if (decision) {
           const resolved = await resolveAskRecord(exec, decision)
@@ -733,6 +942,11 @@ module.exports.__internals = {
   isDestructiveSql,
   stripSqlNoise,
   isTerminalDestructiveSql,
+  splitShellSegments,
+  shellTokens,
+  extractSqlPayload,
+  isTerminalControlPlaneWrite,
+  redirectTargetsControlPlane,
   isForcePush,
   isLocalDestructiveAsk,
   pushTargetsProtectedRef,
@@ -750,6 +964,7 @@ module.exports.__internals = {
   isGhDestructive,
   normalizeMemo,
   stableArgs,
+  escapeRegex,
   COMMIT_HARD_CAP,
   COMMIT_BUDGET_DEFAULT,
 }

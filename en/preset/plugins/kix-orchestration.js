@@ -1,4 +1,4 @@
-// kix-orchestration — kixparadigm 编排交接门禁（2026-08-16，插件化改造 P2 补缺；v2 2026-08-16）
+// kix-orchestration — kixparadigm 编排交接门禁（2026-08-16，插件化改造 P2 补缺；v2 2026-08-16；v8 v1.2.10）
 //
 // 背景（用户 2026-08-16 指出"迁移是否失真"）：Copilot 侧 kixpower 的编排纪律由
 // 9 个 PreToolUse/PostToolUse hooks 自动触发（validate-handoff.ps1 /
@@ -37,6 +37,10 @@
 //         （替代 reverify marker，git diff 机械检测，不引入 marker 文件）。
 //     强度与交接 gate 同档（默认 remind）；读失败 fail-open（提醒层不拦）。
 //   - /kix-orchestration 命令：status / on|off（会话开关）。
+// v8（v1.2.10）：checkQaReturn 完成声明识别改为「负向表述优先排除 + 明确
+//   正向锚点匹配」——not done / undone / not passed / passed nothing /
+//   completed=false 不再触发提醒；回归见测试「负向表述」用例。
+//
 //
 // 边界（诚实声明）：
 //   - 只拦"模型显式分派 subagent 且 prompt 带 current_sprint/handoff 元数据"的调用；
@@ -189,18 +193,45 @@ function isFile(p) {
 // VS Code 的 subagentStop 可在子代理返回后校验/block；DSH 的原生等价是
 // `subagent/end`（emit，带 lastAssistantMessage）——kix-orchestration 原来只
 // 做 pre-execute 分派前校验，缺"返回侧"。
-// 本函数机械判定：QA 子代理返回文本含完成声明，但 progress.md 的
+// 本函数机械判定：QA 子代理返回文本含**明确正向**完成声明，但 progress.md 的
 // completed/total 未同步 → 返回 reason（提醒而非 block，kix 哲学：补足非限制）。
-// 0% 误报纪律：只认明确的完成声明模式；无声明或进度已同步 → undefined（不提醒）。
+// 0% 误报纪律落地：负向表述（not done/undone/not passed/passed nothing/
+// completed=false）先排除，再匹配带语境锚点的正向声明；无声明或进度已同步
+// → undefined（不提醒）。
+const QA_NEGATIVE_MARKERS = [
+  /\bnot\s+(?:done|complete(?:d)?|passed|finished|passing)\b/i,
+  /\bno\s+(?:completion|pass)\b/i,
+  /\bun(?:done|completed)\b/i,
+  /\bpassed\s+nothing\b/i,
+  /\bcompleted\s*[:=]\s*false\b/i,
+  /\bdid\s+not\s+(?:complete|pass|finish)\b/i,
+  /\bdoes\s+not\s+(?:complete|pass)\b/i,
+  /(?:未|没有|尚未)(?:全部|所有)?(?:通过|完成)/,
+  /(?:未|没有|尚未)通过/,
+]
 const QA_DONE_MARKERS = [
-  /(?:✅|✔|done|complete|passed|通过|完成|verdict\s*[:：]\s*pass|all\s+passed)/i,
+  /(?:✅|✔)[^\r\n]{0,40}(?:通过|passed|done|complete(?:d)?|完成|\bpass\b|\bPASS\b)/i,
+  /(?:通过|passed|done|complete(?:d)?|完成)[^\r\n]{0,20}(?:✅|✔)/i,
+  /(?:verdict|结论|result)\s*[:：]\s*(?:pass|passed|通过|完成|complete(?:d)?)/i,
+  /\bQA\s+(?:passed|通过|完成|done|complete(?:d)?)\b/i,
+  /\b(?:all|所有|全部)\s+(?:tests?|checks?|gates?|测试|用例)\s*(?:passed|通过|完成)/i,
+  /\b(?:tests?|checks?|gates?)\s+(?:passed|完成|通过)\b/i,
+  /(?:全部通过|全部完成|验收通过|验证通过|测试通过|质检通过)/,
+  /\ball\s+(?:done|completed|passed)\b/i,
+  /\bPASS(?:ED)?\b/i,
 ]
 // 与 parseProgressState 的 completed/total 语义一致；失败返回 { ok: true }
 // （无法读取进度时不做机械判定，避免误报——fail-open，与 checkHandoff 的
 // fail-closed 读失败不同：这是提醒层不是门禁层）。
+function hasQaCompletion(text) {
+  const t = String(text || '')
+  if (QA_NEGATIVE_MARKERS.some((re) => re.test(t))) return false
+  return QA_DONE_MARKERS.some((re) => re.test(t))
+}
+
 function checkQaReturn({ text, progressMd }) {
   const t = String(text || '')
-  if (!QA_DONE_MARKERS.some((re) => re.test(t))) return undefined
+  if (!hasQaCompletion(t)) return undefined
   const state = parseProgressState(progressMd || '')
   if (state.completed === undefined || state.total === undefined) return undefined
   if (state.completed === state.total) return undefined
@@ -594,6 +625,9 @@ module.exports = {
 
 module.exports.__internals = {
   extractHandoffMeta,
+  hasQaCompletion,
+  QA_NEGATIVE_MARKERS,
+  QA_DONE_MARKERS,
   parseProgressState,
   checkHandoff,
   checkQaReturn,
