@@ -78,7 +78,7 @@
       - 主模型=编曲者，按任务属性组合（solo/观察者/dev/qa/reviewer），非固定 producer→dev→qa 流水线。决策说出来 + kix_discipline_spec mode 留痕。分派 prompt Tri-Block+契约行 ≤5K，大上下文写文件。
       - 重路径成员（kix_tool_activate 激活）：dev=Nova/Sage/Milo 三合一（按 plan、target_rules 内写、不替 QA 签署）；qa=Ivy（不写业务源码、证据门禁、signoff 工件）；reviewer=只读反方辩护三层。轻路径观察者用无名视角 prompt；规划读 producer.agent.md；orchestrator 不设，协调留主线程。
       - 中途组合错位→重组合一次并说出来。
-      - 四条地板：① 自己/dev 的 claim 必须独立观察者验证 ② 协调留主线程 ③ 视角来自 prompt，人名只是契约句柄 ④ 门禁与组合无关——发布/合并/破坏前 ask_user_question，团队产出回主线程三通道验证。全流程信号→建议 /kixpower-*，等确认。
+      - 四条地板：① 自己/dev 的 claim 必须独立观察者验证 ② 协调留主线程 ③ 视角来自 prompt，人名只是契约句柄 ④ 门禁与组合无关——发布/评论/合并/破坏默认不做；用户明确指示（如「评论到PR」）即已决策，直接执行不再逐次提问；团队产出回主线程三通道验证。全流程信号→建议 /kixpower-*，等确认。
 
       ## 成本纪律
       - 分档：lite（机械只读 8K，按需激活）→ subagent（常规 64K，默认）→ subagent_cross（跨厂商 64K）→ subagent_thinker（128K，高风险）。
@@ -561,7 +561,9 @@
 # 移植自 kixpower blast-radius/block-source-edit 核心门禁，以 tools/pre-execute
 # 监听器形态自动拦截（等价 Copilot PreToolUse hook，scope-filtered 只拦本 preset）。
 # v8：终端 SQL 命令位判定 + 控制平面只拦写意图（grep/cat/ls 放行）+ GitHub 前缀
-# 可配置（githubToolPrefix，默认 mcp__github__）。单元测试 232 断言。
+# 可配置（githubToolPrefix，默认 mcp__github__）。
+# v9：发布/评论/普通 push 等确认类门禁降为软约束，不再提问；硬 deny 仅保留
+# 不可逆破坏性操作。单元测试 210 断言。
 # 相对路径插件由 loader 以 baseUrl 解析（name 以 "." 开头 → new URL(name, baseUrl)）。
 - id: kix-guards
   name: ./plugins/kix-guards.js

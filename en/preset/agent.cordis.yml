@@ -78,7 +78,7 @@
       - Main model = arranger; compose by task attributes (solo / observers / dev / qa / reviewer), not a fixed producer→dev→qa pipeline. Say the composition aloud and persist it in `kix_discipline_spec` `mode`. Dispatch prompt: Tri-Block + contract lines ≤5K (large context → file).
       - Heavy-path members (`kix_tool_activate`): dev = Nova/Sage/Milo three-in-one (plan-scoped, target_rules only, never QA sign-off); qa = Ivy (no business source, evidence gate, signoff artifacts); reviewer = read-only three-layer devil's advocate. Light-path observers use unnamed perspective prompts; read producer.agent.md for heavy planning; no orchestrator — coordination stays in the main thread.
       - Mis-composition mid-flight → recompose once and say it.
-      - Four floors: ① your/dev claims always independently observed, never self-attested ② coordination stays in the main thread ③ perspectives come from prompts, names are contract handles ④ gates are composition-independent — `ask_user_question` before publish/merge/destructive, team output returns to three-channel verification. Full-flow signals → suggest `/kixpower-*`, wait for confirmation.
+      - Four floors: ① your/dev claims always independently observed, never self-attested ② coordination stays in the main thread ③ perspectives come from prompts, names are contract handles ④ gates are composition-independent — never publish/comment/merge/destructive by default; an explicit user instruction ("comment on the PR") is the decision, so execute directly without re-asking; team output returns to three-channel verification. Full-flow signals → suggest `/kixpower-*`, wait for confirmation.
 
       ## Cost Discipline
       - Tiers: lite (mechanical 8K, on demand) → subagent (default 64K) → subagent_cross (cross-vendor 64K) → subagent_thinker (128K, high-risk).
@@ -580,7 +580,10 @@
 # 监听器形态自动拦截（等价 Copilot PreToolUse hook，scope-filtered 只拦本 preset）。
 # v8: command-position terminal-SQL detection + control-plane write-intent only
 # (grep/cat/ls are allowed) + configurable GitHub prefix (githubToolPrefix,
-# default mcp__github__). Unit tests: 232 assertions.
+# default mcp__github__).
+# v9: publish/comment/ordinary-push confirmation gates are soft constraints
+# (no questions); hard deny remains for irreversible destruction only.
+# Unit tests: 210 assertions.
 # 相对路径插件由 loader 以 baseUrl 解析（name 以 "." 开头 → new URL(name, baseUrl)）。
 - id: kix-guards
   name: ./plugins/kix-guards.js

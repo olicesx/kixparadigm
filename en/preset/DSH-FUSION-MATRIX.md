@@ -12,7 +12,7 @@ DSH 的事件面比 VS Code hooks 更完整、更结构化。**kix 插件目前�
 
 | # | VS Code 有用机制 | DSH 原生等价（已查证契约） | kix 现状 | 融合判定 |
 |---|---|---|---|---|
-| 1 | `permissionRequest`（CLI only：权限服务前程序化 allow/deny 短路） | **`approval/request`** waterfall（`ApprovalOutcome`；可短路默认审批流） | ❌ 未接 | ⛔ **不接（机制事实：本部署死代码）**——`dsh-user-approval/lib/index.js` `decide()` 在 `effectivePolicy()==='never'` 时**直接 return `'rejected'`，不派发 waterfall**（danger-full-access 预设 = approval never）；kix ask 门禁已走 `ctx.userQuestions.ask()` 聊天内提问（v5 决策）。只有 policy=ask 的部署 waterfall 才活，届时按 §1 设计再启用 |
+| 1 | `permissionRequest`（CLI only：权限服务前程序化 allow/deny 短路） | **`approval/request`** waterfall（`ApprovalOutcome`；可短路默认审批流） | ❌ 未接 | ⛔ **不接（机制事实：本部署死代码）**——`dsh-user-approval/lib/index.js` `decide()` 在 `effectivePolicy()==='never'` 时**直接 return `'rejected'`，不派发 waterfall**（danger-full-access 预设 = approval never）；v1.2.11 起确认类门禁已降为软约束，不再走 `ctx.userQuestions.ask()`；只有 policy=ask 的部署 waterfall 才活，届时按 §1 设计再启用 |
 | 2 | `subagentStart/subagentStop`（agentName matcher；subagentStop 可 block 强制续跑 + modifiedResponse 改写返回） | **`subagent/start` + `subagent/end`** emit（`SubagentRunInfo`/`SubagentRunEndInfo` 含 `lastAssistantMessage`）+ **`tools/post-execute` 对 subagent 工具的 result 改写/block** | ❌ 未接（kix-orchestration 只做 pre-execute 校验，不观察子代理返回） | ✅ **已融合（2026-08-16 v2 返回侧校验 + v3 收尾证据链）**：kix-orchestration 增加 `subagent/end` 监听（QA 返回声明 vs progress 一致性 → steer 提醒）+ `producer_closeout` gate（spec 验收标准在档 / 任务全完成 / 测试变更要求重验，替代 Copilot 的 qa-signoff 深度校验中可机械的部分），48 断言回归通过 |
 | 3 | `errorOccurred`（recoverable 语义） | **`agent/request-error`** waterfall（可返回 `{kind:'retry'}` 接管失败恢复）+ **`agent/error`** emit | ❌ 未接（kix-cost 只在 `agent/request` 做路由探测回退，不做运行时失败恢复） | 🔶 **观察候选，暂不融合**——`agent/request-error` 的 `{kind:'retry'}` 复用 harness 重试策略（同配置重试）；"换厂商重试"需同时改写 `agent.request`，机制较重。按 kix 哲学（规则是负债）：无真实失败恢复证据前不预建；若出现「模型调用失败后恢复不当」实例再按 §3 设计融合 |
 | 4 | `postToolUse` 的 `additionalContext` 注入（kix 的 qa-freshness/auto-update-progress 语义） | **`tools/post-execute` 的 `additionalContexts`** | ⚠️ 部分（kix-orchestration/kix-discipline 已用） | ✅ 已接（无需新增） |
@@ -57,7 +57,7 @@ Event 'approval/request'  (mode: waterfall)
 即：**任何走审批栈的请求都会先过 `approval/request` waterfall**，监听器可返回 outcome 认领（短路），或 `next()` 交给默认审批流。这与 VS Code `permissionRequest` 的"权限服务前短路"是**同构机制**。
 
 ### kix 现状
-- `kix-guards.js` 的 ask 级门禁调 `ctx.userQuestions.ask()`（聊天内提问）——**绕过了 approval 栈**（v5 决策）。
+- v1.2.11 起 `kix-guards.js` 的发布/评论/普通 push 等确认类门禁为软约束，不进入 approval 栈。
 - deny 在 `tools/pre-execute` 直接返回 `{kind:'deny'}`——也**不经过 approval 栈**。
 - **没有任何插件监听 `approval/request`**。
 
@@ -72,7 +72,7 @@ DSH 的 `approval/request` 是「审批栈的统一入口」。不接它意味�
 > if (this.effectivePolicy(session) === "never") return "rejected";   // ← 不派发 waterfall
 > const answer = ... waterfall(scopeTarget(this, req.agent), "approval/request", req, ...)
 > ```
-> 本部署 danger-full-access = approval never → `approval/request` **永远不会被派发**，接监听器 = 死代码（负债）。kix 的 ask 级门禁已走 `ctx.userQuestions.ask()` 聊天内提问（v5 决策，不依赖 approval 栈）。
+> 本部署 danger-full-access = approval never → `approval/request` **永远不会被派发**，接监听器 = 死代码（负债）。kix 的确认类门禁已降为软约束（v1.2.11，不依赖 approval 栈）。
 > **若未来某部署切 policy=ask**：kix-guards 增加 `approval/request` 监听器，仅对机械可判定的确定性请求短路（如审批请求的 tool 是 `mcp__github__*` 写 main → 返回 `'rejected'`）；无法确定性判定的一律 `next()`。**不**把现有聊天内提问改回 approval 栈。强度默认 `next`：只有显式配置的 deny 清单才短路。
 
 ---
