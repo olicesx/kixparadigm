@@ -53,6 +53,8 @@
 'use strict'
 
 const { randomUUID } = require('node:crypto')
+const path = require('node:path')
+const { readFileSync, statSync } = require('node:fs')
 
 // ── 常驻核心集（每轮模型可见）────────────────────────────────────────────
 // 三通道：执行（edit/write/pwsh/read/grep/glob）、观察（subagent 五档）、
@@ -321,7 +323,12 @@ const ACTIVATABLE_TOOLS = {
 reading files, searching, simple checks and verification. Do exactly
 what the task asks. No extra analysis, no suggestions, no speculation.
 Return concise factual results with file:line evidence when relevant.`,
-      toolFilter: { allow: ['read', 'grep', 'glob', 'pwsh'] },
+      // 2026-08-17（v1.2.13，部署 E2E 复验实锤）：与 agent.cordis.yml 的
+      // tool-subagent-lite 行同源——原硬编码 pwsh 只在 preset 行修了平台条件化，
+      // 本 ACTIVATABLE_TOOLS 快照漏改 → capability_call 首次使用自动激活路径
+      // 仍 tools.restrict() 报 unknown global tool "pwsh"（Linux 部署）。
+      // 与 preset 行保持一致：win32 用 pwsh，其余平台用 bash。
+      toolFilter: { allow: ['read', 'grep', 'glob', process.platform === 'win32' ? 'pwsh' : 'bash'] },
       agentOptions: { provider: 'zai-coding-cn', model: 'glm-4.7', maxTokens: 8192 },
     },
   },
@@ -440,6 +447,62 @@ function activationKeyFor(toolName) {
   if (ACTIVATABLE_TOOLS[toolName]) return toolName
   if (GOAL_TOOL_NAMES.has(toolName)) return 'goal'
   return null
+}
+
+// ── 交接 gate 机械兜底（2026-08-17，v1.2.13）──────────────────────────────
+// 背景：kix-orchestration 的交接门禁只对分派 prompt 里显式 `current_sprint: N`
+// 契约行生效（extractHandoffMeta 行锚定匹配）。persona 规则「分派契约行必须带
+// current_sprint: N」靠模型自觉——上一轮实测 Tri-Block 分派经常漏带 → 门禁静默
+// 放行。机制兜底：编曲成员（qa/dev/reviewer）经 kix_capability_call 分派时，
+// 若工作区存在 docs/.kixpower-current-sprint，自动把契约行注入/修正为 marker
+// 值（复用 activationKeyFor 同款「工具名 → 编曲成员」映射思路）。直呼路径
+// （不经 capability_call）由 kix-orchestration 的 Tri-Block [CONTEXT] 容错解析
+// 兜底（v10.1，见 kix-orchestration.js extractHandoffMeta）。
+const ORCH_MEMBER_TOOLS = new Set(['subagent_qa', 'subagent_dev', 'subagent_reviewer'])
+// 与 kix-orchestration 同款 marker 约定：工作区 docs/.kixpower-current-sprint，
+// 内容为纯数字行（active Sprint N）。
+const SPRINT_MARKER_REL = ['docs', '.kixpower-current-sprint']
+
+// 纯函数：从工作区读取 active Sprint（marker 缺失/非纯数字 → 0 = 不注入）。
+function readActiveSprint(workspaceRoot) {
+  if (typeof workspaceRoot !== 'string' || workspaceRoot.length === 0) return 0
+  try {
+    const marker = path.join(workspaceRoot, ...SPRINT_MARKER_REL)
+    if (!statSync(marker).isFile()) return 0
+    const v = readFileSync(marker, 'utf8').trim()
+    return /^\d+$/.test(v) ? Number(v) : 0
+  } catch {
+    return 0
+  }
+}
+
+// 纯函数：把契约行 `current_sprint: N` 注入/修正进分派 prompt。
+// 已有契约行（与 extractHandoffMeta 同款行锚定正则）→ 值替换为 marker 值
+// （保留行尾注释）；无 → 在 prompt 末尾追加契约行（Tri-Block 契约行以
+// key: value 收尾，追加末尾仍能被行锚定匹配命中）。
+// 返回 { prompt, changed, replaced }——changed=false 表示值本就一致（零改写）。
+function injectSprintContractLine(prompt, sprint) {
+  const p = String(prompt || '')
+  const value = String(sprint)
+  const m = /^[ \t]*current_sprint:\s*(\d+)([ \t]*(?:#.*)?)$/im.exec(p)
+  if (m) {
+    if (m[1] === value) return { prompt: p, changed: false, replaced: true }
+    const out = p.replace(/^([ \t]*current_sprint:\s*)\d+([ \t]*(?:#.*)?)$/im, '$1' + value + '$2')
+    return { prompt: out, changed: true, replaced: true }
+  }
+  const sep = p.endsWith('\n') ? '' : '\n'
+  return { prompt: p + sep + 'current_sprint: ' + value + '\n', changed: true, replaced: false }
+}
+
+// 纯函数：从 capability_call 的 exec 解析工作区根（与 kix-orchestration
+// agentCwd 同源：agent.session.header.cwd）。
+function workspaceRootOf(exec) {
+  try {
+    const cwd = exec && exec.agent && exec.agent.session && exec.agent.session.header && exec.agent.session.header.cwd
+    return typeof cwd === 'string' && cwd.length > 0 ? cwd : undefined
+  } catch {
+    return undefined
+  }
 }
 
 // 默认包解析：从 dsh 入口（process.argv[1] = bin.js）的 node_modules 解析
@@ -630,8 +693,26 @@ module.exports = {
       },
       async execute(args, exec) {
         const toolName = args && args.tool ? String(args.tool) : ''
-        const toolArgs = (args && args.arguments) || {}
+        let toolArgs = (args && args.arguments) || {}
         if (!toolName) return { ok: false, error: 'kix_capability_call: 必须提供 tool 名。' }
+
+        // 2026-08-17（v1.2.13）交接 gate 机械兜底：编曲成员（qa/dev/reviewer）
+        // 分派自动携带 current_sprint: N 契约行——工作区存在
+        // docs/.kixpower-current-sprint 时读 marker 注入/修正（缺失/非数字不
+        // 注入，观察者/轻路径分派不受影响）。返回值带 sprintInjected 供模型
+        // 感知（透明 + 可验证）。
+        let injectedSprint = 0
+        if (ORCH_MEMBER_TOOLS.has(toolName) && typeof toolArgs.prompt === 'string' && toolArgs.prompt.length > 0) {
+          const wsRoot = workspaceRootOf(exec) || (typeof cfg.sprintWorkspaceRoot === 'string' ? cfg.sprintWorkspaceRoot : '') || process.cwd()
+          const sprint = readActiveSprint(wsRoot)
+          if (sprint > 0) {
+            const inj = injectSprintContractLine(toolArgs.prompt, sprint)
+            if (inj.changed) {
+              toolArgs = { ...toolArgs, prompt: inj.prompt }
+              injectedSprint = sprint
+            }
+          }
+        }
 
         // 存在性检查 **agent 视图优先、全局视图兜底**：dsh-tools 的
         // `get(name, scope)`——scope 省略或显式 undefined 都是**全局视图**
@@ -693,6 +774,9 @@ module.exports = {
           tool: toolName,
           ...(autoActivated
             ? { autoActivated: true, note: `kix-focus: ${toolName} 首次使用自动激活，下一轮起可直接调用（kix_tool_deactivate 卸载）。` }
+            : {}),
+          ...(injectedSprint > 0
+            ? { sprintInjected: injectedSprint, note: `kix-focus: 已按工作区 docs/.kixpower-current-sprint 注入契约行 current_sprint: ${injectedSprint}（交接门禁机械兜底）。` }
             : {}),
           result,
         }
@@ -822,7 +906,12 @@ module.exports.__internals = {
   FALLBACK_GROUP,
   ACTIVATABLE_TOOLS,
   GOAL_TOOL_NAMES,
+  ORCH_MEMBER_TOOLS,
+  SPRINT_MARKER_REL,
   activationKeyFor,
+  readActiveSprint,
+  injectSprintContractLine,
+  workspaceRootOf,
   isOnDemand,
   projectToolMeta,
   matchedToolMeta,

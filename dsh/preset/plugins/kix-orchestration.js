@@ -84,6 +84,18 @@ function extractHandoffMeta(prompt) {
   const re = (pat) => new RegExp(pat, 'im')
   let m = re('^[ \\t]*current_sprint:\\s*(\\d+)[ \\t]*(?:#.*)?$').exec(p)
   if (m) out.sprint = Number(m[1])
+  // v10.1（2026-08-17 交接 gate 机械兜底，Tri-Block 容错）：模型用 Tri-Block
+  // 分派时可能只在 [CONTEXT] 段写"Sprint N"而漏写契约行 current_sprint: N →
+  // 旧实现 sprint=0 → 交接门禁静默放行（2026-08-17 部署 E2E 实锤）。无契约行
+  // 时从 [CONTEXT] 段兜底解析 Sprint N；范围刻意收窄到 [CONTEXT] 段（观察者/
+  // 轻路径 prompt 无此段即不触发），且仅作兜底——契约行永远优先。
+  if (!m) {
+    const ctxSeg = /\[CONTEXT\]([\s\S]*?)(?=\[TASK\]|\[CONSTRAINTS\]|$)/i.exec(p)
+    if (ctxSeg) {
+      const sm = /\bSprint\s+(\d+)\b/i.exec(ctxSeg[1])
+      if (sm) out.sprint = Number(sm[1])
+    }
+  }
   m = re('^[ \\t]*handoff_mode:\\s*(\\S+)[ \\t]*(?:#.*)?$').exec(p)
   if (m) out.mode = m[1]
   m = re('^[ \\t]*partition_id:\\s*(\\S+)[ \\t]*(?:#.*)?$').exec(p)
