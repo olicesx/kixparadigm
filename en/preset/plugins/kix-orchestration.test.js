@@ -427,6 +427,28 @@ ok('复合命令内 sleep + 子代理中文 description → 命中', (() => {
 ok('非 sleep 命令（description 提及 subagent）→ 不命中', (() => {
   return !I.isSleepWaitForSubagent({ command: 'git status', description: 'Wait for subagent' })
 })())
+ok('pwsh 平台覆盖：Start-Sleep -Seconds + subagent description → 命中', (() => {
+  return I.isSleepWaitForSubagent({ command: 'Start-Sleep -Seconds 120; Write-Host done', description: 'Wait for subagent C completion' })
+})())
+ok('pwsh 裸数字形态 start-sleep 60（大小写不敏感）→ 命中', (() => {
+  return I.isSleepWaitForSubagent({ command: 'start-sleep 60', description: '等待子代理' })
+})())
+ok('pwsh 引号内文本不命中（Write-Output 提及 start-sleep）', (() => {
+  return !I.isSleepWaitForSubagent({ command: "Write-Output 'start-sleep 5 then retry'", description: 'Wait for subagent' })
+})())
+ok('pwsh Start-Sleep 无 subagent description（重试退避）→ 不命中（0% 误报）', (() => {
+  return !I.isSleepWaitForSubagent({ command: 'Start-Sleep -Seconds 3', description: 'Backoff before retry' })
+})())
+ok('pwsh 工具行走 pre-execute 检测（platform 对齐）', (async () => {
+  await dispatchPre('pwsh', { command: 'Start-Sleep -Seconds 90', description: 'Wait for remaining subagents' }, 'orch-pwsh')
+  const exec = { name: 'pwsh', arguments: { command: 'Start-Sleep -Seconds 90' }, token: 't', callId: 'c', agent: { id: 'orch-pwsh', session: { header: sessionHeader } } }
+  const d = await postExecute[0](exec, { isError: false }, () => Promise.resolve({ kind: 'accept' }))
+  return d.kind === 'accept' && Array.isArray(d.additionalContexts) && d.additionalContexts.length === 1
+    && d.additionalContexts[0].content.some((c) => c.text.includes('sleep'))
+})())
+ok('SUBAGENT_TOOLS 覆盖全部工具行（含 reviewer，2026-08-17 补）', (() => {
+  return I.SUBAGENT_TOOLS.has('subagent_reviewer') && I.SUBAGENT_TOOLS.has('subagent_cross') && I.SUBAGENT_TOOLS.has('subagent_lite')
+})())
 ok('pre→post 一次性注入提醒，第二次同模式不再注入', (async () => {
   await dispatchPre('bash', { command: 'sleep 60 && echo done', description: 'Wait for subagent C' }, 'orch-sleep')
   const exec = { name: 'bash', arguments: { command: 'sleep 60' }, token: 't', callId: 'c', agent: { id: 'orch-sleep', session: { header: sessionHeader } } }
