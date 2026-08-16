@@ -27,13 +27,13 @@ npm i -g kixparadigm-en        # preset → ~/.dsh/.agent-presets/kixparadigm-en
 # restart dsh web, pick the kixparadigm-en mode in the new-session picker
 ```
 
-After install: `kixparadigm-en doctor` self-checks. `kixparadigm-en uninstall` removes the EN preset; the shared vision-bridge is kept when the CN preset is still installed (v1.2.10).
+After install: `kixparadigm-en doctor` self-checks. `kixparadigm-en uninstall` removes the EN preset; the shared vision-bridge is kept when the CN preset is still installed (v1.2.11).
 
 ## Verify
 
 ```bash
-node scripts/check-consistency.cjs    # persona budget / doc-link / syntax guard (v1.2.10)
-node plugins/kix-guards.test.js        # 232 assertions (v8)
+node scripts/check-consistency.cjs    # persona budget / doc-link / syntax guard (v1.2.11)
+node plugins/kix-guards.test.js        # 210 assertions (v9 soft constraints)
 node plugins/kix-commands.test.js      # 6 assertion groups
 node plugins/kix-cost.test.js          # 28 assertions
 node plugins/kix-route.test.js         # 68 assertions (v8)

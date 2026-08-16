@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict'
-// kixparadigm DSH 一致性守护（v1.2.10）——防「规则是负债」类漂移：
+// kixparadigm DSH 一致性守护（v1.2.11）——防「规则是负债」类漂移：
 //   - persona 常驻预算（字符数 + 近似 token 估算）
 //   - README 可观察计数与 preset 实际文件一致
 //   - zh/en 插件字节一致（语言中立复制约定）
