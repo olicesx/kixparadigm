@@ -297,20 +297,26 @@ function baselineShaFromProgress(progressMd) {
 // description 全部含 subagent/子代理 字样。DSH 机制事实（dsh-subagent
 // notifySettlement 源码）：结算投递无条件（token 耗尽/失败/取消/拆卸都通知
 // 父级），父级 idle → followup 自动开新回合——收回合零丢失风险，sleep 等待
-// 纯属浪费延迟与回合占用。检测面刻意收窄（0% 误报纪律）：bash 命令含裸
+// 纯属浪费延迟与回合占用。
+// v4.1（同日，去硬编码）：**不按工具名门控**。工具名与平台是部署选择
+// （preset 按平台挂载 pwsh/bash；WSL/容器/未来终端工具不可枚举），命令形态
+// 才携带语义——bash 里跑 `pwsh -c "Start-Sleep 30"` 或 pwsh 里跑 bash sleep
+// 都该命中，因此两种形态恒测于任意工具的 arguments.command（无 command 的
+// 工具自然不命中，零开销短路）。检测面刻意收窄（0% 误报纪律）：命令含裸
 // sleep 数字 **且** description 提及 subagent/子代理 → 一次性提醒改收回合。
 // 测试退避/重试/等锁的 sleep（description 不匹配）不提醒；等后台 job 的
 // 正确形态是 job_output wait:true（另一模式，不在本检测面）。
-const SLEEP_WAIT_CMD = /(^|[;&|]\s*)sleep\s+\d/i
-// pwsh 等价形态（preset 按平台挂载：Windows=pwsh、Linux/macOS=bash；PowerShell
-// 大小写不敏感）：Start-Sleep -Seconds 60 / Start-Sleep 60 / start-sleep -s 30。
-// 锚点同 bash 款（行/语句边界），Write-Output 'start-sleep 5' 之类引号内文本不命中。
+// 形态覆盖：bash `sleep 45`（含单位后缀 5m/30s/2h/1d 与小数）+ pwsh
+// `Start-Sleep -Seconds 60` / `Start-Sleep 60`（大小写不敏感）。锚点防
+// 引号内文本误报（Write-Output 'start-sleep 5' 不命中）。
+const SLEEP_WAIT_CMD = /(^|[;&|]\s*)sleep\s+\d+(?:\.\d+)?[smhd]?\b/i
 const PWSH_SLEEP_WAIT_CMD = /(^|[;\r\n]|&&|\|\|)\s*start-sleep\s+(?:-\w+\s+)*-?\d/i
 const SLEEP_WAIT_DESC = /subagent|子代理/i
 const SLEEP_WAIT_REMIND =
   'kix-orchestration: 检测到用 sleep 等待后台子代理。DSH 的结算/报告投递会无条件唤醒父级（收回合后自动开新回合，无丢失风险）；请改为：独立工作做完仍缺结果 → 简短状态后结束回合，等 subagent-settled/subagent-report 唤醒继续。sleep 只用于测试与超时语义（退避/等锁）。'
 
-/** bash/pwsh sleep 等待子代理判定（纯函数，测试经 __internals 验证）。 */
+/** sleep 等待子代理判定（纯函数，测试经 __internals 验证）。平台无关：
+ *  双命令形态恒测（bash sleep / pwsh Start-Sleep），不依赖工具名。 */
 function isSleepWaitForSubagent({ command, description }) {
   const cmd = typeof command === 'string' ? command : ''
   const desc = typeof description === 'string' ? description : ''
@@ -384,24 +390,22 @@ module.exports = {
       }
     }
 
-    // ── pre-execute：subagent 交接门禁 + v4 sleep 等待检测 ────────────────
+    // ── pre-execute：subagent 交接门禁 + v4.1 sleep 等待检测 ──────────────
     ctx.on('tools/pre-execute', async (exec, next) => {
       const name = exec && exec.name
       const tool = (name || '').toLowerCase()
       if (!SUBAGENT_TOOLS.has(tool)) {
-        // v4：sleep 空转等待子代理（一次性提醒）。刻意不参与 intensity
+        // v4.1：sleep 空转等待子代理（一次性提醒）。刻意不参与 intensity
         // block/ask——sleep 是编排卫生问题不是危险操作，remind 恰当。
-        // 平台对齐（preset：Windows=pwsh、Linux/macOS=bash）两工具名都查；
-        // 命令形态双正则覆盖（bash sleep N / pwsh Start-Sleep N）。
-        if (tool === 'bash' || tool === 'pwsh') {
-          const st = exec && exec.agent ? stateFor(exec.agent) : undefined
-          if (st && st.enabled && !st.sleepReminded) {
-            const args = exec && (exec.arguments ?? exec.args)
-            const cmd = args && typeof args.command === 'string' ? args.command : ''
-            const desc = args && typeof args.description === 'string' ? args.description : ''
-            if (isSleepWaitForSubagent({ command: cmd, description: desc })) {
-              st.pendingSleepRemind = { callId: exec.callId }
-            }
+        // 去硬编码：不按工具名门控——任意工具的 arguments.command 都查
+        // （命令形态双正则恒测，平台/工具无关；无 command 的工具零开销短路）。
+        const st = exec && exec.agent ? stateFor(exec.agent) : undefined
+        if (st && st.enabled && !st.sleepReminded) {
+          const args = exec && (exec.arguments ?? exec.args)
+          const cmd = args && typeof args.command === 'string' ? args.command : ''
+          const desc = args && typeof args.description === 'string' ? args.description : ''
+          if (cmd && isSleepWaitForSubagent({ command: cmd, description: desc })) {
+            st.pendingSleepRemind = { callId: exec.callId }
           }
         }
         return next()

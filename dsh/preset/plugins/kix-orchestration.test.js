@@ -446,6 +446,34 @@ ok('pwsh 工具行走 pre-execute 检测（platform 对齐）', (async () => {
   return d.kind === 'accept' && Array.isArray(d.additionalContexts) && d.additionalContexts.length === 1
     && d.additionalContexts[0].content.some((c) => c.text.includes('sleep'))
 })())
+ok('v4.1 单位后缀：sleep 5m → 命中', (() => {
+  return I.isSleepWaitForSubagent({ command: 'sleep 5m && echo done', description: 'Wait for subagent C' })
+})())
+ok('v4.1 单位后缀：sleep 30s / sleep 2h → 命中', (() => {
+  return I.isSleepWaitForSubagent({ command: 'sleep 30s', description: 'wait subagent' })
+    && I.isSleepWaitForSubagent({ command: 'sleep 2h', description: 'wait subagent' })
+})())
+ok('v4.1 小数秒 sleep 1.5 → 命中', (() => {
+  return I.isSleepWaitForSubagent({ command: 'sleep 1.5', description: 'Wait for subagent' })
+})())
+ok('v4.1 跨形态：bash 工具载 Start-Sleep 命令 → 命中（不按工具名门控）', (async () => {
+  await dispatchPre('bash', { command: 'Start-Sleep -Seconds 45', description: 'Wait for subagent B' }, 'orch-xform')
+  const exec = { name: 'bash', arguments: { command: 'Start-Sleep -Seconds 45' }, token: 't', callId: 'c', agent: { id: 'orch-xform', session: { header: sessionHeader } } }
+  const d = await postExecute[0](exec, { isError: false }, () => Promise.resolve({ kind: 'accept' }))
+  return d.kind === 'accept' && Array.isArray(d.additionalContexts) && d.additionalContexts.length === 1
+})())
+ok('v4.1 任意终端工具（非 bash/pwsh 名）同走检测 → 命中', (async () => {
+  await dispatchPre('zsh', { command: 'sleep 20', description: 'Wait for subagents' }, 'orch-zsh')
+  const exec = { name: 'zsh', arguments: { command: 'sleep 20' }, token: 't', callId: 'c', agent: { id: 'orch-zsh', session: { header: sessionHeader } } }
+  const d = await postExecute[0](exec, { isError: false }, () => Promise.resolve({ kind: 'accept' }))
+  return d.kind === 'accept' && Array.isArray(d.additionalContexts) && d.additionalContexts.length === 1
+})())
+ok('v4.1 无 command 参数的工具 → 零开销短路不注入', (async () => {
+  await dispatchPre('edit', { file_path: 'a.ts', content: 'x' }, 'orch-noCmd')
+  const exec = { name: 'edit', arguments: { file_path: 'a.ts' }, token: 't', callId: 'c', agent: { id: 'orch-noCmd', session: { header: sessionHeader } } }
+  const d = await postExecute[0](exec, { isError: false }, () => Promise.resolve({ kind: 'accept' }))
+  return d.kind === 'accept' && (d.additionalContexts === undefined || d.additionalContexts.length === 0)
+})())
 ok('SUBAGENT_TOOLS 覆盖全部工具行（含 reviewer，2026-08-17 补）', (() => {
   return I.SUBAGENT_TOOLS.has('subagent_reviewer') && I.SUBAGENT_TOOLS.has('subagent_cross') && I.SUBAGENT_TOOLS.has('subagent_lite')
 })())

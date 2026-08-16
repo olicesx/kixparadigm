@@ -34,6 +34,15 @@
 
 **下一轮实测补充验收（kixpower 团队路径，当前零证据）**：① `/kixpower-*` 全流程跑通且分派 prompt 含角色硬约束（注入链走通）；② kix-orchestration 三段 gate（交接/返回/收尾）在真实分派上触发（subagent prompt 带 `current_sprint`）；③ Sprint 文件（plan/progress/done）落盘且 completed==total。任一失败即触发融合矩阵行 11 的机制化条件。
 
+### v6.1 补记（2026-08-17 第三轮：v4.1 去硬编码 + WSL2 实测闭环）
+
+> 用户裁决：必须兼容 Linux 和 Windows，不做机械硬编码；WSL2 已重启，实测。
+
+- **WSL2 实测闭环（v1.2.6 部署版，Linux/bash 路径）**：新会话（kixparadigm preset，dae 工作区）执行双样本对照——阴性在前（`sleep 2` + desc "Backoff before retry" → **无提醒**，0% 误报实测）+ 阳性在后（`sleep 3` + desc "Wait for subagents to progress" → **UI 显示「上下文注入 kix-orchestration: 检测到用 sleep 等待后台子代理…」**，pre-execute 检测 → post-execute 注入 → 模型可见全链路）。模型汇总：`阴性[无提醒] · 阳性[有提醒]`。顺序设计（阴性先行）避免一次性标志污染对照。
+- **v4.1 去硬编码**（用户裁决驱动）：v1.2.6 的 `tool==='bash'||tool==='pwsh'` 门控本身成了新的硬编码——工具名与平台是**部署选择**（preset 按平台挂载、WSL/容器/未来终端工具不可枚举），**命令形态才携带语义**。改为：任意工具的 `arguments.command` 都查（无 command 的工具零开销短路）、双形态恒测（bash 里跑 `pwsh -c "Start-Sleep 30"` 或反向 interop 均命中）、bash 形态补单位后缀与小数（`sleep 5m/30s/2h/1.5`）。
+- 断言 61 → **67**（单位后缀×2/小数/跨形态 bash 载 Start-Sleep/任意工具名 zsh/无 command 短路）。
+- 版本 1.2.7；Windows/WSL2/en 三处安装目录同步。v4.1 在 WSL 下语义与已实测的 v1.2.6 等价（Linux 路径不变，仅检测面放宽），下次自然重启周期生效。
+
 ---
 
 ## 〇、v5：en（kixparadigm-en）同步（2026-08-15 第五轮）
