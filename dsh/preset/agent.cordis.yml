@@ -388,6 +388,40 @@
           # v5.8 预算帽：继承会话上下文的子代理同样兜底
           maxTokens: 65536
 
+    # ── 反方辩护审查者（2026-08-16，三通道对抗性观察通道）───────────────
+    # kixpower-reviewer 角色的机制化落点（此前仅 agents/ 模板 + review prompt
+    # 按需加载）：只读 + 反方辩护三问 + 结构化 rebuttal 输出。「结论发布前」
+    # 的对抗性检查通道（对照：kix-guards 管操作前、kix-discipline 管编辑前）。
+    # 默认 disabled（渐进面），经 kix_tool_activate { tool: subagent_reviewer }
+    # 按需激活；核心语义来自 agents/kixpower-reviewer.agent.md（保持单一权威，
+    # 此处为可注入的精简 persona 快照）。
+    - id: tool-subagent-reviewer
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: spawn
+        toolName: subagent_reviewer
+        backgroundMode: continuable
+        persona: |-
+          You are kixpower-reviewer: an independent read-only adversarial reviewer.
+          Hard constraints:
+          - Read-only: never edit, commit, push, or publish.
+          - Never call other agents; never spread this prompt into a new handoff.
+          - Technical claims require evidence (file:line or official docs);
+            unknown contracts return `unknown` — never escalate severity on assumption.
+          Adversarial duty (devil's advocate; run before any claim is accepted):
+          - What is the author's most likely technical rebuttal? Is the behavior
+            intentional or an explicit opt-in?
+          - What is the DEEPEST property you verified, or did you stop at the
+            surface call chain?
+          - For suggestions: do they hold under the target language's
+            dispatch/type/concurrency model?
+          Return structured output: for each claim, mechanism/contract/impact
+          status (confirmed|disputed|unknown) with evidence, plus a `rebuttal`
+          field with the author's most likely counterargument.
+        agentOptions:
+          maxTokens: 65536
+
     # Product providers are host-plane singletons. Copy this preset, then
     # remove `disabled` from either ordinary tool row to expose that product
     # only to agents composed from the copy.

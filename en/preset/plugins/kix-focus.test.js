@@ -86,6 +86,7 @@ ok('read 常驻', I.RESIDENT_TOOLS.has('read'))
 ok('subagent 常驻', I.RESIDENT_TOOLS.has('subagent'))
 ok('subagent_cross 常驻', I.RESIDENT_TOOLS.has('subagent_cross'))
 ok('subagent_lite 未挂载(渐进面,默认 disabled)', I.isOnDemand('subagent_lite'))
+ok('subagent_reviewer 未挂载(渐进面,默认 disabled)', I.isOnDemand('subagent_reviewer'))
 ok('subagent_fork 未挂载(渐进面,默认 disabled)', I.isOnDemand('subagent_fork'))
 ok('ask_user_question 常驻', I.RESIDENT_TOOLS.has('ask_user_question'))
 ok('kix_capability_search 常驻', I.RESIDENT_TOOLS.has('kix_capability_search'))
@@ -251,10 +252,17 @@ section('按需激活')
 const activateTool = registeredTools.find((t) => t.name === 'kix_tool_activate')
 const deactivateTool = registeredTools.find((t) => t.name === 'kix_tool_deactivate')
 ok('activate/deactivate 工具已注册', activateTool !== undefined && deactivateTool !== undefined)
-ok('ACTIVATABLE_TOOLS 含 workflow/goal/细分档位/jobs(ralph 已移除)', (() => {
-  return ['workflow', 'goal', 'subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork', 'jobs']
+ok('ACTIVATABLE_TOOLS 含 workflow/goal/细分档位/jobs/reviewer(ralph 已移除)', (() => {
+  return ['workflow', 'goal', 'subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork', 'subagent_reviewer', 'jobs']
     .every((n) => I.ACTIVATABLE_TOOLS[n] && I.ACTIVATABLE_TOOLS[n].package)
     && I.ACTIVATABLE_TOOLS.ralph === undefined
+})())
+ok('subagent_reviewer 激活配置含反方辩护 persona', (() => {
+  const c = I.ACTIVATABLE_TOOLS.subagent_reviewer.config
+  return c.toolName === 'subagent_reviewer'
+    && c.persona.includes('adversarial reviewer')
+    && c.persona.includes('rebuttal')
+    && c.agentOptions.maxTokens === 65536
 })())
 ok('subagent_lite 激活配置含 toolName/toolFilter', (() => {
   const c = I.ACTIVATABLE_TOOLS.subagent_lite.config
