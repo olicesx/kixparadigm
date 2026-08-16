@@ -157,6 +157,21 @@ async function main() {
     check('cross：单厂商部署 → undefined', (await resolveCrossRoute(llm, 'zai-coding-cn', undefined)) === undefined)
   }
   {
+    // v8：偏好表里的未注册 provider 必须被跳过，不能把目录探测失败放大成
+    // 「cross 探测失败」。父厂商 acme 未出现在偏好表 → generic 首候选
+    // deepseek-official 未注册（listModels 会抛错），应直接落到已注册 acme2。
+    const llm = {
+      listProviders: () => [{ id: 'acme-official', name: 'Acme' }, { id: 'acme2', name: 'Acme2' }],
+      listModels: async (provider) => {
+        if (provider === 'deepseek-official' || provider === 'zai-coding-cn') throw new Error('provider not registered')
+        return [{ id: provider + '-m1' }]
+      },
+      resolveModelInfo: async (provider, model) => ({ provider, id: model, inputModalities: ['text'] }),
+    }
+    const hit = await resolveCrossRoute(llm, 'acme-official', undefined)
+    check('v8 cross：未注册偏好候选跳过 → 已注册异厂商兜底', hit !== undefined && hit.provider === 'acme2')
+  }
+  {
     const llm = mockLlm({
       providers: ['zai-coding-cn', 'acme-llm'],
       models: { 'zai-coding-cn': ['glm-5.3'], 'acme-llm': ['acme-x1'] },

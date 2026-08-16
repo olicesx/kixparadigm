@@ -37,11 +37,11 @@ description: "kixParadigm — AI 自编排最小范式 + 统一入口，适合�
 
 > **DSH 适配注记**：下方模型字符串与 `runSubagent` 的 `model` 参数是 VS Code Copilot 机制。DSH 中跨厂商正交杠杆**已启用**：preset 注册了 `subagent_cross` 工具行（`kix-route:cross` 哨兵 → kix-route 插件运行时按父厂商自动取反路由，无需手工同步模型线），主模型三通道观察/最高置信 claim 时自主选用它作为跨厂商观察者（主 DeepSeek + 观察 GLM = 跨厂商取反）；普通分派用 `subagent`（继承主模型）。`workflow` 的 `agent(prompt, {provider, model})` 亦支持每次调用级覆盖。新增厂商 = settings.yaml `llm-pi-ai:` 加 profile（kix-route 自动发现已注册 provider，preset 无需加行）。判据与权衡原则原样保留。
 
-- 候选（2026-08-05 实测可用，Copilot 环境）：**`GLM-5.2 (CodingPlan) (gcmp.zhipu)`**（备选 `GLM-5.2 (gcmp.dashscope)`）/ **`DeepSeek-V4-Flash (gcmp.deepseek)`**（备选 `DeepSeek-V4-Flash (gcmp.dashscope)`）；按主 agent 厂商**取反**——主跑 DeepSeek 用 GLM-5.2，主跑智谱系用 V4 Flash，两者都非主厂商时选便宜的
+- 候选：DSH 中由 `subagent_cross` / `kix-route` 运行时按父厂商自动取反解析（Copilot 时代硬编码模型串已从 DSH 技能移除；部署候选 = 已注册 provider 实时目录）
 - 判据：优先取与主模型**解分布差异**最大者（跨厂商 > 同厂商不同代际 > 自验证）
 - 权衡：观察者要**够强但不同**——太弱放行主模型错误（LLM-judge 高估效应），太强则错误相关滑向同质；观察者的"验证通过"结论始终受其能力天花板限制
 - 权衡边界：基线够强时协作收益消失（来源与实证见 AUDIT.md §2）
-- 调用（Copilot）：`runSubagent` 的 `model` 参数直接填上述**确切字符串**（含括号与空格，已实测生效）。模型列表会变——model 参数报错时，以报错信息返回的 `Available models` 列表为准重新选择
+- 调用（DSH）：普通分派 `subagent`；跨厂商观察 `subagent_cross`（失败时错误信息自带已注册 provider 清单，按其建议重选）
 
 ### 调用
 
@@ -145,9 +145,9 @@ kixParadigm 革新了**怎么思考**（自由推理 + 并发验证），但**�
 
 - 系统自动 compaction 只压缩对话历史，**工具输出与引用文件不被压缩** → 读大文件撑爆上下文风险真实，「不读 transcript」纪律必要
 
-## 机械保障（确定性判断 — 0%误报，不限制怎么思考）
+## 机械保障（确定性判断 — 0%误报为准入标准，不限制怎么思考）
 
-以下都是机械性的安全网/协调/纪律。共同特征：确定性判断（计数/模式匹配/交集），0%误报，不涉及主观思维。融入自 kixpower 经实测验证的部分。
+以下都是机械性的安全网/协调/纪律。共同特征：确定性判断（计数/模式匹配/交集），不涉及主观思维。**0%误报是准入标准，不是免检承诺**：模式匹配必须做负向语义与读/写意图回归。v1.2.10 整改修复了三处违反该标准的反例——QA 完成声明排除 not done/undone/not passed、控制平面只拦写意图（`grep/cat/ls ~/.dsh` 放行）、终端 SQL 只认 DB 客户端命令位与 SQL payload。融入自 kixpower 经实测验证的部分。
 
 ### 安全门禁（防失控）
 
@@ -189,7 +189,7 @@ kixParadigm 革新了**怎么思考**（自由推理 + 并发验证），但**�
 - **POST 非幂等**：发布前 GET 校验已发布 ID（GitHub review/comment 不可删）
 - **不读 transcript 文件**（上下文膨胀风险）
 
-**为什么必须机械**：主观判断会误报 → 模型学会绕过。机械判断 0%误报 → 触发即真问题 → 模型不绕。主观判断不进这一层；进这层的必须能 100% 确定区分对错。
+**为什么必须机械**：主观判断会误报 → 模型学会绕过。机械判断以 0%误报为目标 → 触发即真问题 → 模型不绕；达不到确定性标准的规则不进这一层，模式匹配必须有负向回归守护。主观判断不进这一层；进这层的必须能 100% 确定区分对错。
 
 ### 人类确认点（机械触发，人类裁决）
 

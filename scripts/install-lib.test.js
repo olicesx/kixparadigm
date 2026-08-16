@@ -5,7 +5,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
-const { installVisionBridge, mergeVisionBridgePatch, uninstall } = require('./install-lib.js')
+const { hasOtherPresetOwner, installVisionBridge, mergeVisionBridgePatch, uninstall } = require('./install-lib.js')
 
 const DEFAULT_PATCH = [
   '# Your patch layer for this dsh profile, applied after every bundle layer:',
@@ -144,6 +144,49 @@ test('installVisionBridge rejects an invalid patch before creating plugin files 
   assert.equal(fs.readFileSync(patch, 'utf8'), 'enabled: true\n')
   assert.equal(fs.existsSync(path.join(profile, 'plugins', 'dsh-vision-bridge')), false)
   assert.equal(fs.existsSync(path.join(profile, 'node_modules', 'dsh-vision-bridge')), false)
+})
+
+test('hasOtherPresetOwner detects the other kix preset edition', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-owner-'))
+  try {
+    assert.equal(hasOtherPresetOwner(home, 'kixparadigm'), false)
+    fs.mkdirSync(path.join(home, '.agent-presets', 'kixparadigm-en'), { recursive: true })
+    fs.writeFileSync(path.join(home, '.agent-presets', 'kixparadigm-en', 'agent.cordis.yml'), '[]\n')
+    assert.equal(hasOtherPresetOwner(home, 'kixparadigm'), true)
+    assert.equal(hasOtherPresetOwner(home, 'kixparadigm-en'), false)
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('uninstall keeps the shared vision-bridge when the other kix preset is installed', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-shared-uninstall-'))
+  const profile = path.join(home, 'profiles', 'web')
+  const previousHome = process.env.DSH_HOME
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
+    fs.rmSync(home, { recursive: true, force: true })
+  })
+
+  fs.mkdirSync(profile, { recursive: true })
+  process.env.DSH_HOME = home
+  installVisionBridge(silentLog)
+
+  const current = path.join(home, '.agent-presets', 'kixparadigm', 'agent.cordis.yml')
+  const other = path.join(home, '.agent-presets', 'kixparadigm-en', 'agent.cordis.yml')
+  fs.mkdirSync(path.dirname(current), { recursive: true })
+  fs.writeFileSync(current, '[]\n')
+  fs.mkdirSync(path.dirname(other), { recursive: true })
+  fs.writeFileSync(other, '[]\n')
+
+  uninstall(silentLog)
+
+  assert.equal(fs.existsSync(current), false)
+  assert.equal(fs.existsSync(other), true)
+  assert.equal(fs.existsSync(path.join(profile, 'plugins', 'dsh-vision-bridge', 'package.json')), true)
+  assert.equal(fs.existsSync(path.join(profile, 'node_modules', 'dsh-vision-bridge')), true)
+  assert.equal(bridgeIdCount(fs.readFileSync(path.join(profile, 'cordis.patch.yml'), 'utf8')), 1)
 })
 
 test('uninstall restores [] when the bridge was the only patch entry', (t) => {
