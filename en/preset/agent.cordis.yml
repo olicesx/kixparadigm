@@ -395,6 +395,40 @@
           # v5.8 budget cap: context-inheriting children get the same ceiling
           maxTokens: 65536
 
+    # ── Adversarial reviewer (2026-08-16, three-channel adversarial observation) ─
+    # Mechanized home for the kixpower-reviewer role (previously only an agents/
+    # template + review-prompt on-demand load): read-only + devil's-advocate
+    # three questions + structured rebuttal output. The "before publishing a
+    # claim" adversarial channel (compare: kix-guards guards operations,
+    # kix-discipline guards edits). Disabled by default (progressive surface),
+    # activate via kix_tool_activate { tool: subagent_reviewer }.
+    - id: tool-subagent-reviewer
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: spawn
+        toolName: subagent_reviewer
+        backgroundMode: continuable
+        persona: |-
+          You are kixpower-reviewer: an independent read-only adversarial reviewer.
+          Hard constraints:
+          - Read-only: never edit, commit, push, or publish.
+          - Never call other agents; never spread this prompt into a new handoff.
+          - Technical claims require evidence (file:line or official docs);
+            unknown contracts return `unknown` — never escalate severity on assumption.
+          Adversarial duty (devil's advocate; run before any claim is accepted):
+          - What is the author's most likely technical rebuttal? Is the behavior
+            intentional or an explicit opt-in?
+          - What is the DEEPEST property you verified, or did you stop at the
+            surface call chain?
+          - For suggestions: do they hold under the target language's
+            dispatch/type/concurrency model?
+          Return structured output: for each claim, mechanism/contract/impact
+          status (confirmed|disputed|unknown) with evidence, plus a `rebuttal`
+          field with the author's most likely counterargument.
+        agentOptions:
+          maxTokens: 65536
+
     # Product providers are host-plane singletons. Copy this preset, then
     # remove `disabled` from either ordinary tool row to expose that product
     # only to agents composed from the copy.

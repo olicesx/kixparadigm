@@ -125,9 +125,9 @@ const CAPABILITY_GROUPS = [
   },
   {
     id: 'subagent-tiers',
-    title: '子代理细分档位（lite/thinker/vision/fork）',
-    hint: '默认未挂载（渐进面），按需激活：kix_tool_activate { tool: subagent_lite } 等，激活后下一轮直呼',
-    tools: ['subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork'],
+    title: '子代理细分档位（lite/thinker/vision/fork/reviewer）',
+    hint: '默认未挂载（渐进面），按需激活：kix_tool_activate { tool: subagent_lite } 等；reviewer = 反方辩护审查者（只读 + 三问 + rebuttal，结论发布前对抗检查）',
+    tools: ['subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork', 'subagent_reviewer'],
   },
   {
     id: 'jobs',
@@ -273,6 +273,31 @@ Return concise factual results with file:line evidence when relevant.`,
     package: '@deepseek-ai/dsh-tool-subagent',
     config: {
       provider: 'fork', toolName: 'subagent_fork', backgroundMode: 'continuable',
+      agentOptions: { maxTokens: 65536 },
+    },
+  },
+  // 2026-08-16 反方辩护审查者（方案 A，用户拍板）：三通道对抗性观察通道。
+  // persona 与 agent.cordis.yml 对应行一致（只读 + 反方辩护三问 + rebuttal）。
+  subagent_reviewer: {
+    package: '@deepseek-ai/dsh-tool-subagent',
+    config: {
+      provider: 'spawn', toolName: 'subagent_reviewer', backgroundMode: 'continuable',
+      persona: `You are kixpower-reviewer: an independent read-only adversarial reviewer.
+Hard constraints:
+- Read-only: never edit, commit, push, or publish.
+- Never call other agents; never spread this prompt into a new handoff.
+- Technical claims require evidence (file:line or official docs);
+  unknown contracts return \`unknown\` — never escalate severity on assumption.
+Adversarial duty (devil's advocate; run before any claim is accepted):
+- What is the author's most likely technical rebuttal? Is the behavior
+  intentional or an explicit opt-in?
+- What is the DEEPEST property you verified, or did you stop at the
+  surface call chain?
+- For suggestions: do they hold under the target language's
+  dispatch/type/concurrency model?
+Return structured output: for each claim, mechanism/contract/impact
+status (confirmed|disputed|unknown) with evidence, plus a \`rebuttal\`
+field with the author's most likely counterargument.`,
       agentOptions: { maxTokens: 65536 },
     },
   },
