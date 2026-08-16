@@ -1,4 +1,4 @@
-// kix-guards 回归测试（v6，2026-08-16：gh CLI 写保护 + 重复尝试记忆）
+// kix-guards 回归测试（v7，2026-08-16：commit budget 三重修复——reflog %gs 口径 / 完结 sprint 回退 / plan.md max_commits 兜底 + 冷启动 warn）
 //
 // 单元级验证：加载 kix-guards.js，mock DSH pre-execute 派发
 // （模拟 dsh-tools createExecution 的输出结构：{ name, arguments, ... }），
@@ -342,6 +342,58 @@ async function askCase(label, name, args) {
   check('v6: GitHub 工具同参重复 → deny（memo）', await dispatch('mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 99 }), true)
   userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['允许执行'] }] } } }
   check('v6: GitHub 工具异参（pull_number 不同）不受 memo 影响 → ask 放行', await dispatch('mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 100 }), false)
+
+  // ══ 9. v7：commit budget 三重修复（reflog %gs 口径 / 完结 sprint 回退 / 预算兜底）══
+  // 9a. countReflogCommits：%gs 口径只数 commit 类条目
+  assert.deepStrictEqual(I.countReflogCommits(''), { commits: 0, churn: 0 }, '空 reflog → 0/0')
+  assert.deepStrictEqual(I.countReflogCommits('commit: a\ncommit: b\nreset: moving to HEAD~1\ncommit: c'), { commits: 3, churn: 3 }, 'reset 不计入')
+  assert.deepStrictEqual(I.countReflogCommits('commit: a\ncommit (amend): b\npull: Fast-forward\nmerge: x: Merge branch y\ncheckout: moving to z'), { commits: 1, churn: 2 }, 'amend 只进 hard cap 口径')
+  assert.deepStrictEqual(I.countReflogCommits('reset: moving to HEAD~1\nrebase (finish): returning to refs/heads/kdae\npull: Fast-forward'), { commits: 0, churn: 0 }, '历史修整类全部不计')
+  assert.deepStrictEqual(I.countReflogCommits('commit (initial): init'), { commits: 1, churn: 1 }, 'initial commit 计入')
+  // 事故回归（2026-08-16 dae 仓库实测）：3 逻辑 commit + 2 次 reset 重做（各跟一个
+  // recommit）+ 1 次 amend，v6 的 %H 口径计 8 次 → 误触过期 budget=3 熔断；
+  // v7 = 5 个逻辑 commit（budget 口径）/ 6 个 commit 对象（hard cap 口径）
+  assert.deepStrictEqual(
+    I.countReflogCommits('commit: fix1\ncommit: fix2\ncommit: e2e-test\nreset: moving to HEAD~1\ncommit: fix1-re\nreset: moving to HEAD~1\ncommit: fix2-re\ncommit (amend): fix2-re'),
+    { commits: 5, churn: 6 },
+    '事故回归：8 → commits 5 / churn 6',
+  )
+  passed += 6
+
+  // 9b. resolveCommitBudget：plan.md blast_radius.max_commits 兜底链
+  assert.strictEqual(I.resolveCommitBudget({ planMd: 'blast_radius:\n  max_commits: 5\n' }), 5, 'plan.md max_commits 兜底 (v7)')
+  assert.strictEqual(I.resolveCommitBudget({ planMd: 'task_sizing:\n  derived_commit_budget: 4\nblast_radius:\n  max_commits: 9\n' }), 4, 'task_sizing 优先于 max_commits')
+  assert.strictEqual(I.resolveCommitBudget({ progressMd: '---\nblast_radius:\n  commit_budget: 3\n---\n', planMd: 'task_sizing:\n  derived_commit_budget: 8\nblast_radius:\n  max_commits: 9\n' }), 3, 'progress 覆盖 plan 两级')
+  assert.strictEqual(I.resolveCommitBudget({ progressMd: '---\nsprint: 9\nstatus: complete\n---\n# trace\n', planMd: 'blast_radius:\n  branch_required: true\n  max_commits: 5\n' }), 5, 'sprint-9 实形：progress 无预算字段 → plan max_commits 兜底')
+  passed += 4
+
+  // 9c. commitBudgetSource：来源标注（deny 消息 / 冷启动 warn）
+  assert.strictEqual(I.commitBudgetSource({}), '冷启动默认 3', '无上下文 → 冷启动')
+  assert.strictEqual(I.commitBudgetSource({ progressMd: '---\nblast_radius:\n  commit_budget: 7\n---\n' }), 'progress.md blast_radius.commit_budget')
+  assert.strictEqual(I.commitBudgetSource({ planMd: 'task_sizing:\n  derived_commit_budget: 5\n' }), 'plan.md task_sizing.derived_commit_budget')
+  assert.strictEqual(I.commitBudgetSource({ planMd: 'blast_radius:\n  max_commits: 5\n' }), 'plan.md blast_radius.max_commits')
+  passed += 4
+
+  // 9d. resolveSprintContextPaths：marker 指向已完结 sprint → 回退最大编号
+  const fsx = require('node:fs')
+  const tmpBase = fsx.mkdtempSync(path.join(os.tmpdir(), 'kix-guards-v7-'))
+  const docsRoot = path.join(tmpBase, 'docs')
+  fsx.mkdirSync(docsRoot, { recursive: true })
+  const mkSprint = (n, opts) => {
+    const d = path.join(docsRoot, 'sprint-' + n)
+    fsx.mkdirSync(d, { recursive: true })
+    if (opts && opts.progressMd) fsx.writeFileSync(path.join(d, 'progress.md'), opts.progressMd)
+    if (opts && opts.done) fsx.writeFileSync(path.join(d, 'done.md'), '---\nstatus: done\n---\n')
+  }
+  assert.strictEqual(I.resolveSprintContextPaths(docsRoot, 0), undefined, '无 sprint 目录 → undefined')
+  mkSprint(6, { done: true, progressMd: '---\nblast_radius:\n  commit_budget: 3\n---\n' })
+  assert.deepStrictEqual(I.resolveSprintContextPaths(docsRoot, 6), { dir: 'sprint-6', fallbackFrom: undefined, staleAll: true }, '唯一 sprint 已完结 → staleAll')
+  mkSprint(9, { progressMd: '---\nsprint: 9\n---\n' })
+  assert.deepStrictEqual(I.resolveSprintContextPaths(docsRoot, 6), { dir: 'sprint-9', fallbackFrom: 'sprint-6', staleAll: false }, '事故回归：marker 停在已完结 sprint-6 → 回退 sprint-9')
+  assert.deepStrictEqual(I.resolveSprintContextPaths(docsRoot, 9), { dir: 'sprint-9', fallbackFrom: undefined, staleAll: false }, 'marker 直指活跃 sprint')
+  assert.deepStrictEqual(I.resolveSprintContextPaths(docsRoot, 0), { dir: 'sprint-9', fallbackFrom: undefined, staleAll: false }, '无 marker → 最大编号')
+  fsx.rmSync(tmpBase, { recursive: true, force: true })
+  passed += 5
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

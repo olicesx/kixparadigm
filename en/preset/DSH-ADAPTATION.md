@@ -17,7 +17,7 @@
 
 ## §2 Mechanical guards (resident)
 
-- `plugins/kix-guards.js` auto-mounts a `tools/pre-execute` listener (scope-filtered to this preset) that intercepts: destructive SQL (DROP/TRUNCATE/DELETE/UPDATE without WHERE, statement-level, comment-stripped), dangerous git (force push incl. `-f`/`+refs`/`--mirror`, main-branch pushes, commit-budget via reflog), control-plane file writes (`~/.dsh/**`), unknown execution tools, MCP GitHub remote writes without a feature branch.
+- `plugins/kix-guards.js` auto-mounts a `tools/pre-execute` listener (scope-filtered to this preset) that intercepts: destructive SQL (DROP/TRUNCATE/DELETE/UPDATE without WHERE, statement-level, comment-stripped), dangerous git (force push incl. `-f`/`+refs`/`--mirror`, main-branch pushes, commit-budget via reflog subject — commit-type entries only, stale-sprint fallback to max-numbered dir, plan.md max_commits fallback chain, cold-start warn; v7), control-plane file writes (`~/.dsh/**`), unknown execution tools, MCP GitHub remote writes without a feature branch.
 - Human-confirmation points (v5, 2026-08-15): `reset --hard`, `clean -f`, `branch -D`, `stash drop`, `checkout --`/`restore`, ordinary pushes, GitHub mutations (e.g. `merge_pull_request`, issue comments) → **asked inside the chat** via `ctx.userQuestions.ask()` (the service behind `ask_user_question`), not the approval dialog. The user answers 「允许执行/拒绝」; the gate then allows or denies. Fail-safe: no `userQuestions` service / no agent / subagent DELEGATED_CALLER / aborted → deny.
 - The harness's sandbox stack is the resident mechanical layer on top; the approval policy for `danger-full-access` is `never` (fully automatic, no approval dialogs).
 

@@ -65,7 +65,7 @@ kix-guards, validate-handoff core → kix-orchestration; rest deliberately not p
    mechanisms (L2 flow / advance conditions / topology / Observe / L4), loaded on demand
    (not resident); slimming risk > token benefit.
 2. **No kix-guards YAML rule layer** — kix-guards is the global enforced baseline (5 gates /
-   164 assertions); hardcoding guarantees consistency and resists project tampering.
+   218 assertions); hardcoding guarantees consistency and resists project tampering.
    permission-rules-style YAML targets "project-custom rules", which kix has no real need for.
 3. **No "how to think" mechanization** — three-channel / duality / blind-spot map / routing
    are cognitive heuristics; writing them as gates degrades understanding into checkboxing

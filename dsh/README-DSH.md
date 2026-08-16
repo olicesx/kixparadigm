@@ -71,7 +71,7 @@ pwsh -File .\scripts\sync-dsh-preset.ps1 -Force
 ## 验证
 
 ```powershell
-node .\dsh\preset\plugins\kix-guards.test.js      # 机械门禁 164 组断言
+node .\dsh\preset\plugins\kix-guards.test.js      # 机械门禁 218 组断言（v7）
 node .\dsh\preset\plugins\kix-commands.test.js    # 命令注册 6 组断言
 node .\dsh\preset\plugins\kix-cost.test.js        # 成本纪律 24 组断言
 node .\dsh\preset\plugins\kix-route.test.js       # 跨厂商路由 57 组断言
