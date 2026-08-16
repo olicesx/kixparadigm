@@ -1,4 +1,4 @@
-// kix-orchestration 回归测试（2026-08-16）
+// kix-orchestration 回归测试（2026-08-16；v8 v1.2.10 负向语义回归）
 //
 // 单元级验证：加载 kix-orchestration.js，mock DSH pre-execute / post-execute 派发，
 // 覆盖：
@@ -264,6 +264,22 @@ ok('无完成声明 → 不提醒（0% 误报）', (() => {
     progressMd: '---\ncompleted_tasks: 2\ntotal_tasks: 3\n---\n',
   })
   return r === undefined
+})())
+
+ok('负向表述 not done / undone / not passed → 不提醒（0% 误报回归）', (() => {
+  const bad = [
+    'QA did not complete; several tests failed and one item is not done yet.',
+    'The QA run is undone; still pending.',
+    'QA completed=false, not passed.',
+    'No completion; passed nothing.',
+    '未全部通过，仍有 2 项失败',
+  ]
+  return bad.every((text) => I.hasQaCompletion(text) === false &&
+    I.checkQaReturn({ text, progressMd: '---\ncompleted_tasks: 2\ntotal_tasks: 3\n---\n' }) === undefined)
+})())
+ok('明确正向声明（QA passed / verdict:pass / 全部通过）→ 仍识别', (() => {
+  const good = ['QA passed, all done', 'verdict: pass', '全部测试通过', 'QA PASS']
+  return good.every((text) => I.hasQaCompletion(text) === true)
 })())
 ok('进度文件缺字段 → 不提醒（fail-open，提醒层非门禁层）', (() => {
   const r = I.checkQaReturn({

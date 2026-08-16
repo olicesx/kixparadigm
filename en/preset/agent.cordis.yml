@@ -588,6 +588,9 @@
 # ── kix 机械门禁（DSH 原生 hook）────────────────────────────────────────────
 # 移植自 kixpower blast-radius/block-source-edit 核心门禁，以 tools/pre-execute
 # 监听器形态自动拦截（等价 Copilot PreToolUse hook，scope-filtered 只拦本 preset）。
+# v8: command-position terminal-SQL detection + control-plane write-intent only
+# (grep/cat/ls are allowed) + configurable GitHub prefix (githubToolPrefix,
+# default mcp__github__). Unit tests: 232 assertions.
 # 相对路径插件由 loader 以 baseUrl 解析（name 以 "." 开头 → new URL(name, baseUrl)）。
 - id: kix-guards
   name: ./plugins/kix-guards.js
@@ -609,7 +612,7 @@
 #    Intensity defaults to remind (fewer constraints; literal low-risk reversible
 #    tasks may ignore the reminder and proceed, matching kix signal-based
 #    triggering); ask/block require explicit config in this row.
-#    Unit tests: node plugins/kix-discipline.test.js (43 assertions).
+#    Unit tests: node plugins/kix-discipline.test.js (68 assertions).
 - id: kix-discipline
   name: ./plugins/kix-discipline.js
 
@@ -620,7 +623,7 @@
 # dispatch carries current_sprint, verify the workspace docs/.kixpower-current-sprint
 # marker matches, docs/sprint-N/{plan,progress}.md exist, progress has no blocker,
 # and QA handoff requires all tasks completed. Default remind; ask/block need
-# explicit config. Unit tests: node plugins/kix-orchestration.test.js (25 asserts).
+# explicit config. v8: QA completion marker excludes negated statements (not done / undone / not passed). Unit tests: node plugins/kix-orchestration.test.js (69 assertions).
 - id: kix-orchestration
   name: ./plugins/kix-orchestration.js
 
@@ -650,7 +653,7 @@
 # environment default (role still stands) with a warning; a missing plugin
 # fails LOUD on the sentinel (never silently degrades to same-vendor).
 # Cooperates with kix-cost under any waterfall order (effort rule reused from
-# the same source). See plugins/kix-route.js; unit tests: node plugins/kix-route.test.js.
+# the same source). v8: cross preference candidates are filtered to registered providers first. See plugins/kix-route.js; unit tests: node plugins/kix-route.test.js (68 assertions).
 - id: kix-route
   name: ./plugins/kix-route.js
 

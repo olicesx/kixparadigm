@@ -1,4 +1,4 @@
-// kix-route — 子代理路由层：哨兵模型名 → 运行时可用路由自动解析（2026-08-15）
+// kix-route — 子代理路由层：哨兵模型名 → 运行时可用路由自动解析（2026-08-15；v8 v1.2.10）
 //
 // 解决的问题：工具行钉死 (provider, model) 与「按可用模型自动配置」冲突。
 //   钉死的三个代价：主模型换厂商后跨厂商观察者退化成同厂商（正交验证失效，
@@ -35,6 +35,10 @@
 //   - 插件缺失/未挂载时哨兵名直达适配器 → UNKNOWN_MODEL 响亮失败。
 //
 // 与 kix-cost 的关系（顺序无关，双向成立）：
+// v8（v1.2.10）：cross 偏好表候选先按已注册 provider 过滤——未注册偏好候选
+//   不再触发 listModels 探测错误，直接落到已注册异厂商；避免瞬时目录探测失败
+//   被误报为「cross 能力缺失」。回归见 crossProviderOrder 测试。
+//
 //   - kix-cost 见到 `kix-route:` 哨兵直接跳过（lite 探测/effort 注入都不碰）；
 //   - 本插件改写到 deepseek 且无显式 effort 时，自行调用 kix-cost 导出的
 //     decideEffort 注入（require 带 try/catch 守卫：kix-cost.js 缺失时只跳过
@@ -171,8 +175,11 @@ function crossProviderOrder(llm, parentProvider, prefs) {
   const registered = registeredProviders(llm)
   const table = prefs && prefs.crossProviderOrder ? prefs.crossProviderOrder : CROSS_PROVIDER_ORDER
   const generic = prefs && prefs.genericCrossOrder ? prefs.genericCrossOrder : GENERIC_CROSS_ORDER
+  // v8：偏好表候选必须先已注册——旧实现会把未注册 provider 留在 head，
+  // pickModel 对未注册 provider 的目录探测抛 probe 错误时，整个 cross 解析
+  // 被误判为「探测失败」，而不是跳过该候选继续找已注册异厂商。
   const head = (table[parentVendor] ?? generic).filter(
-    (p) => vendorOf(p) !== parentVendor,
+    (p) => vendorOf(p) !== parentVendor && registered.includes(p),
   )
   const tail = registered.filter((p) => vendorOf(p) !== parentVendor && !head.includes(p))
   return [...head, ...tail]

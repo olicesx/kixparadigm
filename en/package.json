@@ -1,6 +1,6 @@
 {
   "name": "kixparadigm-en",
-  "version": "1.2.9",
+  "version": "1.2.10",
   "description": "kixparadigm-en — English edition of the kix paradigm preset for DeepSeek Harness: resident cognition layer (EN) + kixpower multi-agent orchestration, one-command import (preset + vision-bridge + guard plugins)",
   "license": "MIT",
   "author": "kix (olicesx)",
@@ -31,10 +31,12 @@
   "scripts": {
     "postinstall": "node scripts/install-lib.js --quiet",
     "test:installer": "node --test scripts/install-lib.test.js",
-    "test": "npm run test:installer && node preset/plugins/kix-guards.test.js && node preset/plugins/kix-commands.test.js && node preset/plugins/kix-cost.test.js && node preset/plugins/kix-route.test.js && node preset/plugins/kix-discipline.test.js && node preset/plugins/kix-orchestration.test.js && node preset/plugins/kix-focus.test.js"
+    "test:consistency": "node scripts/check-consistency.cjs",
+    "test:vision": "node --test bridge/test.js",
+    "test": "npm run test:installer && node scripts/check-consistency.cjs && node --test bridge/test.js && node preset/plugins/kix-guards.test.js && node preset/plugins/kix-commands.test.js && node preset/plugins/kix-cost.test.js && node preset/plugins/kix-route.test.js && node preset/plugins/kix-discipline.test.js && node preset/plugins/kix-orchestration.test.js && node preset/plugins/kix-focus.test.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.16.0"
   },
   "kixparadigm": {
     "presetId": "kixparadigm-en",

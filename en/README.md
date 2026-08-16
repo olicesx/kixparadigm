@@ -16,7 +16,7 @@ Then restart `dsh web` and pick the **kixparadigm-en** mode in the new-session p
 
 ```
 kixparadigm-en doctor        # self-check (tests included)
-kixparadigm-en uninstall     # remove everything installed
+kixparadigm-en uninstall     # remove the EN preset (shared vision-bridge kept while the CN preset remains)
 ```
 
 **Translation status**: the resident cognition layer is fully English; deep-mechanism docs (skills / prompts / memories / team roles) are still the Chinese originals while translation progresses — see `preset/TRANSLATION-STATUS.md` and the canonical terminology table `preset/instructions/glossary.md`.
