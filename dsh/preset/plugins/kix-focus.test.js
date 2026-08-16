@@ -92,8 +92,7 @@ ok('kix_capability_search 常驻', I.RESIDENT_TOOLS.has('kix_capability_search')
 ok('mcp__github__get_issue 按需', I.isOnDemand('mcp__github__get_issue'))
 ok('web_search 按需(低频,移出常驻)', I.isOnDemand('web_search'))
 ok('read_image 按需', I.isOnDemand('read_image'))
-ok('workflow 未挂载(默认 disabled,不在常驻集)', I.isOnDemand('workflow'))
-ok('ralph 未挂载(默认 disabled,不在常驻集)', I.isOnDemand('ralph'))
+ok('workflow 常驻(临时启用,自发使用测试中)', !I.isOnDemand('workflow'))
 ok('create_goal 未挂载(默认 disabled,不在常驻集)', I.isOnDemand('create_goal'))
 ok('job_output 未挂载(渐进面,默认 disabled)', I.isOnDemand('job_output'))
 ok('list_agents 常驻(scope 自动可见)', !I.isOnDemand('list_agents'))
@@ -252,9 +251,10 @@ section('按需激活')
 const activateTool = registeredTools.find((t) => t.name === 'kix_tool_activate')
 const deactivateTool = registeredTools.find((t) => t.name === 'kix_tool_deactivate')
 ok('activate/deactivate 工具已注册', activateTool !== undefined && deactivateTool !== undefined)
-ok('ACTIVATABLE_TOOLS 含 workflow/ralph/goal/细分档位/jobs', (() => {
-  return ['workflow', 'ralph', 'goal', 'subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork', 'jobs']
+ok('ACTIVATABLE_TOOLS 含 workflow/goal/细分档位/jobs(ralph 已移除)', (() => {
+  return ['workflow', 'goal', 'subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork', 'jobs']
     .every((n) => I.ACTIVATABLE_TOOLS[n] && I.ACTIVATABLE_TOOLS[n].package)
+    && I.ACTIVATABLE_TOOLS.ralph === undefined
 })())
 ok('subagent_lite 激活配置含 toolName/toolFilter', (() => {
   const c = I.ACTIVATABLE_TOOLS.subagent_lite.config
@@ -286,11 +286,6 @@ ok('激活 fiber 非 ACTIVE(PENDING,依赖服务不可达) → 回滚并报错',
 ok('重复激活 → 拒绝', (async () => {
   const r = await activateTool.execute({ tool: 'workflow' })
   return r.ok === false && String(r.error).includes('已激活')
-})())
-ok('激活 ralph → 挂载配置含 maxRounds', (async () => {
-  pluginCalls.length = 0
-  const r = await activateTool.execute({ tool: 'ralph' })
-  return r.ok === true && pluginCalls.length === 1 && pluginCalls[0].cfg.maxRounds === 64
 })())
 ok('deactivate 未激活的工具 → 报错', (async () => {
   const r = await deactivateTool.execute({ tool: 'goal' })

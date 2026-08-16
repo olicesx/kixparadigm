@@ -85,14 +85,24 @@ const MODEL_PREFERENCE = {
  * id === 注册路由键（注册时强制校验），name 是显示名（如 "DeepSeek"）——
  * 显示名绝不能当路由键用（B1 修复：旧实现读 p.provider ?? p.name 拿到显示名，
  * 导致 vision 恒假报无识图、thinker 恒降级）。
+ * 2026-08-16（审查修复，错误分类塌缩）：探测抛错 ≠ "无 provider"——抛带
+ * probe 标记的错误，由路由层转为「探测失败，请重试」文案（绝不伪装成
+ * 部署级永久事实"本部署无跨厂商正交验证能力"，后者会被父模型写入跨会话
+ * 记忆，瞬时故障即被永久固化）。
  */
+function probeError(message) {
+  const e = new Error(message)
+  e.probe = true
+  return e
+}
+
 function registeredProviders(llm) {
   try {
     return (llm.listProviders() ?? [])
       .map((p) => (p && typeof p === 'object' ? p.id ?? p.provider : undefined))
       .filter((id) => typeof id === 'string' && id !== '')
-  } catch {
-    return []
+  } catch (e) {
+    throw probeError(`kix-route: 探测已注册 provider 失败（llm.listProviders 抛错：${e && e.message ? e.message : String(e)}）`)
   }
 }
 
@@ -108,13 +118,17 @@ function orderedModels(provider, listedIds) {
 /**
  * 在一个 provider 内选第一个可用模型；wantImage 时要求显式声明 image 输入
  * （与 read_image 门禁同严格度：undefined 视为不支持）。
+ * 2026-08-16（审查修复）：listModels 探测失败抛 probe 错误（非 abort）；
+ * resolveModelInfo 单个模型失败仍试下一个（正常降级），但目录整体不可达
+ * 不再静默伪装成「无模型」。
  */
 async function pickModel(llm, provider, { wantImage = false, signal } = {}) {
   let listed
   try {
     listed = await llm.listModels(provider)
-  } catch {
-    return undefined
+  } catch (e) {
+    if (signal?.aborted) return undefined // 取消不算探测失败
+    throw probeError(`kix-route: 探测 ${provider} 模型目录失败（llm.listModels 抛错：${e && e.message ? e.message : String(e)}）`)
   }
   // 契约防御：非数组返回（目录破坏）按空目录处理，不让裸 TypeError 逃出 pickModel
   const entries = Array.isArray(listed) ? listed : []
@@ -127,7 +141,7 @@ async function pickModel(llm, provider, { wantImage = false, signal } = {}) {
       return { provider, model: id }
     } catch {
       if (signal?.aborted) return undefined // abort 引发的解析失败不算「模型不可用」
-      // 该模型不可解析 → 试下一个
+      // 该模型不可解析 → 试下一个（单个模型失败是正常降级，非探测错误）
     }
   }
   return undefined
@@ -251,9 +265,21 @@ module.exports = {
 
       let hit = cached.hit
       if (hit === undefined) {
-        if (tier === 'cross') hit = await resolveCrossRoute(llm, resolved.provider, payload.signal)
-        else if (tier === 'vision') hit = await resolveVisionRoute(llm, payload.signal)
-        else hit = await resolveThinkerRoute(llm, payload.signal)
+        try {
+          if (tier === 'cross') hit = await resolveCrossRoute(llm, resolved.provider, payload.signal)
+          else if (tier === 'vision') hit = await resolveVisionRoute(llm, payload.signal)
+          else hit = await resolveThinkerRoute(llm, payload.signal)
+        } catch (e) {
+          // 2026-08-16（审查修复，错误分类塌缩）：probe 错误 = 目录/服务暂不可达，
+          // 与「确实无匹配模型」区分——报「探测失败，请重试」并记录底层错误，
+          // 绝不静默伪装成部署级能力缺失（后者会被父模型固化为跨会话记忆）。
+          if (e && e.probe === true) {
+            const msg = e && e.message ? e.message : String(e)
+            ctx.logger.warn(`kix-route: ${tier} 路由探测失败（非能力缺失）：${msg}`)
+            throw new Error(`kix-route: ${tier} 路由探测失败（模型目录/服务暂不可达），请稍后重试。底层错误：${msg}`)
+          }
+          throw e
+        }
 
         let defaultRoute
         if (hit === undefined && tier === 'thinker') {

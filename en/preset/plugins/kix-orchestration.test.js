@@ -155,6 +155,21 @@ ok('切 QA 已完成 → ok', (() => {
   const root = makeWorkspace({ completed: 3, total: 3 })
   return I.checkHandoff({ prompt: 'handoff_mode: qa\ncurrent_sprint: 1', workspaceRoot: root }).ok === true
 })())
+ok('fail-open 回归：marker 误建为目录 → 拒绝（审查修复，statSync.isFile）', (() => {
+  const root = makeWorkspace({ withMarker: false })
+  // 把 marker 建为目录（旧 existsSync 对目录返回 true → fail-open 通过）
+  fs.mkdirSync(path.join(root, 'docs', '.kixpower-current-sprint'), { recursive: true })
+  const r = I.checkHandoff({ prompt: 'current_sprint: 1', workspaceRoot: root })
+  return r.ok === false && r.reasons.some((x) => x.includes('marker'))
+})())
+ok('fail-open 回归：progress.md 误建为目录 → 拒绝（审查修复）', (() => {
+  const root = makeWorkspace({ withPlan: false })
+  // 把 progress.md 建为目录（旧 existsSync 通过 → blocker/QA 校验跳过）
+  fs.rmSync(path.join(root, 'docs', 'sprint-1', 'progress.md'))
+  fs.mkdirSync(path.join(root, 'docs', 'sprint-1', 'progress.md'), { recursive: true })
+  const r = I.checkHandoff({ prompt: 'current_sprint: 1', workspaceRoot: root })
+  return r.ok === false && r.reasons.some((x) => x.includes('progress.md'))
+})())
 
 // ── 4. pre-execute 门禁 ───────────────────────────────────────────────────
 section('pre-execute 交接门禁')
@@ -197,6 +212,19 @@ ok('无 pendingRemind → accept 无注入', (async () => {
   const exec = { name: 'subagent', arguments: { prompt: 'x' }, token: 't', callId: 'c', agent: { id: 'orch-d', session: { header: sessionHeader } } }
   const d = await postExecute[0](exec, { isError: false }, () => Promise.resolve({ kind: 'accept' }))
   return d.kind === 'accept' && (d.additionalContexts === undefined || d.additionalContexts.length === 0)
+})())
+ok('状态机泄漏回归：post-execute 不同 callId 不消费（审查修复，callId 绑定）', (async () => {
+  // pre 用 callId c1 触发 pendingRemind → 无关工具(c2)的 post-execute 不得错位注入
+  await dispatchPre('subagent', { prompt: 'current_sprint: 6' }, 'orch-c1')
+  const other = { name: 'edit', arguments: { file_path: 'x.ts' }, token: 't', callId: 'c2', agent: { id: 'orch-c1', session: { header: sessionHeader } } }
+  const d = await postExecute[0](other, { isError: false }, () => Promise.resolve({ kind: 'accept' }))
+  return d.kind === 'accept' && (d.additionalContexts === undefined || d.additionalContexts.length === 0)
+})())
+ok('状态机泄漏回归：发起调用的 post-execute 仍注入且注入具体 reasons（审查修复）', (async () => {
+  const exec = { name: 'subagent', arguments: { prompt: 'x' }, token: 't', callId: 'c1', agent: { id: 'orch-c1', session: { header: sessionHeader } } }
+  const d = await postExecute[0](exec, { isError: false }, () => Promise.resolve({ kind: 'accept' }))
+  return d.kind === 'accept' && Array.isArray(d.additionalContexts) && d.additionalContexts.length === 1
+    && d.additionalContexts[0].content.some((c) => c.text.includes('marker')) // 具体 reasons 而非通用文案
 })())
 
 // ── 6. 命令 ───────────────────────────────────────────────────────────────

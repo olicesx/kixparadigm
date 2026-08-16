@@ -39,7 +39,7 @@
 
 'use strict'
 
-const { readFileSync, existsSync } = require('node:fs')
+const { readFileSync, statSync } = require('node:fs')
 const { join } = require('node:path')
 const { randomUUID } = require('node:crypto')
 
@@ -101,15 +101,20 @@ function checkHandoff({ prompt, workspaceRoot }) {
   const docsRoot = workspaceRoot ? join(workspaceRoot, 'docs') : null
 
   // 1. active Sprint marker 必须存在且一致（Copilot hook 同款）
+  // 2026-08-16（审查修复，fail-open）：existsSync 对目录返回 true（误建为
+  // 目录即通过存在校验）→ 改用 statSync().isFile()；读失败 push reason
+  // （fail-closed），不再静默吞。
   const markerFile = docsRoot ? join(docsRoot, SPRINT_MARKER) : null
-  if (!markerFile || !existsSync(markerFile)) {
+  if (!markerFile || !isFile(markerFile)) {
     reasons.push('工作区缺少 docs/.kixpower-current-sprint marker；禁止回退猜测最新 Sprint。请由 orchestrator 先写 active Sprint marker。')
   } else {
     let active = 0
     try {
       const v = readFileSync(markerFile, 'utf8').trim()
       if (/^\d+$/.test(v)) active = Number(v)
-    } catch { /* 读失败按缺失处理 */ }
+    } catch (e) {
+      reasons.push(`读取 docs/.kixpower-current-sprint 失败（${e && e.message ? e.message : String(e)}），按缺失处理（fail-closed）。`)
+    }
     if (active !== meta.sprint) {
       reasons.push(`current_sprint=${meta.sprint} 与 active Sprint marker=${active || '无'} 不一致。请先同步 docs/.kixpower-current-sprint。`)
     }
@@ -120,8 +125,8 @@ function checkHandoff({ prompt, workspaceRoot }) {
     const sprintDir = join(docsRoot, 'sprint-' + meta.sprint)
     const planFile = join(sprintDir, 'plan.md')
     const progressFile = join(sprintDir, 'progress.md')
-    if (!existsSync(planFile) || !existsSync(progressFile)) {
-      reasons.push(`docs/sprint-${meta.sprint}/ 的 plan.md 或 progress.md 不存在。Producer 必须先完成规划与进度文件初始化，再交接。`)
+    if (!isFile(planFile) || !isFile(progressFile)) {
+      reasons.push(`docs/sprint-${meta.sprint}/ 的 plan.md 或 progress.md 不存在（或误建为目录）。Producer 必须先完成规划与进度文件初始化，再交接。`)
     } else {
       // 3. progress 无 blocker
       try {
@@ -135,13 +140,28 @@ function checkHandoff({ prompt, workspaceRoot }) {
             reasons.push(`docs/sprint-${meta.sprint}/progress.md 尚未完成全部任务（${state.completed ?? '?'}/${state.total ?? '?'}），不能交接 QA。`)
           }
         }
-      } catch { /* 读失败：保持原判定（上面已报缺文件） */ }
+      } catch (e) {
+        // 2026-08-16（审查修复）：exists 通过后的读分支失败 → push reason（fail-closed），
+        // 旧注释"上面已报缺文件"与事实不符——此分支位于 exists 通过之后。
+        reasons.push(`读取 docs/sprint-${meta.sprint}/progress.md 失败（${e && e.message ? e.message : String(e)}），blocker/QA 校验跳过（fail-closed）。`)
+      }
     }
   } else {
     reasons.push('无法解析工作区根（无 workspaceRoot/cwd），跳过 sprint 文件校验。')
   }
 
   return reasons.length === 0 ? { ok: true, meta } : { ok: false, meta, reasons }
+}
+
+// 2026-08-16（审查修复）：文件存在性检查——existsSync 对目录返回 true 会
+// 让误建为目录的 marker/plan/progress 通过校验（fail-open）；statSync 判定
+// 必须是常规文件。
+function isFile(p) {
+  try {
+    return statSync(p).isFile()
+  } catch {
+    return false
+  }
 }
 
 function makeUserMessage(text) {
@@ -242,10 +262,12 @@ module.exports = {
         return next()
       }
       // remind：放行 + 注入提醒（每会话一次）
+      // 2026-08-16（审查修复，状态机泄漏）：reminded 移到投递成功后置位
+      // （旧实现在投递前置位——dispatch 抛错不经 post-execute 时标志滞留，
+      // 一次性提醒被烧掉）；pendingRemind 绑定发起 callId（旧实现无绑定，
+      // 下一次任意工具调用都会错位消费注入）。
       if (st.reminded) return next()
-      st.reminded = true
-      // post-execute 注入（见下）；此处仅记录待注入标志
-      st.pendingRemind = true
+      st.pendingRemind = { callId: exec.callId, reason }
       return next()
     })
 
@@ -254,8 +276,12 @@ module.exports = {
       const agent = exec && exec.agent
       const st = agent ? stateFor(agent) : undefined
       if (!st || !st.enabled || !st.pendingRemind) return next()
+      // 只消费与发起调用同 callId 的 post-execute；dispatch 抛错（不经
+      // post-execute）时标志滞留，下一次无关工具调用不会错位注入。
+      if (st.pendingRemind.callId !== (exec && exec.callId)) return next()
+      const reason = st.pendingRemind.reason
       st.pendingRemind = false
-      const reason = 'kix-orchestration: 子代理交接前未满足编排条件（sprint marker / plan / progress / blocker）。若为有意的编排调整，请确认后继续；否则先补齐 docs/sprint-N/ 的规划状态。'
+      st.reminded = true // 投递成功才消耗一次性提醒
       return { kind: 'accept', additionalContexts: [makeUserMessage(reason)] }
     })
 
