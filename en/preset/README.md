@@ -16,7 +16,7 @@ preset/
 ├── agents/                     ← 6 role definitions (entry EN; team roles CN, pending)
 ├── skills/                     ← 17 skills (CN originals, pending translation)
 ├── prompts/                    ← 5 /kixpower-* flows (CN, pending)
-├── memories/                   ← 6 methodology memories (CN, pending)
+├── memories/                   ← 4 methodology memories (CN, pending)
 └── plugins/                    ← kix-guards + kix-discipline + kix-orchestration + kix-focus + kix-cost + kix-route + kix-commands + kix-stalled (opt-in) + tests (language-neutral)
 ```
 
