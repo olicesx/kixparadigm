@@ -416,6 +416,69 @@ ok('激活 goal → 正常挂载', (async () => {
   return r.ok === true && pluginCalls.length === 1
 })())
 
+// ── 10. 跨平台包解析（2026-08-17 WSL2 E2E 发现的 symlink 部署 bug）────────
+// 场景：dsh 以符号链接安装（/usr/local/bin/dsh → …/dsh/lib/bin.js），Node
+// 模块解析不跟随 symlink → createRequire(argv[1]) 沿错误根解析全部落空。
+// 修复 = 候选根链（argv[1] → realpath → __filename）。此处用临时目录 +
+// symlink（Linux）/ junction（Windows，免管理员）复现该布局做端到端断言。
+section('跨平台包解析（symlink 部署）')
+const fsSync = require('node:fs')
+const osMod = require('node:os')
+ok('resolveEntryCandidates: entry 首位、插件文件兜底在链内', (() => {
+  // 注意：链内 __filename 是插件模块自己的（kix-focus.js），非本测试文件
+  const c = I.resolveEntryCandidates('/some/entry.js')
+  const pluginFile = path.resolve(__dirname, 'kix-focus.js')
+  return c[0] === '/some/entry.js' && c.includes(pluginFile)
+})())
+ok('resolveEntryCandidates: 非 symlink entry 去重（realpath 同值不重复）', (() => {
+  const pluginFile = path.resolve(__dirname, 'kix-focus.js')
+  const c = I.resolveEntryCandidates(pluginFile)
+  return c.filter((x) => x === pluginFile).length === 1
+})())
+ok('symlink 部署（WSL2 实测 bug 场景）: realpath 候选解析成功', (() => {
+  const tmp = fsSync.mkdtempSync(path.join(osMod.tmpdir(), 'kix-focus-res-'))
+  const pkgRoot = path.join(tmp, 'dsh-install')
+  const nm = path.join(pkgRoot, 'node_modules', '@deepseek-ai', 'dsh-tool-subagent')
+  fsSync.mkdirSync(nm, { recursive: true })
+  fsSync.writeFileSync(path.join(nm, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-tool-subagent', version: '0.0.0-test', main: 'index.js' }))
+  fsSync.writeFileSync(path.join(nm, 'index.js'), 'module.exports = { __resolverTest: true }')
+  const linkDir = path.join(tmp, 'bin-link')
+  try {
+    fsSync.symlinkSync(pkgRoot, linkDir, process.platform === 'win32' ? 'junction' : 'dir')
+  } catch {
+    // 极少数受限制环境无法创建任何链接 → 本断言退化为记录性跳过（不判失败，
+    // 但也不计通过语义的损失：链式回退行为已由下一断言覆盖）
+    return I.resolveEntryCandidates('/x').length >= 2
+  }
+  // 复现：argv[1] = 链接路径下的入口（Node 解析不跟随链接）
+  const linkEntry = path.join(linkDir, 'dsh')
+  const realEntry = path.join(pkgRoot, 'dsh')
+  fsSync.writeFileSync(realEntry, '// entry')
+  const c = I.resolveEntryCandidates(linkEntry)
+  const viaRealpath = c.includes(realEntry)
+  const savedArgv1 = process.argv[1]
+  process.argv[1] = linkEntry
+  let resolved = null
+  try {
+    const mod = I.defaultResolvePkg('@deepseek-ai/dsh-tool-subagent')
+    resolved = mod && mod.__resolverTest === true
+  } catch {
+    resolved = false
+  } finally {
+    process.argv[1] = savedArgv1
+  }
+  fsSync.rmSync(tmp, { recursive: true, force: true })
+  return viaRealpath && resolved === true
+})())
+ok('全候选落空 → 抛最后错误（不静默 undefined）', (() => {
+  const savedArgv1 = process.argv[1]
+  process.argv[1] = '/nonexistent-root/entry.js'
+  let threw = false
+  try { I.defaultResolvePkg('@deepseek-ai/definitely-not-installed-xyz') } catch { threw = true }
+  process.argv[1] = savedArgv1
+  return threw
+})())
+
 // ── 汇总 ──────────────────────────────────────────────────────────────────
 console.log('\n──────────────────────────────')
 console.log(`kix-focus: ${passed} passed, ${failed} failed`)

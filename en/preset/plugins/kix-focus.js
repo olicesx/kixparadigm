@@ -420,10 +420,38 @@ Report: what changed / gate results / known issues, tables over prose.`,
 
 // 默认包解析：从 dsh 入口（process.argv[1] = bin.js）的 node_modules 解析
 // 依赖（部署内可移植）；测试注入 config.resolvePkg 替换。
+// 2026-08-17（WSL2 E2E 发现，跨平台修复）：dsh 以 symlink 安装
+// （/usr/local/bin/dsh → /usr/local/lib/node_modules/@deepseek-ai/dsh/lib/bin.js）
+// 时 Node 模块解析**不跟随符号链接**——createRequire('/usr/local/bin/dsh') 沿
+// /usr/local/bin → /usr/local → / 逐级找 node_modules 全部落空，而包嵌套在
+// 真实路径 dsh/node_modules/@deepseek-ai/ 下 → 所有动态激活档位报
+// Cannot find module。Windows npm shim 直接传 bin.js 真实路径，故从未暴露
+//（此前 goal 激活闭环实测均在 Windows）。修复：候选根链逐个尝试——
+// argv[1] 原样（Windows 布局不变）→ realpathSync(argv[1])（symlink 部署）
+// → __filename（preset 本地/异常兜底），任一命中即用，全落空抛最后错误。
+function resolveEntryCandidates(entry) {
+  const out = []
+  if (typeof entry === 'string' && entry.length > 0) out.push(entry)
+  try {
+    const rp = require('node:fs').realpathSync(entry)
+    if (typeof rp === 'string' && !out.includes(rp)) out.push(rp)
+  } catch { /* entry 不存在/不可 realpath（piped script 等）→ 跳过该候选 */ }
+  if (typeof __filename === 'string' && !out.includes(__filename)) out.push(__filename)
+  return out
+}
+
 function defaultResolvePkg(packageName) {
   const { createRequire } = require('module')
   const entry = process.argv && process.argv[1] ? process.argv[1] : __filename
-  return createRequire(entry)(packageName)
+  let lastErr
+  for (const root of resolveEntryCandidates(entry)) {
+    try {
+      return createRequire(root)(packageName)
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr || new Error(`kix-focus: 无法从任何候选根解析 ${packageName}（argv[1]=${entry}）`)
 }
 
 // 纯函数：激活结果文本（供文档/返回使用）
@@ -736,4 +764,6 @@ module.exports.__internals = {
   guidanceText,
   activationNote,
   makeUserMessage,
+  resolveEntryCandidates,
+  defaultResolvePkg,
 }
