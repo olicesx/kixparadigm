@@ -72,7 +72,7 @@ function isLiteTier(opts) {
 async function probeRoute(llm, provider, model, signal) {
   try {
     const providers = llm.listProviders()
-    // listProviders entries are {id, name}: id is the route key, name is a display name (never a key)
+    // listProviders 条目为 {id, name}：id 是路由键，name 是显示名（不可当键用）
     const known = providers.some((p) => (p.id ?? p.provider) === provider)
     if (!known) return false
     await llm.resolveModelInfo(provider, model, signal)
@@ -87,7 +87,8 @@ async function probeRoute(llm, provider, model, signal) {
 module.exports = {
   name: 'kix-cost',
   apply(ctx) {
-    // 探测结果缓存：agent -> 'ok' | 'fallback'（WeakMap 无泄漏）
+    // 探测结果缓存：agent -> {ok:true} | {ok:false, fallbackRoute?}（WeakMap
+    // 无泄漏；fallbackRoute 含 provider/model/reasoningEffort，后续轮次直接应用）
     const probes = new WeakMap()
 
     ctx.on('agent/request', async (payload, next) => {
@@ -100,37 +101,64 @@ module.exports = {
       const opts = agent.options ?? {}
       // 只作用于子代理
       if (!isSubagentChild(opts)) return resolved
-      // kix-route sentinel children (model like kix-route:<tier>) are fully owned
-      // by kix-route: it resolves their route AND injects effort (reusing this
-      // file's exported decideEffort after rewriting to deepseek). Skip here so
-      // the two listeners agree under ANY waterfall order: seen first, the
-      // sentinel makes us skip; seen after the rewrite, effort already exists.
+      // kix-route 哨兵子代理（model 形如 kix-route:<tier>）由 kix-route 全权
+      // 解析路由并注入 effort（deepseek 改写后复用本文件导出的 decideEffort）。
+      // 此处跳过，保证两个监听器在任意 waterfall 注册顺序下结果一致：
+      // 本插件先见哨兵 → 跳过；后见改写结果 → effort 已存在同样跳过。
       if (typeof resolved.model === 'string' && resolved.model.startsWith(KIX_ROUTE_SENTINEL_PREFIX)) return resolved
 
       let config = resolved
       const llm = ctx.get('llm')
 
-      // A. 机械档自动选型：首选路由不可用 → 回退环境默认路由（每子代理一次）
-      if (isLiteTier(opts) && llm !== undefined && probes.get(agent) === undefined) {
-        let usable = false
-        try {
-          usable = await probeRoute(llm, config.provider, config.model, payload.signal)
-        } catch {
-          usable = false
-        }
-        probes.set(agent, usable ? 'ok' : 'fallback')
-        if (!usable) {
-          const defaults = ctx.get('agentDefaultModel')
-          const sel = defaults !== undefined ? defaults.currentSelection() : undefined
-          if (sel !== undefined && sel.provider && sel.model) {
-            config = {
-              ...config,
-              provider: sel.provider,
-              model: sel.model,
-              ...(sel.reasoningEffort === undefined ? {} : { reasoningEffort: sel.reasoningEffort }),
+      // A. 机械档自动选型：首选路由不可用 → 回退环境默认路由。
+      // 2026-08-17 修复（外部审查 5.6 发现 + 源码复核确认）：旧实现只缓存
+      // 'ok'|'fallback' 标签不缓存回退路由——第二轮请求 probes.get(agent)
+      // 已非 undefined，跳过整个探测块，config=resolved 回到不可用的首选
+      // 路由（zai-coding-cn/glm-4.7），子代理第二轮请求即失败。修复：缓存
+      // 回退路由本身，之后每轮直接应用（探测仍每子代理一次）。
+      if (isLiteTier(opts) && llm !== undefined) {
+        const cached = probes.get(agent)
+        if (cached && cached.fallbackRoute) {
+          // 已探测且需要回退：每轮应用缓存的回退路由（首轮由下方探测块写入）
+          config = {
+            ...config,
+            provider: cached.fallbackRoute.provider,
+            model: cached.fallbackRoute.model,
+            ...(cached.fallbackRoute.reasoningEffort === undefined ? {} : { reasoningEffort: cached.fallbackRoute.reasoningEffort }),
+          }
+        } else if (cached === undefined) {
+          let usable = false
+          try {
+            usable = await probeRoute(llm, config.provider, config.model, payload.signal)
+          } catch {
+            usable = false
+          }
+          if (usable) {
+            probes.set(agent, { ok: true })
+          } else {
+            const defaults = ctx.get('agentDefaultModel')
+            const sel = defaults !== undefined ? defaults.currentSelection() : undefined
+            if (sel !== undefined && sel.provider && sel.model) {
+              const fallbackRoute = {
+                provider: sel.provider,
+                model: sel.model,
+                reasoningEffort: sel.reasoningEffort,
+              }
+              probes.set(agent, { ok: false, fallbackRoute })
+              config = {
+                ...config,
+                provider: fallbackRoute.provider,
+                model: fallbackRoute.model,
+                ...(fallbackRoute.reasoningEffort === undefined ? {} : { reasoningEffort: fallbackRoute.reasoningEffort }),
+              }
+            } else {
+              // 环境默认路由也不可得：只缓存探测结果，不改写（保持首选路由，
+              // 由适配器响亮报错，不静默降级到未知路由）
+              probes.set(agent, { ok: false })
             }
           }
         }
+        // cached 为 {ok:true} → 首选路由可用，不改写
       }
 
       // B. 思考强度分层（deepseek 子代理；含回退后仍为 deepseek 的情况）

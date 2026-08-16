@@ -242,6 +242,174 @@ ok('off 后 gate 静默', (async () => {
   return d.kind === 'allow'
 })())
 
+// ── 7. v2：checkQaReturn 纯逻辑（DSH×VS Code 融合矩阵 #2）─────────────────
+section('checkQaReturn（QA 返回侧一致性）')
+ok('QA 完成声明 + 进度未同步 → 提醒', (() => {
+  const r = I.checkQaReturn({
+    text: '✅ QA 全部通过，verdict: pass',
+    progressMd: '---\ncompleted_tasks: 2\ntotal_tasks: 3\n---\n',
+  })
+  return typeof r === 'string' && r.includes('completed=2/3')
+})())
+ok('QA 完成声明 + 进度已同步 → 不提醒', (() => {
+  const r = I.checkQaReturn({
+    text: 'QA passed, all done',
+    progressMd: '---\ncompleted_tasks: 3\ntotal_tasks: 3\n---\n',
+  })
+  return r === undefined
+})())
+ok('无完成声明 → 不提醒（0% 误报）', (() => {
+  const r = I.checkQaReturn({
+    text: '发现 2 个问题：模块 A 边界未处理',
+    progressMd: '---\ncompleted_tasks: 2\ntotal_tasks: 3\n---\n',
+  })
+  return r === undefined
+})())
+ok('进度文件缺字段 → 不提醒（fail-open，提醒层非门禁层）', (() => {
+  const r = I.checkQaReturn({
+    text: '✅ done',
+    progressMd: '---\nstatus: in-progress\n---\n',
+  })
+  return r === undefined
+})())
+ok('QA 文本空 → 不提醒', (() => {
+  return I.checkQaReturn({ text: '', progressMd: '---\ncompleted_tasks: 2\ntotal_tasks: 3\n---\n' }) === undefined
+})())
+
+// ── 8. v2：subagent/end 监听器（emit 观察 + steer 注入）───────────────────
+section('subagent/end 返回侧监听器')
+const subagentEndListeners = listeners['subagent/end']
+assert.ok(Array.isArray(subagentEndListeners) && subagentEndListeners.length === 1, 'subagent/end 监听器已注册')
+ok('QA 返回完成声明 + 进度未同步 → steer 注入提醒', (() => {
+  // 构造一个带 progress.md 未同步的 workspace
+  const root = makeWorkspace({ completed: 2, total: 3, markerValue: 1 })
+  const steered = []
+  const fakeAgent = {
+    id: 'orch-return-a',
+    session: { header: { cwd: root } },
+    steer(msg) { steered.push(msg) },
+  }
+  subagentEndListeners[0](
+    { runId: 'r1', provider: 'kix-subagent', id: 'child-1', local: true, stopReason: 'end_turn',
+      lastAssistantMessage: [{ type: 'text', text: '✅ QA 全部通过，可以交付' }] },
+    fakeAgent,
+  )
+  return steered.length === 1 && steered[0].content.some((c) => c.text.includes('QA 子代理返回了完成声明'))
+})())
+ok('QA 返回完成声明 + 进度已同步 → 不注入', (() => {
+  const root = makeWorkspace({ completed: 3, total: 3, markerValue: 1 })
+  const steered = []
+  const fakeAgent = {
+    id: 'orch-return-b',
+    session: { header: { cwd: root } },
+    steer(msg) { steered.push(msg) },
+  }
+  subagentEndListeners[0](
+    { runId: 'r2', provider: 'kix-subagent', id: 'child-2', local: true, stopReason: 'end_turn',
+      lastAssistantMessage: [{ type: 'text', text: 'QA passed, all done' }] },
+    fakeAgent,
+  )
+  return steered.length === 0
+})())
+ok('无 lastAssistantMessage → 不注入', (() => {
+  const steered = []
+  const fakeAgent = {
+    id: 'orch-return-c',
+    session: { header: { cwd: os.tmpdir() } },
+    steer(msg) { steered.push(msg) },
+  }
+  subagentEndListeners[0]({ runId: 'r3', provider: 'kix-subagent', id: 'child-3', local: true, stopReason: 'error' }, fakeAgent)
+  return steered.length === 0
+})())
+ok('returnReminded 每会话一次（remindOnce）', (() => {
+  const root = makeWorkspace({ completed: 2, total: 3, markerValue: 1 })
+  const steered = []
+  const fakeAgent = {
+    id: 'orch-return-d',
+    session: { header: { cwd: root } },
+    steer(msg) { steered.push(msg) },
+  }
+  const ev = {
+    runId: 'r4', provider: 'kix-subagent', id: 'child-4', local: true, stopReason: 'end_turn',
+    lastAssistantMessage: [{ type: 'text', text: '✅ done' }],
+  }
+  subagentEndListeners[0](ev, fakeAgent)
+  subagentEndListeners[0](ev, fakeAgent)
+  return steered.length === 1
+})())
+
+// ── 9. v3：checkCloseout 纯逻辑（QA 收尾证据链）───────────────────────────
+section('checkCloseout（producer_closeout 收尾证据链）')
+ok('非 closeout prompt → 通过', (() => {
+  const r = I.checkCloseout({ prompt: 'current_sprint: 1', workspaceRoot: os.tmpdir() })
+  return Array.isArray(r) && r.length === 0
+})())
+ok('closeout + spec 有 acceptance + 任务完成 + 无测试变更 → 通过', (() => {
+  const r = I.checkCloseout({
+    prompt: 'handoff_stage: producer_closeout',
+    specMd: '# kix-discipline spec\n\n## 验收标准（可验证的完成定义）\ncargo test 全绿\n',
+    progressMd: '---\ncompleted_tasks: 3\ntotal_tasks: 3\n---\n',
+    testDiff: [],
+  })
+  return Array.isArray(r) && r.length === 0
+})())
+ok('closeout + 缺 acceptance → 提醒', (() => {
+  const r = I.checkCloseout({
+    prompt: 'handoff_stage: producer_closeout',
+    specMd: '# kix-discipline spec\n\n## 验收标准（可验证的完成定义）\n（未填写）\n',
+    progressMd: '---\ncompleted_tasks: 3\ntotal_tasks: 3\n---\n',
+    testDiff: [],
+  })
+  return r.some((x) => x.includes('验收标准'))
+})())
+ok('closeout + 无 spec 文件 → 提醒', (() => {
+  const r = I.checkCloseout({
+    prompt: 'handoff_stage: producer_closeout',
+    specMd: undefined,
+    progressMd: '---\ncompleted_tasks: 3\ntotal_tasks: 3\n---\n',
+    testDiff: [],
+  })
+  return r.some((x) => x.includes('验收标准'))
+})())
+ok('closeout + 任务未完成 → 提醒', (() => {
+  const r = I.checkCloseout({
+    prompt: 'handoff_stage: producer_closeout',
+    specMd: '# kix-discipline spec\n\n## 验收标准（可验证的完成定义）\ncargo test 全绿\n',
+    progressMd: '---\ncompleted_tasks: 2\ntotal_tasks: 3\n---\n',
+    testDiff: [],
+  })
+  return r.some((x) => x.includes('completed=2/3'))
+})())
+ok('closeout + 测试文件有变更 → 提醒重验', (() => {
+  const r = I.checkCloseout({
+    prompt: 'handoff_stage: producer_closeout',
+    specMd: '# kix-discipline spec\n\n## 验收标准（可验证的完成定义）\ncargo test 全绿\n',
+    progressMd: '---\ncompleted_tasks: 3\ntotal_tasks: 3\n---\n',
+    testDiff: ['src/tests/flow.rs'],
+  })
+  return r.some((x) => x.includes('测试文件自上次验证后有变更'))
+})())
+ok('progress 缺字段 → 提醒（fail-open 语义下仍提醒可读性）', (() => {
+  const r = I.checkCloseout({
+    prompt: 'handoff_stage: producer_closeout',
+    specMd: '# kix-discipline spec\n\n## 验收标准（可验证的完成定义）\ncargo test 全绿\n',
+    progressMd: undefined,
+    testDiff: [],
+  })
+  return r.some((x) => x.includes('completed/total'))
+})())
+ok('baselineShaFromProgress 提取 l2_verified_sha', (() => {
+  const sha = 'a'.repeat(40)
+  const r = I.baselineShaFromProgress(`---\nl2_verified_sha: ${sha}\n---\n`)
+  return r === sha
+})())
+ok('baselineShaFromProgress 无字段 → undefined', (() => {
+  return I.baselineShaFromProgress('---\nstatus: in-progress\n---\n') === undefined
+})())
+ok('isCloseoutTestPath 测试文件命中', (() => {
+  return I.isCloseoutTestPath('src/tests/flow.rs') && I.isCloseoutTestPath('a.test.ts') && !I.isCloseoutTestPath('src/main.rs')
+})())
+
 // ── 汇总 ──────────────────────────────────────────────────────────────────
 console.log('\n──────────────────────────────')
 console.log(`kix-orchestration: ${passed} passed, ${failed} failed`)

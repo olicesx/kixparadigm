@@ -149,7 +149,7 @@ kixparadigm/
 ## 🧪 Development & verification
 
 ```bash
-npm test                                  # guards 142 assertions + commands 6 assertion groups + cost 24 assertions
+npm test                                  # full plugin regression: guards 199 + discipline 63 + orchestration 48 + focus 66 + cost 28 + route 67 assertions
 node scripts/verify-guards.js             # compare installed preset vs bundle guards
 node scripts/verify-vision-bridge-resolution.cjs  # vision-bridge load-chain full path
 pwsh -File .\scripts\sync-dsh-preset.ps1 -DryRun   # preview preset diffs

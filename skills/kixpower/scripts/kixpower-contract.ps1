@@ -248,16 +248,26 @@ function Get-KixPathValues {
 }
 
 function Test-KixSuspiciousExecutionTool {
-    param([Parameter(Mandatory = $true)][string]$ToolName)
+    param(
+        [Parameter(Mandatory = $true)][string]$ToolName,
+        [AllowNull()][string]$Canonical
+    )
     $knownSafe = @(
         'run_in_terminal', 'create_and_run_task', 'runSubagent', 'explore_subagent',
         'read', 'search', 'read_file', 'grep_search', 'semantic_search', 'file_search',
         'list_dir', 'view_image', 'get_errors', 'manage_todo_list', 'vscode_askQuestions',
-        'run_notebook_cell'
+        'run_notebook_cell',
+        # v6.1：真实运行时工具名（copilot-agent 1.0.70+，见 kix-vscode-mechanism-audit.md）
+        'powershell', 'bash', 'view', 'edit', 'create', 'grep', 'glob', 'ask_user',
+        'task', 'web_fetch', 'web_search', 'update_todo', 'read_powershell',
+        'stop_powershell', 'sql', 'skill', 'write', 'delete_file'
     )
     $leaf = ($ToolName -split '\.')[-1]
     if ($leaf -in @('install_extension', 'run_vscode_command', 'create_new_workspace', 'create_new_jupyter_notebook')) { return $true }
     if ($knownSafe -contains $ToolName -or $knownSafe -contains $leaf) { return $false }
+    # v6.1：Claude 名归一后命中安全名单也放行（Bash/Read/Write/Edit/Grep/Glob/WebFetch/
+    # WebSearch/AskUserQuestion/TodoWrite/Agent/Task）
+    if ($Canonical -and ($knownSafe -contains $Canonical)) { return $false }
     return [bool]($ToolName -match '(?i)(?:run(?:code|script|snippet|cell)?|exec(?:ute)?|eval|snippet|shell|python|jupyter|pylance|debug(?:ger)?|(?:^|[_-])repl(?:$|[_-])|kernel|interpreter|code[-_]?execution)')
 }
 

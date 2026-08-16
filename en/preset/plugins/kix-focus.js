@@ -191,7 +191,22 @@ function projectToolMeta(schemas, nameFilter) {
     }))
 }
 
+// 纯函数：query 命中的具体工具元数据（每组上限 5；空 query 不投影 = 目录浏览模式）
+// 2026-08-17：旧实现 projectToolMeta 存在但未接入 search —— 模型知道工具名
+// 却不知道必填参数（外部审查 5.6 指出）。参数名进结果，完整 schema 仍由
+// capability_call 的管线校验（渐进披露语义不破坏）。
+function matchedToolMeta(members, q) {
+  if (q === '') return {}
+  const hits = projectToolMeta(members, q).slice(0, 5)
+  return hits.length > 0 ? { matchedTools: hits } : {}
+}
+
 // 纯函数：按查询词在能力组里检索
+// 2026-08-17（外部审查 5.6 发现 + 修复）：query 命中具体工具时附带该工具的
+// 轻量元数据（名字/描述截断/参数名，来自 projectToolMeta）——旧实现只回组
+// 级 exampleTools 名单，模型知道工具名却不知道必填参数，浪费一轮试错。
+// 成本控制：仅 query 非空时投影（空 query = 全目录浏览，不投影）；每组上限
+// 5 个命中（元数据按需披露的语义：先看参数名，完整 schema 调用时由管线校验）。
 function searchCapabilities(schemas, query) {
   const q = String(query || '').toLowerCase().trim()
   const results = []
@@ -215,6 +230,7 @@ function searchCapabilities(schemas, query) {
         toolCount: members.length,
         exampleTools: members.slice(0, 3).map((m) => m.name),
         tools: group.tools[0],
+        ...matchedToolMeta(members, q),
       })
       continue
     }
@@ -227,6 +243,7 @@ function searchCapabilities(schemas, query) {
         toolCount: members.length,
         exampleTools: members.slice(0, 3).map((m) => m.name),
         tools: group.tools,
+        ...matchedToolMeta(members, q),
       })
     }
   }
@@ -252,6 +269,7 @@ function searchCapabilities(schemas, query) {
         toolCount: fallbackMembers.length,
         exampleTools: fallbackMembers.slice(0, 3).map((m) => m.name),
         tools: fallbackMembers.slice(0, 8).map((m) => m.name),
+        ...matchedToolMeta(fallbackMembers, q),
       })
     }
   }
@@ -517,6 +535,15 @@ module.exports = {
         if (!def) {
           return { ok: false, error: `kix-focus: 工具 ${toolName} 不存在。先用 kix_capability_search 确认。` }
         }
+        // 2026-08-17 决策记录（外部审查 5.6 提出"call 白名单"，评估后不做）：
+        // 不校验"该工具是否被 search 返回过/属于编目组"。理由（kix 哲学：规则是
+        // 负债，机制只补已知盲点）：
+        //   1. 执行面防线已闭环——被裁剪工具对模型不可见（直呼 UNKNOWN_TOOL），
+        //      capability_call 是唯一通路且走完整 pre-execute 门禁（kix-guards
+        //      拦危险操作），"知道名字"不构成绕过；
+        //   2. 会话级白名单会误拦长尾组动态工具（新装工具/名字来自文档而非
+        //      search 的场景），多一轮往返且 query 不匹配时永久误拦（>0% 误报）；
+        //   3. discovery ≠ authorization 的正解在门禁层（已有），不在目录层。
 
         // 经 tools.execute 走完整管线（pre-execute 门禁 → guards → execute → post-execute）。
         // 注意：目标工具在 restrict 后对模型不可见，但本调用带 agent（非 model-direct
@@ -646,6 +673,7 @@ module.exports.__internals = {
   ACTIVATABLE_TOOLS,
   isOnDemand,
   projectToolMeta,
+  matchedToolMeta,
   searchCapabilities,
   guidanceText,
   activationNote,

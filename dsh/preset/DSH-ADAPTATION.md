@@ -53,6 +53,10 @@
 要把剩余 hooks 变成自动拦截，用 `tools/pre-execute`/`post-execute` 事件监听器重写对应逻辑（JS 版）并挂到 preset 的 agent 层——这是"DSH 原生机械门禁"的正确形态。
 autoApprove 全开 → 对应 DSH 权限预设（本部署 `danger-full-access`）；`ask_user_question` 仍是发布/合并/破坏性操作前的确认闸。
 
+**VS Code 侧机制差异（2026-08-16 审计，见 `kix-vscode-mechanism-audit.md`）**：本文件把 Copilot hooks 移植为 DSH 监听器，但 **VS Code 侧的 hook 载荷/工具名与 ps1 假设不同**——真实运行时（copilot-agent 1.0.70+）preToolUse 载荷是 `toolCalls:[{id,name,args}]`（args 为 JSON 字符串）、postToolUse 是 `toolName`/`toolArgs`；工具名是 `powershell`/`bash`/`edit`/`create`/`view`/`grep`/`glob`/`ask_user`/`task`/`web_fetch`，GitHub MCP 工具名为 `GitHub-*`。**DSH 侧不继承这些失真**（DSH 自己的 `exec.arguments` 对象 + `pwsh`/`bash` 工具名是另一套契约，kix-guards v3 已按 DSH 实测修正）；仅需注意：若部署的 MCP 服务器命名不是 `mcp__<server>__` 形态，GitHub 门禁前缀需按部署命名对齐（当前 GitHub MCP 为 `mcp__github__*`，正确）。
+
+**机制融合（2026-08-16，见 `DSH-FUSION-MATRIX.md`）**：VS Code 的有用机制在 DSH 里的**原生等价物**排查结论——`subagent/end`（返回侧校验，已落地 kix-orchestration v2）、`approval/request`（本部署 policy=never 下不派发 = 死代码，不接）、`agent/request-error`（无实例证据，观察候选）、`agent/pre-step`/`agent/session-start`（低优先）、`notification`/`preCompact`/`tools/result`（负债判定不接）。融合原则：先查 DSH 部署事实，不把 VS Code 机制列表照单全收。
+
 **纪律 gate 插件（kix-discipline，2026-08-16 新增）**：需求三检/验证 gate 从 prompt 说教改为机制强制（见 `PLUGINIZATION-ROADMAP.md` P0）：
 - `tools/pre-execute`：实现编辑（edit/write）前查需求三检契约（spec）在档；无 spec + 首次实现编辑 → `remind`（默认，放行+注入提醒一次）/ `ask`（聊天内提问）/ `block`（deny）。测试文件永远放行
 - `kix_discipline_spec` 工具：模型记录契约（goal/xy/assumptions/path/acceptance 五字段，对应 kix 需求三检①XY ②前提 ③路径），写工作区 `kix-discipline/spec.md`（跨会话可查）

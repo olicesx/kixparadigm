@@ -103,17 +103,34 @@ A2 优化 gate-OFF 死路径、A3/A5/B1/B2 全为 no-op（已最优/无目标/�
 | v3.6 | 2026-07-28 | 内容语言约定 |
 | v3.7 | 2026-07-28 | Token 阈值按模型窗口百分比 |
 | v3.8 | 2026-07-28 | orchestrator 工具并行化 |
-| v3.9 | 2026-07-28 | max_parallelism 3→5 |
+| v3.9 | 2026-07-28 | max_parallelism 3→5（v5.0 判定为反过拟合：benchmark 均值当全局常数，已改 DAG 实时 ω） |
+| v5.0 | 2026-08 初 | task_sizing δ 派生 + ω 派生反过拟合改造 |
 | v5.7 | 2026-08-07 | L2/QA revision manifest 与 session freshness |
 | 论文截止 | 2026.07 | — |
 
-## 6. VS Code 机制实证（2026-08-01）
+> 存档说明：v1-v3.9 原件为本机历史快照（kixpower-bundle，2026-07-28，未随仓库分发）。2026-08-17 机制级对照确认并发策略全家族（8 场景/DAG 路由/worktree/Partition/Synthesis/失败传播/race 防护）在 DSH preset 完整存活，唯 token 节省估算表曾被裁剪（已回灌 §6.1）。
 
-- hook 输入顶层字段 **snake_case**（`tool_name`/`tool_input`/`hook_event_name`/`cwd`）；`tool_input` 内部 camelCase；PowerShell `ConvertFrom-Json` 下划线敏感（`$hookInput.toolName` 读不到 `tool_name` → 静默放行）
-- agent hooks 需 `chat.useCustomAgentHooks: true`
+## 6. VS Code 机制实证（2026-08-01；2026-08-16 审计修正，详见 kix-vscode-mechanism-audit.md）
+
+- ~~hook 输入顶层字段 **snake_case**（`tool_name`/`tool_input`/`hook_event_name`/`cwd`）~~ → **2026-08-16 修正**：载荷格式由配置事件名大小写选择（PascalCase=snake_case / camelCase=camelCase）；本机 copilot-agent 1.0.70+ 实测 preToolUse 是 `toolCalls:[{id,name,args}]` 数组（args 为 JSON 字符串），按 snake_case 写的 ps1 hook 对真实载荷**静默放行**（实测 exit 0）
+- ~~agent hooks 需 `chat.useCustomAgentHooks: true`~~ → 仍成立；补充：运行时工具名为 `powershell`/`bash`/`edit`/`create`/`view`/`grep`/`glob`/`ask_user`/`task`/`web_fetch`（旧扩展名 `run_in_terminal`/`replace_string_in_file` 等已不存在）；GitHub MCP 工具名是 `GitHub-*` 前缀；退出码语义（preToolUse 下 2=deny、非零=fail-closed、超时=fail-open）与旧认知不同
 - skill 渐进式披露：资源文件只有被 Markdown 相对链接引用才自动读取；常驻规则放 custom instructions
 - agent body 每次进上下文 = 常驻成本（body 长度是负债）
 - 系统 compaction 只压对话历史，工具输出与引用文件不压缩
+
+## 6.1 并行策略的 token 节省估算（v3.8，自 VS Code 古早版回灌 2026-08-17）
+
+> 论证素材（为什么并行是 MUST 而非建议）。估算基于 v3.7 阈值的典型 Sprint；绝对值随模型/项目变化，量级与比例可信。
+
+| 操作 | 串行 tokens | 并行 tokens | 节省 |
+|---|---|---|---|
+| 模式 0 探索 | ~15K（6 轮往返） | ~8K（1 轮） | -7K |
+| L2 Verification × 3 轮 | ~30K | ~12K | -18K |
+| Observe × 5 次 | ~15K | ~8K | -7K |
+| Drift check | ~10K | ~5K | -5K |
+| **每 Sprint 总节省** | - | - | **~37K（约 4% 窗口）** |
+
+机制依据：并行省的是**轮次往返**（每轮 = 请求前缀 + 逐轮累积的工具结果再入上下文），不是单次调用本身。DSH 侧同理：同一 assistant message 内多个独立只读工具调用（read/grep/glob）一批发出，比逐轮等返回再发下一个省整轮重放。
 
 ## 复查指引
 

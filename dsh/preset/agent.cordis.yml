@@ -507,13 +507,17 @@
 - id: kix-discipline
   name: ./plugins/kix-discipline.js
 
-# ── kix-orchestration（P2 补缺，2026-08-16）：编排交接门禁机制化 ───────────
+# ── kix-orchestration（P2 补缺，2026-08-16；v2/v3 2026-08-16）：编排交接门禁机制化 ──
 # 背景：Copilot 侧 kixpower 的 9 个 hooks 中只有 blast-radius 被 kix-guards 接管，
-# validate-handoff 等编排纪律迁移后变"仅 prompt 约束"。本插件做有界移植：
-# subagent 分派携带 current_sprint 时，校验工作区 docs/.kixpower-current-sprint
-# marker 一致、docs/sprint-N/{plan,progress}.md 存在、progress 无 blocker、
-# 切 QA 时任务全部完成。默认 remind；ask/block 需显式配置。
-# 单元测试：node plugins/kix-orchestration.test.js（25 断言）。
+# validate-handoff 等编排纪律迁移后变"仅 prompt 约束"。本插件做有界融合：
+#   - subagent 分派携带 current_sprint 时，校验工作区 docs/.kixpower-current-sprint
+#     marker 一致、docs/sprint-N/{plan,progress}.md 存在、progress 无 blocker、
+#     切 QA 时任务全部完成（默认 remind；ask/block 需显式配置）。
+#   - v2 subagent/end：QA 返回完成声明但 progress.md 未同步 → steer 提醒（remindOnce）。
+#   - v3 producer_closeout 收尾证据链：spec「验收标准」在档 / 任务全完成 /
+#     测试文件自 l2_verified_sha 有变更要求重验（替代 Copilot qa-signoff 深度校验
+#     中可机械的部分；worktree/SHA 数学/stash 绑定 Copilot 特有流程不移植）。
+# 单元测试：node plugins/kix-orchestration.test.js（48 断言）。
 - id: kix-orchestration
   name: ./plugins/kix-orchestration.js
 

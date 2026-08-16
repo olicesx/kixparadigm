@@ -404,6 +404,52 @@ async function main() {
     }
   }
 
+  // L11 偏好表配置化（2026-08-17，外部审查 5.6「硬编码」技术债最小配置化）
+  {
+    const { mergePreferences, orderedModels, crossProviderOrder, resolveCrossRoute } = require('./kix-route.js').__internals
+    // 不传 config = 默认表原样（行为零变化）
+    const def = mergePreferences(undefined)
+    check('L11a 不传 config → 默认偏好表原样',
+      def.modelPreference['zai-coding-cn'][0] === 'glm-5.3' && def.crossProviderOrder.zhipu[0] === 'deepseek-official')
+    // 浅合并：只覆盖传的键
+    const merged = mergePreferences({ modelPreference: { 'zai-coding-cn': ['glm-5.5'] } })
+    check('L11b modelPreference 子集覆盖，其余键保留',
+      merged.modelPreference['zai-coding-cn'][0] === 'glm-5.5' && merged.modelPreference['deepseek-official'][0] === 'deepseek-v4-flash')
+    // prefs 注入 orderedModels：新偏好生效
+    check('L11c prefs 注入 orderedModels（新偏好在前）',
+      JSON.stringify(orderedModels('zai-coding-cn', ['glm-5.3', 'glm-5.5'], merged)[0]) === '"glm-5.5"')
+    // prefs 注入 crossProviderOrder：自定义 cross 顺序生效
+    const prefs2 = mergePreferences({ crossProviderOrder: { zhipu: ['other-org'] }, genericCrossOrder: ['other-org', 'deepseek-official'] })
+    const llmOther = mockLlm({ providers: ['other-org', 'deepseek-official'], models: { 'other-org': ['m1'], 'deepseek-official': ['deepseek-v4-flash'] }, resolvable: new Set(['other-org/m1', 'deepseek-official/deepseek-v4-flash']) })
+    const order = crossProviderOrder(llmOther, 'zai-coding-cn', prefs2)
+    check('L11d prefs 注入 crossProviderOrder（自定义顺序在前）', order[0] === 'other-org')
+    const hit = await resolveCrossRoute(llmOther, 'zai-coding-cn', undefined, prefs2)
+    check('L11e prefs 注入 resolveCrossRoute（路由到自定义 provider）', hit !== undefined && hit.provider === 'other-org')
+    // 默认（无 prefs）：行为与旧版一致
+    const hitDef = await resolveCrossRoute(llmOther, 'zai-coding-cn', undefined, undefined)
+    check('L11f 无 prefs = 旧默认行为（deepseek 优先）', hitDef !== undefined && hitDef.provider === 'deepseek-official')
+    // listener 级：apply(ctx, config) 传 config 后 cross 路由用新偏好
+    const services = {
+      llm: mockLlm({ providers: ['zai-coding-cn', 'other-org', 'deepseek-official'], models: { 'other-org': ['m1'], 'deepseek-official': ['deepseek-v4-flash'] }, resolvable: new Set(['other-org/m1', 'deepseek-official/deepseek-v4-flash']) }),
+    }
+    await withListener(routeMod, services, async ({ call }) => {
+      const out = await call(child(65536), { provider: 'zai-coding-cn', model: 'kix-route:cross', maxTokens: 65536 })
+      check('L11g 无 config 的 apply = 默认 deepseek', out.provider === 'deepseek-official')
+    })
+    // 带 config 的 apply（重新捕获 handler）
+    {
+      let handler
+      const ctx = {
+        on: (ev, h) => { if (ev === 'agent/request') handler = h },
+        get: (n) => services[n],
+        logger: { warn: () => {} },
+      }
+      routeMod.apply(ctx, { crossProviderOrder: { zhipu: ['other-org'] } })
+      const out = await handler(child(65536), () => Promise.resolve({ provider: 'zai-coding-cn', model: 'kix-route:cross', maxTokens: 65536 }))
+      check('L11h config 覆盖 apply → cross 路由 other-org', out.provider === 'other-org' && out.model === 'm1')
+    }
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`)
   if (failed > 0) process.exit(1)
 }
@@ -412,3 +458,5 @@ main().catch((err) => {
   console.error(err)
   process.exit(1)
 })
+
+
