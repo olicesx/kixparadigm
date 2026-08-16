@@ -5,80 +5,28 @@
 [![CI](https://github.com/olicesx/kixparadigm/actions/workflows/ci.yml/badge.svg)](https://github.com/olicesx/kixparadigm/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/kixparadigm)](https://www.npmjs.com/package/kixparadigm)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)]()
 
 > **🌍 English:** [README.en.md](README.en.md) · **中文:** 本文件
+>
+> 本文档实践仓库自身的范式：**常驻最小、渐进披露、易变数字不双源维护** —— 版本史在 [CHANGELOG.md](CHANGELOG.md)，机制映射在 [dsh/preset/DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md)，细节不在此重复。
 
----
+## 为什么
 
-## 🧭 为什么会有这个仓库：kix × DSH 的适配研究
+kix 范式原是 VS Code Copilot 定制包。研究 DeepSeek Harness（DSH）后发现两者**机制天然适配**：常驻认知 = preset persona、门禁 hooks = `tools/pre-execute` 插件、团队 Agent = subagent 分派、slash 命令 = DSH 原生命令、识图补足 = vision-bridge。完整映射见 [DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md) 与 [DSH-FUSION-MATRIX.md](dsh/preset/DSH-FUSION-MATRIX.md)。
 
-kix 范式最初是 **VS Code Copilot 定制包**：常驻认知指令、17 个技能、6 个团队 Agent、5 个 slash 命令、机械门禁 hooks、方法论记忆——一套在 Copilot 生态里打磨出来的 AI 自编排体系（本仓库内：DSH preset 收录全部 17 技能，Copilot 分发版含其中 7 个）。
+适配带来一个现实转变：范式从「一个人本机的 Copilot 定制」变成「一条命令可复现的公开资产」——这是本仓库开源的契机。
 
-后来我们研究了 **DeepSeek Harness（DSH）**，发现两者是**天然适配**的——不是移植，而是"机制对上机制"：
-
-| kix 机制 | DSH 原生载体 | 适配结论 |
-|---|---|---|
-| 常驻认知指令（怎么思考） | preset persona（每次会话自动生效） | ✅ 直接等价 |
-| PreToolUse 机械门禁 hooks（blast-radius / 源码保护 / 危险 git） | **自研 `kix-guards` 插件**（`tools/pre-execute` 监听器）+ host sandbox/approval 栈 | ✅ 更强的门禁宿主 |
-| `/kixpower-*` slash 命令 | **自研 `kix-commands` 插件**（DSH 原生命令，零 token 触发） | ✅ 命令即入口 |
-| 团队 Agent（Producer/Dev/QA/Reviewer） | DSH subagent 分派（角色 prompt 模板） | ✅ 编排直接落地 |
-| 技能体系（skills） | DSH skills（preset 内 customSkillDirs） | ✅ 原样挂载 |
-| memory-tool 方法论记忆 | DSH memories/（persona 指引按需读取） | ✅ 原样挂载 |
-| 跨厂商模型验证（kix 核心信念之一） | DSH llm-pi-ai providers + `subagent_vision` 视觉子代理 | ✅ 原生支持 |
-| 无视觉主模型的识图补足 | **自研 `dsh-vision-bridge` 插件**（GLM-4.6V 自动转描述） | ✅ UI 无缝 |
-
-研究结论记录在 [`dsh/preset/DSH-ADAPTATION.md`](dsh/preset/DSH-ADAPTATION.md)（权威机制映射）。这套适配带来了一个现实收益：**kix 范式从"一个人本机的 Copilot 定制"变成了"一条命令可复现的公开资产"**——这就是本仓库开源的契机：让任何 DSH 环境都能一键获得完整的 kix 认知层 + 执行层 + 门禁 + 识图补足。
-
----
-
-## 🚀 快速开始（DSH，推荐）
-
-### 方式一：npm 一键导入（`npm i -g` 自动完成全部安装）
+## 快速开始（DSH，推荐）
 
 ```bash
-npm i -g kixparadigm
+npm i -g kixparadigm     # preset + vision-bridge 全自动安装，重启 dsh web 后在模式列表选 kixparadigm
+npx kixparadigm install  # 不全局安装
+npm i -g kixparadigm-en  # 英文版（独立包，翻译状态见 en/preset/TRANSLATION-STATUS.md）
 ```
 
-安装过程自动完成：
+自定义 DSH 目录（`DSH_HOME`）、`--preset-only`、运维命令（`doctor` / `uninstall` / `copilot`）见 [dsh/README-DSH.md](dsh/README-DSH.md)。
 
-1. **preset** → `~/.dsh/.agent-presets/kixparadigm/`（完整 preset：persona 认知层 + 17 技能 + 6 角色 + 5 命令 + 门禁/命令插件 + 4 记忆）
-2. **vision-bridge** → `~/.dsh/profiles/web/plugins/dsh-vision-bridge/`（自动建 junction、登记 `cordis.patch.yml` 挂载条目）
-3. **检查清单**：`settings.yaml` 缺 `zai-vision` / `zai-coding-cn` provider 时会提示（按 `DSH-ADAPTATION.md` 补齐）
-
-然后**重启 dsh web**（Ctrl+C → `dsh web`），新会话模式列表里选择 **kixparadigm** 即可。
-
-> 自定义 DSH 目录：`DSH_HOME=/path/to/dsh npm i -g kixparadigm`（默认 `~/.dsh`）
-> 不想装 vision-bridge：`kixparadigm install --preset-only`
-
-### 方式二：npx（不全局安装）
-
-```bash
-npx kixparadigm install
-```
-
-### 🌍 English edition
-
-The resident cognition layer (persona / core instructions / glossary / main-entry agent) is fully translated — see the canonical terminology table in [`en/preset/instructions/glossary.md`](en/preset/instructions/glossary.md):
-
-```bash
-npm i -g kixparadigm-en     # installs the kixparadigm-en preset (mode picker: kixparadigm-en)
-kixparadigm-en doctor       # self-check
-```
-
-Deep-mechanism docs (skills / prompts / memories / team roles) are still the Chinese originals while translation progresses — status tracked in [`en/preset/TRANSLATION-STATUS.md`](en/preset/TRANSLATION-STATUS.md). Source of the EN edition: the `en/` directory (npm package root) + `en/preset/` (EN preset source of truth).
-
-### 常用运维命令
-
-```bash
-kixparadigm doctor        # 自检：preset/链接/挂载条目/插件单元回归
-kixparadigm uninstall     # 卸载全部安装内容（另一语言包仍安装时保留共享 vision-bridge）
-kixparadigm copilot       # （可选）同时导入 VS Code Copilot 侧
-```
-
----
-
-## 🚀 快速开始（VS Code Copilot）
+## 快速开始（VS Code Copilot）
 
 ```bash
 # Windows
@@ -87,106 +35,43 @@ kixparadigm copilot       # （可选）同时导入 VS Code Copilot 侧
 chmod +x install.sh && ./install.sh
 ```
 
-详细说明见 [INSTALL.md](INSTALL.md)。装完重载窗口，`/` 输入 `/kixpower-new` / `/kixpower-import` / `/kixpower-continue` / `/kixpower-review`。
+详见 [INSTALL.md](INSTALL.md)。装完 `/kixpower-new` 开始。
 
----
+## 这是什么：两层 + 插件地板
 
-## 📦 这是什么：两层结构
+| 层 | 组件 | 一句话 |
+|----|------|--------|
+| **认知层**（怎么思考） | kixparadigm persona | 三通道交叉验证、阶段二相性、规则是负债、需求三检（不迎合用户）、写码前决策链 |
+| **执行层**（怎么执行） | kixpower | 编曲模型：主模型自由挑成员（dev/qa/reviewer）+ Sprint 流程、DAG 拓扑、4 层 loop、四条不变量地板 |
+| 机械门禁 | `kix-guards` | commit 预算、feature branch、force push、危险 SQL、控制面保护（硬 deny 仅不可逆破坏） |
+| 交接纪律 | `kix-orchestration` · `kix-discipline` | subagent 交接证据链校验；spec 契约 gate + 验证 gate |
+| 聚焦 | `kix-focus` | 工具面 85→18 常驻裁剪 + 按需目录与代理执行——渐进披露的运行时形态 |
+| 成本路由 | `kix-cost` · `kix-route` | 子代理思考强度归一化；哨兵模型名 → 运行时可用路由 |
+| 补足 | `kix-commands` · `dsh-vision-bridge` · `kix-stalled`（opt-in） | `/kixpower-*` 原生命令；无视觉主模型识图；停滞 Sprint 检测 |
 
-kix 体系分两层，本仓库把两层 + 生态依赖一次性装齐：
+preset 全量：persona + 17 技能 + 6 角色 + 5 命令 + 4 记忆。各插件机制与版本演进见 [DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md) 与 [CHANGELOG.md](CHANGELOG.md)。
 
-| 层 | 组件 | 作用 |
-|----|------|------|
-| **认知层（怎么思考）** | `kixparadigm` | 常驻认知范式：三通道交叉验证、阶段二相性、规则是负债、需求三检（不迎合用户）、写码前决策链、AI 盲点补足。每个会话自动生效 |
-| **执行层（怎么执行）** | `kixpower` | **编曲模型（v1.2.9）**：主模型自由挑成员+流程——dev/qa/reviewer 三个 activatable 成员档（人名=契约句柄）+ kixpower Sprint 流程（重路径）、DAG 拓扑、4 层 loop、可验证 gate；四条不变量地板（观察独立性/协调主线程/视角来自 prompt/门禁不变） |
-| **生态辅助** | `handoff` / `write-a-skill` / `improve-codebase-architecture` 等 17 技能 | 会话交接、技能创建、架构改进、TDD/教学/排查等通用方法论 |
-| **机械门禁** | `kix-guards` 插件 | commit budget、feature branch、force push、危险 SQL、控制面文件保护（**219 组断言**；v9 起发布/评论/普通 push 等确认类门禁降为软约束，不再提问；硬 deny 仅保留 force push / main 保护 / 破坏性 SQL / 控制平面写 / 删除远端数据等不可逆破坏；**v10.1（2026-08-17）修复 commit-on-main 整链死代码**：`DANGEROUS_GIT` 补 `commit`——此前纯 `git commit` 不触发 isGitWrite、分支/预算检查永不执行，main 直接 commit 静默放行（部署 E2E 实锤）） |
-| **纪律机制化** | `kix-discipline` 插件 | 需求三检契约 gate + 验证 gate：实现编辑前查 spec 契约、回合结束无测试提醒、`kix_discipline_spec` 契约工具（v1.2.9 新增可选 mode 字段=编曲留痕：成员组合+一句理由）、`/kix-discipline` 命令（68 组断言，2026-08-16 插件化改造 P0；拒绝/转交弹问 v2；mode 占位回读防假值 + 标题正则转义修复 2026-08-17） |
-| **编排交接门禁** | `kix-orchestration` 插件 | subagent 交接前校验 sprint marker / plan+progress / blocker / QA 完成度；v2 QA 返回侧一致性校验（subagent/end）；v3 producer_closeout 收尾证据链；v4 sleep 空转等待子代理一次性提醒（**v4.1 平台无关**：命令语义双形态恒测，不按工具名门控；WSL2 实测阳性/阴性双通过）；v8 QA 完成声明负向语义防误报；**v10.1（2026-08-17）Tri-Block 容错**：无契约行时从 `[CONTEXT]` 段兜底解析 `Sprint N`（交接 gate 机械兜底，直呼路径；共 77 组断言） |
-| **极简+渐进披露** | `kix-focus` 插件 | 三层递进：tools.restrict 把每轮工具面从 85 个（~108KB schema）裁到 ~18 个常驻核心集；`kix_capability_search` 按需查目录（v4 带参数名元数据 + 长尾兜底组：新装工具零配置即目录可达）+ `kix_capability_call` 代理执行（走完整门禁管线）；v1.2.12 jobs 常驻化（后台任务机械控制面，修 run_in_background 无控制器报错）+ 细分档位/goal **首次使用自动激活**（capability_call 代理即挂载，模型无需先激活；kix_tool_activate 保留为显式预激活；v1.2.9 枚举同步回归防线 + **symlink 部署跨平台解析修复**：候选根链 argv[1]→realpath→插件文件，WSL2 E2E 两轮实测闭环）；与 PTC/Code Mode 协同（**102 组断言**；**v1.2.13 交接 gate 机械兜底**：编曲成员 qa/dev/reviewer 经 capability_call 分派时按工作区 `docs/.kixpower-current-sprint` 自动注入契约行 `current_sprint: N`（`sprintInjected` 返回），并修 lite 档 `ACTIVATABLE_TOOLS` 快照平台条件化（v1.2.12 双源漏改，部署 E2E 实锤）） |
-| **成本纪律** | `kix-cost` 插件 | 子代理思考强度归一化（thinker→max、其余 deepseek→high）+ lite 档首选路由探测自动回退（28 组断言，v5.8；多轮回退路由缓存 bug 修复 2026-08-17） |
-| **路由层** | `kix-route` 插件 | 哨兵模型名（`kix-route:cross/vision/thinker`）→ 运行时可用路由自动解析：跨厂商取反/识图模型/深思考档位；偏好表可配置（`modelPreference`/`crossProviderOrder` 经插件 config 覆盖，2026-08-17）；v8 未注册偏好候选跳过（68 组断言，v5.9.1） |
-| **原生命令** | `kix-commands` 插件 | `/kixpower-*` 五命令注册为 DSH 原生命令（零 token 触发，读 `prompts/` 注入流程） |
-| **stalled 检测** | `kix-stalled` 插件（可选） | `/kixst-check` 命令 + `kix_stalled_check` 工具：只读检测停滞 Sprint（candidate，默认注释挂载 = opt-in，`scripts/install-kix-stalled.ps1` 启用） |
-| **识图补足** | `dsh-vision-bridge` 插件 | 主模型无视觉时，粘贴/拖入图片自动转文本描述再提交（GLM-4.6V，服务端 HTTP + client dock） |
-
-**关系一句话**：kixparadigm 给 AI「怎么思考」的自由度与盲点补足，kixpower 给「怎么执行」的结构化团队编排，门禁与识图插件把 DSH 变成 kix 的完整宿主。
-
-> **v1.2.13（2026-08-17）部署复验整改**：① 交接 gate 机械注入——`kix-focus` 编曲成员（qa/dev/reviewer）capability_call 分派自动携带 `current_sprint: N`（工作区 marker 驱动，`sprintInjected` 返回）+ `kix-orchestration` v10.1 Tri-Block `[CONTEXT]` `Sprint N` 容错解析（双保险，直呼路径也兜底）；② lite 档 Linux 可用——`ACTIVATABLE_TOOLS` 快照 toolFilter 平台条件化（v1.2.12 只修了 agent.cordis.yml 行，capability_call 自动激活路径仍报 unknown global tool "pwsh"，部署 E2E 实锤）；③ kix-guards v10.1 commit-on-main 整链修复（`DANGEROUS_GIT` 补 `commit`）。单测：kix-focus **102** / kix-orchestration **77** / kix-guards **219** 组全绿；WSL2 部署 E2E 三复验全过（lite / commit 拦截 / persona 规则 + 机械注入实证）。
->
-> **v1.2.12（2026-08-17）迭代-验证-发布**：① subagent-lite toolFilter.allow 平台条件化（win32→pwsh、其余→bash）——原硬编码 pwsh 使 Linux 部署 tools.restrict() 报 unknown global tool、lite 档不可用（WSL2 E2E 实证）；② kix-guards v10：repoRootFromText 补 `cd <repo> && git commit`（无 -C）命令位提取——会话 cwd ≠ 仓库根时 commit 检查此前静默跳过，单元回归 142→213 组；③ persona：Sprint 子代理分派契约行补 `current_sprint: N`，使 kix-orchestration 交接门禁真正触发；④ jobs 常驻化 + 细分档位/goal 首次使用自动激活（详见 PR #6）。
->
-> **v1.2.11 软约束整改（DSH 版）**：发布/评论/合并/破坏默认不做；用户明确指示（如「评论到PR」）即已决策，直接执行，kix-guards 不再逐次提问。提问只留给真正缺失的决策信息。
->
-> **v1.2.10 整改（DSH 版）**：按 KIX 自审修复「0% 误报」反例——QA 完成声明排除负向表述；控制平面门禁只拦写意图（`grep/cat/ls ~/.dsh` 放行）；终端 SQL 改为 DB 客户端命令位 + SQL payload 语句级判定；GitHub MCP 前缀可配置；跨厂商路由跳过未注册偏好候选；中英包卸载不再互相删除共享 vision-bridge；`engines` 对齐 `process.getBuiltinModule` 最低版本；常驻 persona 二次还债压至约 1.8K token（CN，原 3.1K）；新增 persona 预算/文档计数/双语插件一致性守护与 CI；vision-bridge 补纯逻辑回归并修复完整代码围栏剥离。
-
----
-
-## 📂 仓库结构
+## 仓库结构
 
 ```
 kixparadigm/
-├── package.json                     ← npm 打包（postinstall 自动安装，bin 提供 CLI）
-├── bin/kixparadigm.js               ← CLI：install / uninstall / doctor / copilot
-├── scripts/
-│   ├── install-lib.js               ← 跨平台安装器（preset + vision-bridge 挂载）
-│   ├── sync-dsh-preset.ps1          ← 日常开发：镜像 dsh/preset → ~/.dsh（单向）
-│   ├── ensure-vision-bridge.ps1     ← vision-bridge 自检/自愈
-│   ├── check-dsh-consistency.cjs    ← persona 预算/文档计数/双语一致性守护
-│   ├── install-kix-stalled.ps1      ← 启用可选 kix-stalled 插件（opt-in）
-│   ├── list-plugin-tools.cjs / quantify-focus.cjs / wsl-restart-dsh.sh ← 工具清单/聚焦量化/WSL 辅助
-│   └── verify-*.js / .cjs           ← 门禁与加载链验证
-│
-├── dsh/                             ← DSH 侧（唯一事实源）
-│   ├── preset/                      ← → ~/.dsh/.agent-presets/kixparadigm/ 的镜像
-│   │   ├── agent.cordis.yml         ← 组成（persona 常驻认知层 + 全部能力行）
-│   │   ├── preset.yml               ← roster 显示元数据
-│   │   ├── DSH-ADAPTATION.md        ← 权威机制映射（工具名/门禁/编排/vision）
-│   │   ├── DSH-FUSION-MATRIX.md     ← 机制融合矩阵
-│   │   ├── PLUGINIZATION-ROADMAP.md ← 插件化改造路线图（2026-08-16）
-│   │   ├── skills/  agents/  prompts/  instructions/  memories/
-│   │   └── plugins/                 ← kix-guards + kix-discipline + kix-orchestration + kix-focus + kix-cost + kix-route + kix-commands + kix-stalled（opt-in）+ 测试
-│   ├── vision-bridge/               ← dsh-vision-bridge 插件源码（client + server + package.json）
-│   └── README-DSH.md                ← DSH 部署说明
-│
-├── en/                              ← 英文版（独立 npm 包 kixparadigm-en，与中文包同步发版）
-│   ├── preset/                      ← EN preset 事实源（persona/指令/术语表已译；技能/提示词/记忆翻译中）
-│   ├── bridge/  bin/  scripts/      ← vision-bridge 副本、CLI、参数化安装器
-│   └── README.md                    ← EN 包 readme
-│
-├── .github/workflows/ci.yml         ← CI：ubuntu+windows × node 20/22 双包测试 + pack dry-run
-├── skills/  agents/  prompts/  memories/  instructions/   ← VS Code Copilot 分发版（原样保留）
-├── plugins/                         ← Copilot 侧 kix-guards 原件
-├── install.ps1 / install.sh / INSTALL.md   ← Copilot 安装脚本
-├── vision-bench/                    ← 识图链路基准资产（A/B 测速）
-└── README.md  LICENSE  .gitignore
+├── dsh/preset/        ← DSH preset 唯一事实源：persona/技能/角色/插件源码+测试/适配文档
+├── en/                ← 英文版（独立 npm 包 kixparadigm-en，与中文包同步发版）
+├── skills/ agents/ prompts/ memories/ instructions/   ← VS Code Copilot 分发版（7 技能子集）
+├── bin/ scripts/      ← CLI 与安装/验证/一致性守护脚本
+└── install.ps1 / install.sh / INSTALL.md / CHANGELOG.md
 ```
 
-> **唯一事实源约定**：`dsh/preset/` 是 DSH preset 的事实源；`~/.dsh/.agent-presets/kixparadigm/` 只是安装副本。维护 preset = 改 `dsh/preset/` 再跑 `scripts/sync-dsh-preset.ps1 -Force`。根目录 `skills/` 等是 Copilot 分发版，与 DSH 版刻意不同，不要互相覆盖。
+> **唯一事实源约定**：`dsh/preset/` 是事实源，`~/.dsh/.agent-presets/kixparadigm/` 只是安装副本（维护 = 改 preset 后跑 `scripts/sync-dsh-preset.ps1 -Force`）；根目录 `skills/` 等是 Copilot 分发版，与 DSH 版刻意不同，不互相覆盖。
 
----
-
-## 🧪 开发与验证
+## 开发与验证
 
 ```bash
-npm test                                  # 一致性守护 + 全插件回归：installer 12 + vision-bridge 6 + 门禁 219 + 纪律 68 + 编排 77 + 聚焦 102 + 成本 28 + 路由 68 断言（+ commands 6 组）
-node scripts/check-dsh-consistency.cjs       # 单独跑 persona 预算/文档计数/双语插件一致性守护
-node scripts/verify-guards.js             # 已安装 preset 与 bundle 门禁对照
-node scripts/verify-vision-bridge-resolution.cjs  # vision-bridge 加载链全链路
-pwsh -File .\scripts\sync-dsh-preset.ps1 -DryRun   # 预览 preset 差异
-kixparadigm doctor                        # 安装状态自检
+npm test                                    # 一致性守护 + 全插件回归（计数由测试输出自报，不在本文档维护）
+node scripts/check-dsh-consistency.cjs      # persona 预算/文档计数/双语一致性守护
+kixparadigm doctor                          # 安装状态自检
 ```
 
-preset 挂载校验（roster `standingKeyFor`）在 DSH 会话内用 cordis 工具集执行。
-
-## 📢 发布
-
-```bash
-npm login                      # 首次
-npm test && npm pack --dry-run # 发布前自检
-npm publish                    # 发布（npm i -g kixparadigm 即一键导入）
-```
-
-## 📄 License
+## License
 
 [MIT](LICENSE) © 2026 kixparadigm contributors
