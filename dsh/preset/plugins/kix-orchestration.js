@@ -63,7 +63,8 @@ const execFileP = promisify(execFile)
 // ── 常量 ───────────────────────────────────────────────────────────────────
 const SUBAGENT_TOOLS = new Set([
   'subagent', 'subagent_fork', 'subagent_cross', 'subagent_lite',
-  'subagent_thinker', 'subagent_vision', 'subagent_codex', 'subagent_claude_code',
+  'subagent_thinker', 'subagent_vision', 'subagent_reviewer',
+  'subagent_codex', 'subagent_claude_code',
 ])
 const SPRINT_MARKER = '.kixpower-current-sprint'
 
@@ -300,16 +301,20 @@ function baselineShaFromProgress(progressMd) {
 // sleep 数字 **且** description 提及 subagent/子代理 → 一次性提醒改收回合。
 // 测试退避/重试/等锁的 sleep（description 不匹配）不提醒；等后台 job 的
 // 正确形态是 job_output wait:true（另一模式，不在本检测面）。
-const SLEEP_WAIT_CMD = /(^|[;&|]\s*)sleep\s+\d/
+const SLEEP_WAIT_CMD = /(^|[;&|]\s*)sleep\s+\d/i
+// pwsh 等价形态（preset 按平台挂载：Windows=pwsh、Linux/macOS=bash；PowerShell
+// 大小写不敏感）：Start-Sleep -Seconds 60 / Start-Sleep 60 / start-sleep -s 30。
+// 锚点同 bash 款（行/语句边界），Write-Output 'start-sleep 5' 之类引号内文本不命中。
+const PWSH_SLEEP_WAIT_CMD = /(^|[;\r\n]|&&|\|\|)\s*start-sleep\s+(?:-\w+\s+)*-?\d/i
 const SLEEP_WAIT_DESC = /subagent|子代理/i
 const SLEEP_WAIT_REMIND =
   'kix-orchestration: 检测到用 sleep 等待后台子代理。DSH 的结算/报告投递会无条件唤醒父级（收回合后自动开新回合，无丢失风险）；请改为：独立工作做完仍缺结果 → 简短状态后结束回合，等 subagent-settled/subagent-report 唤醒继续。sleep 只用于测试与超时语义（退避/等锁）。'
 
-/** bash sleep 等待子代理判定（纯函数，测试经 __internals 验证）。 */
+/** bash/pwsh sleep 等待子代理判定（纯函数，测试经 __internals 验证）。 */
 function isSleepWaitForSubagent({ command, description }) {
   const cmd = typeof command === 'string' ? command : ''
   const desc = typeof description === 'string' ? description : ''
-  return SLEEP_WAIT_CMD.test(cmd) && SLEEP_WAIT_DESC.test(desc)
+  return (SLEEP_WAIT_CMD.test(cmd) || PWSH_SLEEP_WAIT_CMD.test(cmd)) && SLEEP_WAIT_DESC.test(desc)
 }
 
 function makeUserMessage(text) {
@@ -386,7 +391,9 @@ module.exports = {
       if (!SUBAGENT_TOOLS.has(tool)) {
         // v4：sleep 空转等待子代理（一次性提醒）。刻意不参与 intensity
         // block/ask——sleep 是编排卫生问题不是危险操作，remind 恰当。
-        if (tool === 'bash') {
+        // 平台对齐（preset：Windows=pwsh、Linux/macOS=bash）两工具名都查；
+        // 命令形态双正则覆盖（bash sleep N / pwsh Start-Sleep N）。
+        if (tool === 'bash' || tool === 'pwsh') {
           const st = exec && exec.agent ? stateFor(exec.agent) : undefined
           if (st && st.enabled && !st.sleepReminded) {
             const args = exec && (exec.arguments ?? exec.args)
@@ -589,6 +596,7 @@ module.exports.__internals = {
   baselineShaFromProgress,
   isSleepWaitForSubagent,
   SLEEP_WAIT_CMD,
+  PWSH_SLEEP_WAIT_CMD,
   SLEEP_WAIT_DESC,
   makeUserMessage,
   SUBAGENT_TOOLS,

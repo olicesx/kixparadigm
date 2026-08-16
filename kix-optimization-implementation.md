@@ -23,6 +23,17 @@
 
 **明确不做**：① cross 缺席的机械提醒（prompt 关键词匹配模糊，等下一轮实测证明 persona 层失效再议——规则是负债）；② settled/report 文本重叠的机械去重（模糊文本比对违反 0% 误报纪律，persona 已从源头消除）。
 
+### v6 补记（2026-08-17 第二轮，CEO 机制判研驱动）
+
+> 判研结论：CEO 五维度（工具/模型/技能/流程/门禁）落地且三维度反超 VS Code；唯一半落地是「挑成员」（角色文件全迁移，注入靠三跳指令链，零实地证据）。本轮决策：
+
+- **「角色 body 按需摘录」否决**：判研时提出的 P1 微调经范式自审撤回——团队路径零实地证据 + persona 已有「prompt ≤5K」上界兜底，摘录规则是负资产（降角色保真度换边际成本）。决策留痕：`DSH-FUSION-MATRIX.md` §0 行 11（🔶 观察候选 + 触发条件 + 机制化先例）。
+- **v4 平台覆盖修复**（还债非新规则）：sleep 检测原只匹配 `bash`——preset 按平台挂载 pwsh/bash，Windows 侧整个检测是死代码。补 `PWSH_SLEEP_WAIT_CMD`（`Start-Sleep -Seconds 60`/`Start-Sleep 60`/大小写不敏感；锚点同 bash 款，引号内文本不命中）+ pre-execute 工具名判 `bash||pwsh`。
+- **SUBAGENT_TOOLS 补 `subagent_reviewer`**：2026-08-16 新增的 reviewer 工具行漏进集合（集合本意=全部 subagent 行，连 codex/claude_code 模板都在）——reviewer 分派携带 sprint 元数据时原会绕过交接 gate。
+- 断言 55 → **61**（pwsh 命中/引号不命中/退避不命中/pwsh 工具行端到端/reviewer 覆盖）。
+
+**下一轮实测补充验收（kixpower 团队路径，当前零证据）**：① `/kixpower-*` 全流程跑通且分派 prompt 含角色硬约束（注入链走通）；② kix-orchestration 三段 gate（交接/返回/收尾）在真实分派上触发（subagent prompt 带 `current_sprint`）；③ Sprint 文件（plan/progress/done）落盘且 completed==total。任一失败即触发融合矩阵行 11 的机制化条件。
+
 ---
 
 ## 〇、v5：en（kixparadigm-en）同步（2026-08-15 第五轮）
