@@ -45,7 +45,7 @@
 | `chat.useCustomAgentHooks` | 无开关——监听器按 scope 挂载即生效（scope-filtered：agent-scoped 监听器只收到该 agent 的调用） | 天然支持"不同角色不同 hook"（producer 禁写源码、QA 禁写业务代码…） |
 
 **hooks/*.ps1 的现状（2026-08-16 更新）**：9 个 Copilot hooks 中，
-- ✅ **blast-radius-check.ps1** → `plugins/kix-guards.js`（pre-execute，5 大门禁/164 断言）
+- ✅ **blast-radius-check.ps1** → `plugins/kix-guards.js`（pre-execute，5 大门禁/218 断言；v7：reflog %gs 口径 / 过期 sprint 指针回退 / 预算兜底）
 - ✅ **validate-handoff.ps1**（核心通用部分：sprint marker/plan/progress/blocker/QA 完成度）→ `plugins/kix-orchestration.js`（pre-execute，25 断言，2026-08-16）
 - ⚠️ **validate-handoff 深度部分**（worktree 登记 / plan_snapshot_sha / l2_gate_manifest_sha256 / stash 基线 / reverify marker）**不移植**——绑定 Copilot 的 runSubagent+agentName 分派格式，DSH 是 prompt 注入，过度移植 = 负债（见 PLUGINIZATION-ROADMAP.md §5 P2 决策）
 - ⚠️ **block-source-edit / block-dev-authority-edit / block-source-edit-qa** → 角色边界，DSH subagent 无角色标记，保留为 prompt 硬约束（kix-guards v3 已决策不接）
@@ -187,7 +187,7 @@ kix 的原始编排假设只有 runSubagent；DSH 提供更结构化的原生能
 ## 7. 已知限制（诚实声明）
 
 1. ~~跨厂商模型不可用~~ → **已启用**：`subagent_cross` 工具行（zai-coding-cn/GLM-5.3）已注册，主模型自主选择；新增厂商 = settings 加 profile + preset 加工具行（见 §3）
-2. **hooks/*.ps1 不自动触发**——但 DSH 有完整等价机制，且 **preset 已内置 `plugins/kix-guards.js`（v5，2026-08-15 ask 级门禁改聊天内提问）**（`tools/pre-execute` 监听器，blast-radius 核心门禁的 JS 移植）：破坏性 SQL（含 UPDATE without WHERE）/ 终端数据库客户端保守拦截 / git 写保护（force push 完整检测 -f/+refs/--mirror，修复 v1 静默失效）/ main 分支保护（commit/push）+ commit 时真实分支检查 / **commit budget**（reflog 计数，hard cap 10 / progress.md 预算 / 冷启动 3）/ **MCP GitHub 远程写保护**（main/master deny、无 branch deny、mutation ask；v4 起只读 get_/list_/search_ 工具直接放行，mutation 按工具名精确匹配）/ **人类确认点 ask**（reset --hard/clean -f/branch -D/stash drop/checkout --/restore/普通 push/GitHub mutation → **聊天内提问** `ctx.userQuestions.ask()`，即 ask_user_question 底层服务；不再走 approval 弹窗——审批策略 danger-full-access 为 never 全自动，用户直接在聊天里回答「允许执行/拒绝」；无 userQuestions 服务/无 agent/子代理提问抛错 → fail-safe deny）/ 控制平面保护 / 未知执行工具拦截 / run_code 代码体检查，单元回归 **164 组断言通过**（v5：ask 门禁按「允许→allow / 拒绝→deny」双向 + 3 条降级路径验证）。sandbox 栈仍是常驻机械层
+2. **hooks/*.ps1 不自动触发**——但 DSH 有完整等价机制，且 **preset 已内置 `plugins/kix-guards.js`（v7，2026-08-16；v5 ask 级门禁改聊天内提问）**（`tools/pre-execute` 监听器，blast-radius 核心门禁的 JS 移植）：破坏性 SQL（含 UPDATE without WHERE）/ 终端数据库客户端保守拦截 / git 写保护（force push 完整检测 -f/+refs/--mirror，修复 v1 静默失效）/ main 分支保护（commit/push）+ commit 时真实分支检查 / **commit budget**（v7：reflog %gs 口径只数 commit 类条目——reset/merge/pull/checkout/rebase 不计、amend 只进 hard cap 口径；hard cap 10 / progress.md → plan.md task_sizing → plan.md max_commits 兜底链 / 冷启动 3 必 warn；marker 指向已完结 sprint 时回退最大编号并在 deny 消息标注）/ **MCP GitHub 远程写保护**（main/master deny、无 branch deny、mutation ask；v4 起只读 get_/list_/search_ 工具直接放行，mutation 按工具名精确匹配）/ **人类确认点 ask**（reset --hard/clean -f/branch -D/stash drop/checkout --/restore/普通 push/GitHub mutation → **聊天内提问** `ctx.userQuestions.ask()`，即 ask_user_question 底层服务；不再走 approval 弹窗——审批策略 danger-full-access 为 never 全自动，用户直接在聊天里回答「允许执行/拒绝」；无 userQuestions 服务/无 agent/子代理提问抛错 → fail-safe deny）/ 控制平面保护 / 未知执行工具拦截 / run_code 代码体检查，单元回归 **218 组断言通过**（v5：ask 门禁按「允许→allow / 拒绝→deny」双向 + 3 条降级路径验证；v7：补 reflog %gs 口径 / 预算兜底链 / sprint 回退 / 事故回归用例）。sandbox 栈仍是常驻机械层
 3. **slash command（/kixpower-*）已注册为 DSH 原生命令**（P1-8，2026-08-15）：`plugins/kix-commands.js` 注册 5 命令（kixpower-new/import/continue/review/kixpower），敲 `/` 见候选、触发后 handler 读 `prompts/*.prompt.md` 剥离 frontmatter 注入 user 消息（与 /plan 同语义，零 token）。「无 UI 注册」过期文案已于 2026-08-15 全量修复（persona §DSH 适配、kixpower/SKILL.md 适配注记），不再残留
 4. **CodeGraphy / GitHub MCP 无对应**——降级 grep/read + gh CLI
 5. **memory 不自动注入**——按需读取
@@ -235,7 +235,7 @@ Code Mode SDK（`run_code` + 生成式 `tools.*` TypeScript 绑定）并存，�
   （deny `import(node:)`/`child_process`/`fetch(`/`WebSocket(`/`process.`）：
   run_code 是通用 Node 运行时（实测 fetch/process/动态 import 可用），
   `tools.*` 是自愿通道，代码体可零痕迹绕过子分派门禁，内容检查闭合此洞。
-  回归测试：`plugins/kix-guards.test.js`（164 组断言，node 直接运行）。
+  回归测试：`plugins/kix-guards.test.js`（218 组断言，node 直接运行）。
 - **已知限制（2026-08-15 声明）**：① kix-guards 按 agent scope 挂载，**不覆盖
   子代理会话**（三通道观察者/团队子代理无此机械层，sandbox 是其唯一边界）；
   ② 程序内子分派命中 approval `ask` 的语义未定义（fail-safe 建议：视为结构化

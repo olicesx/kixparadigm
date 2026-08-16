@@ -98,7 +98,7 @@ kix 体系分两层，本仓库把两层 + 生态依赖一次性装齐：
 | **认知层（怎么思考）** | `kixparadigm` | 常驻认知范式：三通道交叉验证、阶段二相性、规则是负债、需求三检（不迎合用户）、写码前决策链、AI 盲点补足。每个会话自动生效 |
 | **执行层（怎么执行）** | `kixpower` | 多智能体协作编排：Producer 规划 → Dev 实现 → QA 验证，Sprint 化、DAG 拓扑、4 层 loop、可验证 gate |
 | **生态辅助** | `handoff` / `write-a-skill` / `improve-codebase-architecture` 等 17 技能 | 会话交接、技能创建、架构改进、TDD/教学/排查等通用方法论 |
-| **机械门禁** | `kix-guards` 插件 | commit budget、feature branch、force push、危险 SQL、控制面文件保护、人类确认点（199 组断言；v5 聊天内提问 + v4 GitHub 只读误拦修复；v6 gh CLI 写保护 + 重复尝试自动拒绝） |
+| **机械门禁** | `kix-guards` 插件 | commit budget、feature branch、force push、危险 SQL、控制面文件保护、人类确认点（218 组断言；v5 聊天内提问 + v4 GitHub 只读误拦修复；v6 gh CLI 写保护 + 重复尝试自动拒绝；v7 commit budget 三重修复——reflog %gs 口径只数 commit 类条目 / 过期 sprint 指针回退 / plan.md max_commits 兜底 + 冷启动 warn） |
 | **纪律机制化** | `kix-discipline` 插件 | 需求三检契约 gate + 验证 gate：实现编辑前查 spec 契约、回合结束无测试提醒、`kix_discipline_spec` 契约工具、`/kix-discipline` 命令（63 组断言，2026-08-16 插件化改造 P0；拒绝/转交弹问 v2） |
 | **编排交接门禁** | `kix-orchestration` 插件 | subagent 交接前校验 sprint marker / plan+progress / blocker / QA 完成度；v2 QA 返回侧一致性校验（subagent/end）；v3 producer_closeout 收尾证据链；v4 sleep 空转等待子代理一次性提醒（**v4.1 平台无关**：命令语义双形态恒测，不按工具名门控；WSL2 实测阳性/阴性双通过，共 67 组断言） |
 | **极简+渐进披露** | `kix-focus` 插件 | 三层递进：tools.restrict 把每轮工具面从 85 个（~108KB schema）裁到 ~18 个常驻核心集；`kix_capability_search` 按需查目录（v4 带参数名元数据 + 长尾兜底组：新装工具零配置即目录可达）+ `kix_capability_call` 代理执行（走完整门禁管线）；与 PTC/Code Mode 协同（66 组断言，2026-08-16 P4） |

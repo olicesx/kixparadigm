@@ -1,4 +1,4 @@
-// kix-guards — kixparadigm 机械门禁的 DSH 原生实现（v6，2026-08-16）
+// kix-guards — kixparadigm 机械门禁的 DSH 原生实现（v7，2026-08-16）
 //
 // 移植自 kixpower 的 blast-radius-check.ps1 / block-source-edit.ps1 核心门禁，
 // 以 DSH `tools/pre-execute` 监听器形态自动拦截（等价 Copilot PreToolUse hook）。
@@ -44,6 +44,23 @@
 //     GitHub 工具名+参数）已被 deny 或用户拒绝后再次出现 → 直接 deny 附
 //     原拒绝原因 +「禁止重复尝试」，不再反复提问。memo 存插件闭包（每
 //     agent scope 一份 = 每会话独立），只记录拒绝（用户放行的不记录）。
+// v7（2026-08-16，dae 仓库实测误报驱动；0% 误报纪律）：
+//   - 修复「reflog 计数惩罚历史修整」：改用 reflog subject（%gs）口径，
+//     只数 commit 类条目。reset / merge / pull / checkout / rebase 不再
+//     计入（它们不创建 commit 对象；reset+recommit / rebase 是推荐的历史
+//     修整工作流）。amend 计入 hard cap 口径（重写 commit 对象的 churn）
+//     但不计入 budget 口径（不改逻辑 commit 数）。实测：3 逻辑 commit +
+//     2 次 reset 重做 + 1 次 amend 曾被 %H 口径计为 8 次，误触熔断。
+//   - 修复「过期 sprint 指针」：marker 指向的 sprint 已有 done.md → warn
+//     并回退最大编号 sprint 目录；最大编号也已完结 → staleAll warn 并在
+//     deny 消息标注「预算基线过期」。实测：docs/.kixpower-current-sprint
+//     停在 6 而 sprint-9 已完结，门禁拿 12 天前 sprint-6 的 budget=3
+//     约束 sprint-9 之后的 hotfix 工作。
+//   - 修复「预算兜底缺口 + 静默冷启动」：plan.md 增读 blast_radius.max_commits
+//     （ps1 同源字段）；优先级 progress.commit_budget > plan.task_sizing.
+//     derived_commit_budget > plan.blast_radius.max_commits > 冷启动 3，
+//     落冷启动必须 warn；deny 消息注明预算来源与 sprint 目录，移除误导性
+//     的「按 DAG 重算」措辞（任务 DAG 是规划文档，不做拦截）。
 //
 // 挂载方式：preset agent.cordis.yml 中一行：
 //   - id: kix-guards
@@ -268,18 +285,55 @@ function repoRootFromText(text) {
   return undefined
 }
 
-// 预算解析（ps1 同源正则；progress.md 优先 → plan.md → 默认）
+// v7：reflog 计数（%gs 口径）——只数 commit 类条目，不惩罚历史修整。
+//   commits = 逻辑 commit（commit: / commit (initial):；不含 amend）
+//   churn   = commit 对象创建（含 commit (amend):）→ hard cap 口径
+//   reset / merge / pull / checkout / rebase 等 HEAD 移动不计入任何口径：
+//   它们不创建 commit 对象，且 reset+recommit / rebase 是推荐的历史修整
+//   工作流（实测误报根因之一：修 off-by-one 的 reset 重做被计进预算）。
+//   amend 不计入 budget（不改逻辑 commit 数）但计入 hard cap（防无限重写）。
+function countReflogCommits(reflogText) {
+  const lines = String(reflogText || '').split('\n').map((l) => l.trim()).filter(Boolean)
+  let commits = 0
+  let churn = 0
+  for (const s of lines) {
+    if (s.startsWith('commit')) churn++
+    if (s.startsWith('commit:') || s.startsWith('commit (initial):')) commits++
+  }
+  return { commits, churn }
+}
+
+// 预算解析（ps1 同源正则；progress.md 优先 → plan.md 两级 → 冷启动默认）
+// v7：plan.md 增读 blast_radius.max_commits 兜底（sprint-9 实形：progress
+// 无 commit_budget、plan 无 task_sizing，但 plan 的 blast_radius.max_commits
+// 是 ps1 同源锁定的提交上限——此前读不到会静默落冷启动 3）。
+// v7 修正优先级语义：按「是否匹配到」降级，不再按「值是否等于默认」——
+// 显式 commit_budget: 3 不再被 plan 兜底覆盖（v6 潜伏 bug，兜底链放大）。
 function resolveCommitBudget({ progressMd, planMd }) {
   let budget = COMMIT_BUDGET_DEFAULT
+  let fromProgress = false
   if (progressMd) {
     const m = /^---[\s\S]*?blast_radius:[\s\S]*?commit_budget:\s*(\d+)/.exec(progressMd)
-    if (m) budget = Number(m[1])
+    if (m) { budget = Number(m[1]); fromProgress = true }
   }
-  if (planMd) {
+  if (!fromProgress && planMd) {
     const m = /task_sizing:[\s\S]*?derived_commit_budget:\s*(\d+)/.exec(planMd)
-    if (m && budget === COMMIT_BUDGET_DEFAULT) budget = Number(m[1])
+    if (m) {
+      budget = Number(m[1])
+    } else {
+      const m2 = /blast_radius:[\s\S]*?max_commits:\s*(\d+)/.exec(planMd)
+      if (m2) budget = Number(m2[1])
+    }
   }
   return budget
+}
+
+// v7：预算来源标注（冷启动 warn / deny 消息用；与 resolveCommitBudget 同优先级链）
+function commitBudgetSource({ progressMd, planMd }) {
+  if (progressMd && /^---[\s\S]*?blast_radius:[\s\S]*?commit_budget:\s*(\d+)/.test(progressMd)) return 'progress.md blast_radius.commit_budget'
+  if (planMd && /task_sizing:[\s\S]*?derived_commit_budget:\s*(\d+)/.test(planMd)) return 'plan.md task_sizing.derived_commit_budget'
+  if (planMd && /blast_radius:[\s\S]*?max_commits:\s*(\d+)/.test(planMd)) return 'plan.md blast_radius.max_commits'
+  return '冷启动默认 ' + COMMIT_BUDGET_DEFAULT
 }
 
 // 找 active sprint 目录（ps1：docs/.kixpower-current-sprint 优先 → 最大数字）
@@ -300,6 +354,30 @@ function activeSprintDir(docsRoot, currentSprint) {
     if (hit) return hit.name
   }
   return sprints.length > 0 ? sprints[0].name : undefined
+}
+
+// v7：active sprint 目录解析 + 完结检测（纯 fs 进出，供单元测试）。
+//   marker（docs/.kixpower-current-sprint）优先；若其指向的 sprint 已有
+//   done.md（已完结，预算基线过期）→ fallbackFrom 记录并回退最大编号目录
+//   （实测误报根因之二：marker 停在已完结的 sprint-6，门禁拿其 budget=3
+//   约束之后的工作）。最大编号也已完结 → staleAll（由调用方 warn + 标注）。
+function resolveSprintContextPaths(docsRoot, currentSprint) {
+  const fs = require('node:fs')
+  const dir = activeSprintDir(docsRoot, currentSprint)
+  if (!dir) return undefined
+  const out = { dir, fallbackFrom: undefined, staleAll: false }
+  let done = false
+  try { done = fs.statSync(join(docsRoot, dir, 'done.md')).isFile() } catch { done = false }
+  if (!done) return out
+  const maxDir = activeSprintDir(docsRoot, 0)
+  if (maxDir && maxDir !== dir) {
+    out.fallbackFrom = dir
+    out.dir = maxDir
+    try { out.staleAll = fs.statSync(join(docsRoot, maxDir, 'done.md')).isFile() } catch { out.staleAll = false }
+  } else {
+    out.staleAll = true // 最大编号即 marker 指向且已完结
+  }
+  return out
 }
 
 module.exports = {
@@ -393,6 +471,8 @@ module.exports = {
     }
 
     // 读取 sprint 上下文文件内容（供预算解析；任何失败返回空对象不拦）
+    // v7：经 resolveSprintContextPaths 做「marker 指向已完结 sprint」的
+    // 回退，并携带 sprintDir / staleAll 供 deny 消息标注预算基线状态。
     async function readSprintContext(repoRoot) {
       const docsRoot = join(repoRoot, 'docs')
       let currentSprint = 0
@@ -401,10 +481,16 @@ module.exports = {
         const n = Number(raw.trim())
         if (Number.isInteger(n) && n > 0) currentSprint = n
       } catch { /* 无 current-sprint 文件 */ }
-      const dir = activeSprintDir(docsRoot, currentSprint)
-      if (!dir) return {}
-      const sprintRoot = join(docsRoot, dir)
-      const out = {}
+      const resolved = resolveSprintContextPaths(docsRoot, currentSprint)
+      if (!resolved) return {}
+      if (resolved.fallbackFrom) {
+        ctx.logger?.warn?.(`[kix-guards] active sprint 指针指向已完结的 ${resolved.fallbackFrom}（done.md 存在），回退到最大编号 ${resolved.dir} 解析预算——请同步 docs/.kixpower-current-sprint 或开新 sprint。`)
+      }
+      if (resolved.staleAll) {
+        ctx.logger?.warn?.(`[kix-guards] 最大编号 sprint ${resolved.dir} 也已完结（done.md 存在）——预算基线可能不反映当前工作，建议开新 sprint 并写明 blast_radius.commit_budget。`)
+      }
+      const sprintRoot = join(docsRoot, resolved.dir)
+      const out = { sprintDir: resolved.dir, staleAll: resolved.staleAll }
       try { out.progressMd = await readFile(join(sprintRoot, 'progress.md'), 'utf8') } catch { /* 无 progress.md */ }
       try { out.planMd = await readFile(join(sprintRoot, 'plan.md'), 'utf8') } catch { /* 无 plan.md */ }
       return out
@@ -423,17 +509,23 @@ module.exports = {
       if (branch === 'main' || branch === 'master') {
         return DENY(`BLAST RADIUS: 禁止在 ${branch} 分支直接 commit。先创建 feature 分支并通过 PR/MR 合并。`)
       }
-      // commit budget（ps1 检查 1）
-      const reflog = await gitRead(repoRoot, ['reflog', '--since=1 hour ago', '--format=%H', 'HEAD'])
+      // commit budget（ps1 检查 1；v7：%gs 口径只数 commit 类条目，
+      // reset/merge/pull/checkout/rebase 与 budget 无关，amend 只进 hard cap）
+      const reflog = await gitRead(repoRoot, ['reflog', '--since=1 hour ago', '--format=%gs', 'HEAD'])
       if (reflog === null) return undefined
-      const count = reflog.trim() === '' ? 0 : reflog.trim().split('\n').length
-      if (count >= COMMIT_HARD_CAP) {
-        return DENY(`BLAST RADIUS HARD CAP: 已 commit ${count} 次（绝对硬上限 ${COMMIT_HARD_CAP}）。立即停止并拆分 Sprint；不得从 plan.md 覆盖硬上限。`)
+      const { commits, churn } = countReflogCommits(reflog)
+      if (churn >= COMMIT_HARD_CAP) {
+        return DENY(`BLAST RADIUS HARD CAP: 1 小时窗口内已创建 ${churn} 个 commit（含 amend；绝对硬上限 ${COMMIT_HARD_CAP}）。立即停止并拆分 Sprint；不得从 plan.md 覆盖硬上限。`)
       }
-      const { progressMd, planMd } = await readSprintContext(repoRoot)
+      const { progressMd, planMd, sprintDir, staleAll } = await readSprintContext(repoRoot)
       const budget = resolveCommitBudget({ progressMd, planMd })
-      if (count >= budget) {
-        return DENY(`BLAST RADIUS: 已 commit ${count} 次（预算 ${budget}）。Producer 必须按 DAG 重算并同步预算；派生值超过 ${COMMIT_HARD_CAP} 时拆分 Sprint。`)
+      const source = commitBudgetSource({ progressMd, planMd })
+      if (source.startsWith('冷启动')) {
+        ctx.logger?.warn?.(`[kix-guards] commit 预算落到冷启动默认 ${COMMIT_BUDGET_DEFAULT}（未在 sprint 文档解析到 commit_budget / derived_commit_budget / max_commits）——请在新 sprint 的 progress.md frontmatter 写明 blast_radius.commit_budget。`)
+      }
+      if (commits >= budget) {
+        const staleNote = staleAll ? `；注意：预算基线来自已完结的 ${sprintDir || 'sprint'}，请开新 sprint 并同步 commit_budget` : ''
+        return DENY(`BLAST RADIUS: 1 小时窗口内已 commit ${commits} 次（预算 ${budget}，来源：${sprintDir ? sprintDir + ' 的 ' : ''}${source}${staleNote}）。请重算 commit 预算并同步到 sprint 文档（progress.md frontmatter 的 blast_radius.commit_budget）；派生值超过 ${COMMIT_HARD_CAP} 时拆分 Sprint。`)
       }
       return undefined
     }
@@ -631,7 +723,7 @@ module.exports = {
 
     // 记录挂载
     ctx.on('ready', () => {
-      ctx.logger?.info?.('[kix-guards] 机械门禁监听器已挂载（pre-execute，v5：解析式子命令门/budget/branch/force-push/GitHub/SQL 完整；ask 级门禁改为聊天内提问）')
+      ctx.logger?.info?.('[kix-guards] 机械门禁监听器已挂载（pre-execute，v7：解析式子命令门/budget/branch/force-push/GitHub/SQL 完整；ask 级门禁聊天内提问；commit budget 三重修复——reflog %gs 口径/完结 sprint 回退/预算兜底+来源标注）')
     })
   },
 }
@@ -649,7 +741,10 @@ module.exports.__internals = {
   targetsControlPlane,
   repoRootFromText,
   resolveCommitBudget,
+  commitBudgetSource,
+  countReflogCommits,
   activeSprintDir,
+  resolveSprintContextPaths,
   ghEntityAction,
   isGhMutation,
   isGhDestructive,

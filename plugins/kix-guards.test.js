@@ -1,9 +1,13 @@
-// kix-guards 回归测试（v3，2026-08-15 独立审查修复后）
+// kix-guards 回归测试（v7，2026-08-16：commit budget 三重修复——reflog %gs 口径 / 完结 sprint 回退 / plan.md max_commits 兜底 + 冷启动 warn）
 //
 // 单元级验证：加载 kix-guards.js，mock DSH pre-execute 派发
 // （模拟 dsh-tools createExecution 的输出结构：{ name, arguments, ... }），
-// 覆盖全部门禁分支（deny / ask / allow）+ __internals 纯逻辑。
+// 覆盖全部门禁分支（deny / ask→聊天提问 / allow）+ __internals 纯逻辑。
 // 运行：node plugins/kix-guards.test.js
+//
+// v5 语义：ask 级门禁不再返回 {kind:'ask'}（approval 弹窗），而是调用
+// ctx.userQuestions.ask()（聊天内提问）；测试用 mock userQuestions 模拟
+// 用户回答「允许执行/拒绝」，并覆盖降级路径（无 userQuestions → deny）。
 //
 // 注意：本测试模拟的是"监听器被 DSH 调用"后的决策逻辑；
 // 运行时"监听器确实被挂载"的端到端验证需在新会话执行。
@@ -14,8 +18,13 @@ const os = require('node:os')
 
 // ── mock ctx（cordis 插件 apply(ctx) 需要的表面）──────────────────────────
 const listeners = {}
+// 可切换的 userQuestions mock：undefined = 无服务（降级 deny）
+let userQuestionsMock = null
 const ctx = {
   logger: { info() {}, warn() {}, error() {} },
+  get(name) {
+    return name === 'userQuestions' ? userQuestionsMock : undefined
+  },
   on(event, cb) {
     ;(listeners[event] ||= []).push(cb)
   },
@@ -29,8 +38,14 @@ const preExecute = listeners['tools/pre-execute']
 assert.ok(Array.isArray(preExecute) && preExecute.length === 1, 'pre-execute 监听器已注册')
 
 // ── 模拟 DSH 派发 ─────────────────────────────────────────────────────────
-// 无 agent → checkGitCommit 走「无法解析仓库根 → 放行 + warn」路径（不依赖真实 git）。
+// 带 agent（真实执行必有 agent）；无 agent → checkGitCommit 走「无法解析
+// 仓库根 → 放行 + warn」路径（不依赖真实 git）。
 function dispatch(name, args) {
+  const exec = { name, arguments: args, token: 't', callId: 'c', agent: { id: 'test-agent' } }
+  return preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+}
+// 无 agent 派发（降级路径验证）
+function dispatchNoAgent(name, args) {
   const exec = { name, arguments: args, token: 't', callId: 'c' }
   return preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
 }
@@ -38,11 +53,22 @@ function dispatch(name, args) {
 let passed = 0
 let failed = 0
 function check(label, decision, expect) {
-  // expect: true=deny / false=allow / 'ask'
+  // expect: true=deny / false=allow
   const kind = decision && decision.kind
-  const ok = expect === 'ask' ? kind === 'ask' : (kind === 'deny') === expect
+  const ok = (kind === 'deny') === expect
   if (ok) { passed++ } else { failed++ }
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}  →  ${kind}${ok ? '' : ` (expected ${expect === 'ask' ? 'ask' : expect ? 'deny' : 'allow'})`}`)
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}  →  ${kind}${ok ? '' : ` (expected ${expect ? 'deny' : 'allow'})`}`)
+}
+
+// v5：ask 级门禁 → 聊天内提问。模拟用户两种回答各跑一次：
+//   允许执行 → allow；拒绝 → deny。
+async function askCase(label, name, args) {
+  userQuestionsMock = { ask: async () => ({ answers: [{ id: 'kix-guards-confirm', selected: ['允许执行'] }] }) }
+  const allowed = await dispatch(name, args)
+  check(`${label}（用户允许）→ allow`, allowed, false)
+  userQuestionsMock = { ask: async () => ({ answers: [{ id: 'kix-guards-confirm', selected: ['拒绝'] }] }) }
+  const denied = await dispatch(name, args)
+  check(`${label}（用户拒绝）→ deny`, denied, true)
 }
 
 ;(async () => {
@@ -78,23 +104,24 @@ function check(label, decision, expect) {
   check('pwsh: git push -f origin feature → deny (v2)', await dispatch('pwsh', { command: 'git push -f origin feature' }), true)
   check('pwsh: git push origin +main → deny (v2)', await dispatch('pwsh', { command: 'git push origin +main' }), true)
   check('pwsh: git push --mirror origin → deny (v2)', await dispatch('pwsh', { command: 'git push --mirror origin' }), true)
-  check('pwsh: git push --force-with-lease origin feature → ask (v2)', await dispatch('pwsh', { command: 'git push --force-with-lease origin feature' }), 'ask')
+  // v5：ask 级门禁改为聊天内提问（force-with-lease 非硬 deny）
+  await askCase('pwsh: git push --force-with-lease origin feature', 'pwsh', { command: 'git push --force-with-lease origin feature' })
   // v3 修复：-C / -c / git.exe 不再绕过
   check('pwsh: git -C C:\\repo push --force origin main → deny (v3)', await dispatch('pwsh', { command: 'git -C C:\\repo push --force origin main' }), true)
   check('pwsh: git -c user.name=x push --force origin main → deny (v3)', await dispatch('pwsh', { command: 'git -c user.name=x push --force origin main' }), true)
   check('pwsh: git.exe push --force origin main → deny (v3)', await dispatch('pwsh', { command: 'git.exe push --force origin main' }), true)
-  check('pwsh: git -C C:\\repo reset --hard HEAD → ask (v3)', await dispatch('pwsh', { command: 'git -C C:\\repo reset --hard HEAD' }), 'ask')
-  // 人类确认点 ask
-  check('pwsh: git reset --hard HEAD → ask', await dispatch('pwsh', { command: 'git reset --hard HEAD' }), 'ask')
-  check('pwsh: git clean -fd → ask', await dispatch('pwsh', { command: 'git clean -fd' }), 'ask')
-  check('pwsh: git branch -D old → ask', await dispatch('pwsh', { command: 'git branch -D old-branch' }), 'ask')
-  check('pwsh: git stash drop → ask', await dispatch('pwsh', { command: 'git stash drop' }), 'ask')
-  check('pwsh: git checkout -- src/a.ts → ask', await dispatch('pwsh', { command: 'git checkout -- src/a.ts' }), 'ask')
-  check('pwsh: git restore src/a.ts → ask', await dispatch('pwsh', { command: 'git restore src/a.ts' }), 'ask')
+  // 人类确认点 ask（v5：聊天内提问）
+  await askCase('pwsh: git -C C:\\repo reset --hard HEAD', 'pwsh', { command: 'git -C C:\\repo reset --hard HEAD' })
+  await askCase('pwsh: git reset --hard HEAD', 'pwsh', { command: 'git reset --hard HEAD' })
+  await askCase('pwsh: git clean -fd', 'pwsh', { command: 'git clean -fd' })
+  await askCase('pwsh: git branch -D old', 'pwsh', { command: 'git branch -D old-branch' })
+  await askCase('pwsh: git stash drop', 'pwsh', { command: 'git stash drop' })
+  await askCase('pwsh: git checkout -- src/a.ts', 'pwsh', { command: 'git checkout -- src/a.ts' })
+  await askCase('pwsh: git restore src/a.ts', 'pwsh', { command: 'git restore src/a.ts' })
   // push 目标受保护分支（v3：参数检测，不扫 commit message）
-  check('pwsh: git push origin feature → ask (v2)', await dispatch('pwsh', { command: 'git push origin feature' }), 'ask')
+  await askCase('pwsh: git push origin feature', 'pwsh', { command: 'git push origin feature' })
   check('pwsh: git push origin main → deny (v3)', await dispatch('pwsh', { command: 'git push origin main' }), true)
-  check('pwsh: git push origin main-branch → ask (v3)', await dispatch('pwsh', { command: 'git push origin main-branch' }), 'ask')
+  await askCase('pwsh: git push origin main-branch', 'pwsh', { command: 'git push origin main-branch' })
   check('pwsh: git push origin refs/heads/main → deny (v3)', await dispatch('pwsh', { command: 'git push origin refs/heads/main' }), true)
   check('pwsh: git commit -am "x" && git push origin main → deny', await dispatch('pwsh', { command: 'git commit -am "x" && git push origin main' }), true)
   // 只读/常规操作放行
@@ -111,9 +138,19 @@ function check(label, decision, expect) {
   check('pwsh: git commit -m "sync master notes" → allow (v3)', await dispatch('pwsh', { command: 'git commit -m "sync master notes"' }), false)
   check('pwsh: git commit -m "update main.rs docs" → allow (v3)', await dispatch('pwsh', { command: 'git commit -m "update main.rs docs"' }), false)
   // lookbehind 前缀断言（v3）：分支名含 --force 不算 force push
-  check('pwsh: git push origin abc--force → ask (v3)', await dispatch('pwsh', { command: 'git push origin abc--force' }), 'ask')
-  // commit budget/分支（无 agent → 放行不崩）
-  check('pwsh: git commit -am x（无 agent）→ allow', await dispatch('pwsh', { command: 'git commit -am "wip"' }), false)
+  await askCase('pwsh: git push origin abc--force', 'pwsh', { command: 'git push origin abc--force' })
+  // commit budget/分支（无 agent 仓库根 → 放行不崩）
+  check('pwsh: git commit -am x（mock 无仓库根）→ allow', await dispatch('pwsh', { command: 'git commit -am "wip"' }), false)
+
+  // ── v5 降级路径：无 userQuestions 服务 / 无 agent → fail-safe deny ─────
+  userQuestionsMock = null
+  check('pwsh: git push origin feature（无 userQuestions）→ deny 降级', await dispatch('pwsh', { command: 'git push origin feature' }), true)
+  check('pwsh: git reset --hard HEAD（无 userQuestions）→ deny 降级', await dispatch('pwsh', { command: 'git reset --hard HEAD' }), true)
+  userQuestionsMock = { ask: async () => ({ answers: [{ id: 'kix-guards-confirm', selected: ['允许执行'] }] }) }
+  check('pwsh: git push origin feature（无 agent）→ deny 降级', await dispatchNoAgent('pwsh', { command: 'git push origin feature' }), true)
+  // 提问抛错（如子代理 DELEGATED_CALLER / 无 UI provider）→ deny 降级
+  userQuestionsMock = { ask: async () => { throw new Error('DELEGATED_CALLER') } }
+  check('pwsh: git push origin feature（提问抛错）→ deny 降级', await dispatch('pwsh', { command: 'git push origin feature' }), true)
 
   // ══ 3. 控制平面保护（v3：home 限定，项目级同名文件不误伤）════════════
   const HOME = (process.env.USERPROFILE || os.homedir()).replace(/\\/g, '/')
@@ -143,8 +180,9 @@ function check(label, decision, expect) {
   check('github create_or_update_file 无 branch → deny', await dispatch('mcp__github__create_or_update_file', { owner: 'o', repo: 'r', path: 'a.ts', content: 'x' }), true)
   check('github create_or_update_file branch=feature → allow', await dispatch('mcp__github__create_or_update_file', { owner: 'o', repo: 'r', path: 'a.ts', branch: 'feature/x', content: 'x' }), false)
   check('github push_files branch=master → deny', await dispatch('mcp__github__push_files', { owner: 'o', repo: 'r', branch: 'master', files: [], message: 'm' }), true)
-  check('github merge_pull_request → ask', await dispatch('mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 3 }), 'ask')
-  check('github add_issue_comment → ask', await dispatch('mcp__github__add_issue_comment', { owner: 'o', repo: 'r', issue_number: 1, body: 'b' }), 'ask')
+  // v5：mutation 类 ask → 聊天内提问
+  await askCase('github merge_pull_request', 'mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 3 })
+  await askCase('github add_issue_comment', 'mcp__github__add_issue_comment', { owner: 'o', repo: 'r', issue_number: 1, body: 'b' })
   check('github get_file_contents → allow', await dispatch('mcp__github__get_file_contents', { owner: 'o', repo: 'r', path: 'README.md' }), false)
   // v4 修复：只读工具不再被 `.*request_` 误判为 mutation（日志实测 2026-08-15）
   check('github get_pull_request → allow (v4)', await dispatch('mcp__github__get_pull_request', { owner: 'o', repo: 'r', pull_number: 1 }), false)
@@ -156,12 +194,12 @@ function check(label, decision, expect) {
   check('github get_issue → allow (v4)', await dispatch('mcp__github__get_issue', { owner: 'o', repo: 'r', issue_number: 1 }), false)
   check('github search_code → allow (v4)', await dispatch('mcp__github__search_code', { q: 'x' }), false)
   check('github list_commits → allow (v4)', await dispatch('mcp__github__list_commits', { owner: 'o', repo: 'r', sha: 'a' }), false)
-  // v4：mutation 精确名单仍须 ask（含原 `request_` 意图覆盖的 review 提交）
-  check('github create_pull_request → ask (v4)', await dispatch('mcp__github__create_pull_request', { owner: 'o', repo: 'r', title: 't', head: 'h', base: 'b' }), 'ask')
-  check('github create_pull_request_review → ask (v4)', await dispatch('mcp__github__create_pull_request_review', { owner: 'o', repo: 'r', pull_number: 1, event: 'APPROVE' }), 'ask')
-  check('github update_issue → ask (v4)', await dispatch('mcp__github__update_issue', { owner: 'o', repo: 'r', issue_number: 1, state: 'closed' }), 'ask')
-  check('github fork_repository → ask (v4)', await dispatch('mcp__github__fork_repository', { owner: 'o', repo: 'r' }), 'ask')
-  check('github create_branch → ask (v4)', await dispatch('mcp__github__create_branch', { owner: 'o', repo: 'r', branch: 'x' }), 'ask')
+  // v4：mutation 精确名单仍须提问（v5：聊天内提问）
+  await askCase('github create_pull_request', 'mcp__github__create_pull_request', { owner: 'o', repo: 'r', title: 't', head: 'h', base: 'b' })
+  await askCase('github create_pull_request_review', 'mcp__github__create_pull_request_review', { owner: 'o', repo: 'r', pull_number: 1, event: 'APPROVE' })
+  await askCase('github update_issue', 'mcp__github__update_issue', { owner: 'o', repo: 'r', issue_number: 1, state: 'closed' })
+  await askCase('github fork_repository', 'mcp__github__fork_repository', { owner: 'o', repo: 'r' })
+  await askCase('github create_branch', 'mcp__github__create_branch', { owner: 'o', repo: 'r', branch: 'x' })
 
   // ══ 7. __internals 纯逻辑 ═════════════════════════════════════════════
   const I = plugin.__internals
@@ -250,6 +288,112 @@ function check(label, decision, expect) {
   assert.ok(!I.targetsControlPlane('C:/work/project/.credentials.yaml'), '项目凭据模板不拦')
   assert.ok(!I.targetsControlPlane('C:/Users/other/.dsh/settings.yaml'), '其他用户 home 不拦')
   passed += 7
+
+  // ══ 8. v6：gh CLI 写保护 + 重复尝试记忆 ═════════════════════════════════
+  // 8a. gh CLI 纯判定（__internals）
+  assert.ok(I.isGhMutation('gh pr create --title x'), 'gh pr create → mutation')
+  assert.ok(I.isGhMutation('gh -R o/r pr merge 3'), 'gh -R 前置不绕过')
+  assert.ok(I.isGhMutation('gh --repo o/r issue close 3'), 'gh --repo 前置不绕过')
+  assert.ok(I.isGhMutation('gh api -X POST repos/o/r/issues'), 'gh api POST → mutation')
+  assert.ok(I.isGhMutation('gh secret set TOKEN'), 'gh secret set → mutation')
+  assert.ok(!I.isGhMutation('gh pr view 3'), 'gh pr view → 放行')
+  assert.ok(!I.isGhMutation('gh issue list'), 'gh issue list → 放行')
+  assert.ok(!I.isGhMutation('gh auth status'), 'gh auth status → 放行')
+  assert.ok(!I.isGhMutation('gh api repos/o/r/pulls/3'), 'gh api GET → 放行')
+  assert.ok(!I.isGhMutation('git push origin feature'), '非 gh 不判')
+  assert.ok(I.isGhDestructive('gh repo delete o/r'), 'gh repo delete → 破坏性')
+  assert.ok(I.isGhDestructive('gh api -X DELETE repos/o/r'), 'gh api DELETE → 破坏性')
+  assert.ok(!I.isGhDestructive('gh pr create --title x'), 'gh pr create 非破坏性')
+  assert.deepStrictEqual(I.ghEntityAction('gh pr create --title x'), { entity: 'pr', action: 'create' })
+  assert.deepStrictEqual(I.ghEntityAction('gh --repo o/r pr merge'), { entity: 'pr', action: 'merge' })
+  passed += 15
+
+  // 8b. gh 门禁派发（v6：写操作 ask 聊天提问 / 破坏性 deny / 只读放行）
+  await askCase('pwsh: gh pr create --title v6-gh', 'pwsh', { command: 'gh pr create --title v6-gh' })
+  await askCase('pwsh: gh pr merge 12', 'pwsh', { command: 'gh pr merge 12' })
+  await askCase('pwsh: gh issue close 7', 'pwsh', { command: 'gh issue close 7' })
+  check('pwsh: gh repo delete o/r → deny', await dispatch('pwsh', { command: 'gh repo delete o/r' }), true)
+  check('pwsh: gh api -X DELETE repos/o/r → deny', await dispatch('pwsh', { command: 'gh api -X DELETE repos/o/r' }), true)
+  check('pwsh: gh pr view 3 → allow', await dispatch('pwsh', { command: 'gh pr view 3' }), false)
+  check('pwsh: gh issue list → allow', await dispatch('pwsh', { command: 'gh issue list' }), false)
+  check('pwsh: gh api repos/o/r → allow', await dispatch('pwsh', { command: 'gh api repos/o/r' }), false)
+
+  // 8c. 重复尝试记忆：同操作（终端命令归一 / edit 路径 / GitHub 工具+参数）
+  // 已被拒 → 直接 deny 且不再提问；用户放行的操作不记录。
+  let askCalls = 0
+  userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['允许执行'] }] } } }
+  check('v6: git push 首次（用户允许）→ allow 且不记录', await dispatch('pwsh', { command: 'git push origin v6-repeat' }), false)
+  userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['拒绝'] }] } } }
+  check('v6: gh pr create（用户拒绝）→ deny + 记录', await dispatch('pwsh', { command: 'gh pr create --title v6-repeat' }), true)
+  userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['允许执行'] }] } } }
+  const v6Repeat = await dispatch('pwsh', { command: 'gh   pr    create --title v6-repeat' })
+  check('v6: 同操作重复（空白归一）→ deny 不再提问', v6Repeat, true)
+  assert.strictEqual(askCalls, 2, 'v6: 重复时未再次调用 userQuestions（askCalls=2）')
+  passed += 1
+  check('v6: 不同命令不受 memo 影响 → allow', await dispatch('pwsh', { command: 'git status' }), false)
+  // edit 路径重复（用全新路径保证「首次」语义）
+  const v6Cp = 'C:\\Users\\v6\\.dsh\\.agent-presets\\kixparadigm\\agent.cordis.yml'
+  check('v6: edit 控制平面首次 → deny + 记录', await dispatch('edit', { file_path: v6Cp }), true)
+  check('v6: edit 同路径重复 → deny（memo）', await dispatch('edit', { file_path: v6Cp }), true)
+  // GitHub 工具同参重复（不同参数不算重复）
+  userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['拒绝'] }] } } }
+  await dispatch('mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 99 })
+  userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['允许执行'] }] } } }
+  check('v6: GitHub 工具同参重复 → deny（memo）', await dispatch('mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 99 }), true)
+  userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['允许执行'] }] } } }
+  check('v6: GitHub 工具异参（pull_number 不同）不受 memo 影响 → ask 放行', await dispatch('mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 100 }), false)
+
+  // ══ 9. v7：commit budget 三重修复（reflog %gs 口径 / 完结 sprint 回退 / 预算兜底）══
+  // 9a. countReflogCommits：%gs 口径只数 commit 类条目
+  assert.deepStrictEqual(I.countReflogCommits(''), { commits: 0, churn: 0 }, '空 reflog → 0/0')
+  assert.deepStrictEqual(I.countReflogCommits('commit: a\ncommit: b\nreset: moving to HEAD~1\ncommit: c'), { commits: 3, churn: 3 }, 'reset 不计入')
+  assert.deepStrictEqual(I.countReflogCommits('commit: a\ncommit (amend): b\npull: Fast-forward\nmerge: x: Merge branch y\ncheckout: moving to z'), { commits: 1, churn: 2 }, 'amend 只进 hard cap 口径')
+  assert.deepStrictEqual(I.countReflogCommits('reset: moving to HEAD~1\nrebase (finish): returning to refs/heads/kdae\npull: Fast-forward'), { commits: 0, churn: 0 }, '历史修整类全部不计')
+  assert.deepStrictEqual(I.countReflogCommits('commit (initial): init'), { commits: 1, churn: 1 }, 'initial commit 计入')
+  // 事故回归（2026-08-16 dae 仓库实测）：3 逻辑 commit + 2 次 reset 重做（各跟一个
+  // recommit）+ 1 次 amend，v6 的 %H 口径计 8 次 → 误触过期 budget=3 熔断；
+  // v7 = 5 个逻辑 commit（budget 口径）/ 6 个 commit 对象（hard cap 口径）
+  assert.deepStrictEqual(
+    I.countReflogCommits('commit: fix1\ncommit: fix2\ncommit: e2e-test\nreset: moving to HEAD~1\ncommit: fix1-re\nreset: moving to HEAD~1\ncommit: fix2-re\ncommit (amend): fix2-re'),
+    { commits: 5, churn: 6 },
+    '事故回归：8 → commits 5 / churn 6',
+  )
+  passed += 6
+
+  // 9b. resolveCommitBudget：plan.md blast_radius.max_commits 兜底链
+  assert.strictEqual(I.resolveCommitBudget({ planMd: 'blast_radius:\n  max_commits: 5\n' }), 5, 'plan.md max_commits 兜底 (v7)')
+  assert.strictEqual(I.resolveCommitBudget({ planMd: 'task_sizing:\n  derived_commit_budget: 4\nblast_radius:\n  max_commits: 9\n' }), 4, 'task_sizing 优先于 max_commits')
+  assert.strictEqual(I.resolveCommitBudget({ progressMd: '---\nblast_radius:\n  commit_budget: 3\n---\n', planMd: 'task_sizing:\n  derived_commit_budget: 8\nblast_radius:\n  max_commits: 9\n' }), 3, 'progress 覆盖 plan 两级')
+  assert.strictEqual(I.resolveCommitBudget({ progressMd: '---\nsprint: 9\nstatus: complete\n---\n# trace\n', planMd: 'blast_radius:\n  branch_required: true\n  max_commits: 5\n' }), 5, 'sprint-9 实形：progress 无预算字段 → plan max_commits 兜底')
+  passed += 4
+
+  // 9c. commitBudgetSource：来源标注（deny 消息 / 冷启动 warn）
+  assert.strictEqual(I.commitBudgetSource({}), '冷启动默认 3', '无上下文 → 冷启动')
+  assert.strictEqual(I.commitBudgetSource({ progressMd: '---\nblast_radius:\n  commit_budget: 7\n---\n' }), 'progress.md blast_radius.commit_budget')
+  assert.strictEqual(I.commitBudgetSource({ planMd: 'task_sizing:\n  derived_commit_budget: 5\n' }), 'plan.md task_sizing.derived_commit_budget')
+  assert.strictEqual(I.commitBudgetSource({ planMd: 'blast_radius:\n  max_commits: 5\n' }), 'plan.md blast_radius.max_commits')
+  passed += 4
+
+  // 9d. resolveSprintContextPaths：marker 指向已完结 sprint → 回退最大编号
+  const fsx = require('node:fs')
+  const tmpBase = fsx.mkdtempSync(path.join(os.tmpdir(), 'kix-guards-v7-'))
+  const docsRoot = path.join(tmpBase, 'docs')
+  fsx.mkdirSync(docsRoot, { recursive: true })
+  const mkSprint = (n, opts) => {
+    const d = path.join(docsRoot, 'sprint-' + n)
+    fsx.mkdirSync(d, { recursive: true })
+    if (opts && opts.progressMd) fsx.writeFileSync(path.join(d, 'progress.md'), opts.progressMd)
+    if (opts && opts.done) fsx.writeFileSync(path.join(d, 'done.md'), '---\nstatus: done\n---\n')
+  }
+  assert.strictEqual(I.resolveSprintContextPaths(docsRoot, 0), undefined, '无 sprint 目录 → undefined')
+  mkSprint(6, { done: true, progressMd: '---\nblast_radius:\n  commit_budget: 3\n---\n' })
+  assert.deepStrictEqual(I.resolveSprintContextPaths(docsRoot, 6), { dir: 'sprint-6', fallbackFrom: undefined, staleAll: true }, '唯一 sprint 已完结 → staleAll')
+  mkSprint(9, { progressMd: '---\nsprint: 9\n---\n' })
+  assert.deepStrictEqual(I.resolveSprintContextPaths(docsRoot, 6), { dir: 'sprint-9', fallbackFrom: 'sprint-6', staleAll: false }, '事故回归：marker 停在已完结 sprint-6 → 回退 sprint-9')
+  assert.deepStrictEqual(I.resolveSprintContextPaths(docsRoot, 9), { dir: 'sprint-9', fallbackFrom: undefined, staleAll: false }, 'marker 直指活跃 sprint')
+  assert.deepStrictEqual(I.resolveSprintContextPaths(docsRoot, 0), { dir: 'sprint-9', fallbackFrom: undefined, staleAll: false }, '无 marker → 最大编号')
+  fsx.rmSync(tmpBase, { recursive: true, force: true })
+  passed += 5
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
