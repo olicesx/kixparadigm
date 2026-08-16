@@ -86,7 +86,7 @@
       - Dispatch: `subagent` with the `agents/*.agent.md` role body + Tri-Block (kixpower role dispatch); `subagent_fork` when inheriting this session's context.
       - Cross-vendor observation → `subagent_cross`; vision → `subagent_vision` (path+question); UI images arrive as `📷 [图片自动识别]` (dsh-vision-bridge plugin output, not user words).
       - Mechanical guards: `kix-guards` mounted (destructive git/SQL/control-plane/unknown-exec; human-confirmation in chat). Discipline: `kix-discipline` (spec gate + green gate + `kix_discipline_spec`). Handoff: `kix-orchestration` (current_sprint → sprint marker/plan/progress/blocker check). Slash: `/kixpower-*` registered, zero token.
-      - Minimal tool surface: `kix-focus` trims the resident tool set (three-channel execute/observe/interact + `kix_capability_search`/`kix_capability_call`). Scope-resident tools (job_*/subagent control/subagent tiers) **are callable directly**; workflow/goal/ralph are not mounted by default (enable + restart); trimmed GLOBAL tools (MCP etc.) → `kix_capability_search` the catalog first, then `kix_capability_call` to proxy (full gate pipeline). Resident tools are called directly.
+      - Minimal tool surface: `kix-focus` trims the resident tool set (three-channel execute/observe/interact + `kix_capability_search`/`kix_capability_call`/`kix_tool_activate`). **Resident (call directly)**: file/execution, ask_user_question/todo_write/skill, subagent + subagent_cross (three-channel core), subagent control, discovery entry. **Not mounted by default (progressive)**: subagent_lite/thinker/vision/fork, jobs, goal → activate via `kix_tool_activate { tool }` (callable next turn, `kix_tool_deactivate` to unmount); web_search is on-demand like MCP (proxy via `kix_capability_call`); workflow/ralph depend on isolate-realm services (dynamic activation unavailable) → remove `disabled` and restart when needed.
       - Native first: `workflow` for multi-stage, `goal` for long-horizon, plan mode for planning, `pwsh run_in_background`+`job_output` for long tasks. PTC: `run_code` only for mechanical multi-step; verification/observation stay native (evidence replayable); on deny, stop — never swallow a denial.
 
       ## Resources
@@ -138,6 +138,7 @@
 # chooses is whether its agent can collect and stop background work at all.
 - id: tool-jobs
   name: '@deepseek-ai/dsh-tool-jobs'
+  disabled: true
 
 # ── skills ──────────────────────────────────────────────────────────────────
 
@@ -291,6 +292,7 @@
     # by plugins/kix-cost.js.
     - id: tool-subagent-lite
       name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
       config:
         provider: spawn
         toolName: subagent_lite
@@ -320,6 +322,7 @@
     # orthogonal verification uses `subagent_cross` (auto inverted-vendor routing).
     - id: tool-subagent-thinker
       name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
       config:
         provider: spawn
         toolName: subagent_thinker
@@ -370,6 +373,7 @@
     # read_image-gate bounce round-trip entirely).
     - id: tool-subagent-vision
       name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
       config:
         provider: spawn
         toolName: subagent_vision
@@ -382,6 +386,7 @@
 
     - id: tool-subagent-fork
       name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
       config:
         provider: fork
         toolName: subagent_fork
@@ -411,17 +416,20 @@
         enableRunInBackground: false
         maxDepth: provider-managed
 
+    # 2026-08-15 trimming decision: workflow/ralph/goal are low-frequency heavy
+    # → disabled by default. goal activates via kix_tool_activate (measured
+    # 2026-08-16: activate → callable next turn → deactivate, closed loop).
+    # workflow/ralph depend on workflowEngine (provided inside this isolate
+    # realm); a dynamically mounted fiber outside the realm cannot resolve it,
+    # so activation fails honestly — remove `disabled` and restart when needed.
+    # The worker row MUST stay inside this realm: moving it to the agent root
+    # broke the UI after restart (empty commands/list, settings Failed to
+    # fetch, polling storm, workspace selection broken) — reverted 2026-08-16.
     - id: workflow-worker-thread
       name: '@deepseek-ai/dsh-workflow-worker-thread'
       config:
         provider: spawn
 
-    # 2026-08-15 trimming decision: workflow/ralph are low-frequency heavy
-    # orchestration → disabled by default (kix's main path is the subagent
-    # three-channel + CEO team; restrict cannot trim scope tools, so disabled
-    # is the only trimming lever — the main agent no longer receives these two
-    # large schemas every turn). To enable workflow fan-out / ralph iteration:
-    # remove `disabled` and restart. The worker row stays for immediate use.
     - id: tool-workflow
       name: '@deepseek-ai/dsh-tool-workflow'
       disabled: true
