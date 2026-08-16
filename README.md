@@ -98,7 +98,7 @@ kix 体系分两层，本仓库把两层 + 生态依赖一次性装齐：
 | **认知层（怎么思考）** | `kixparadigm` | 常驻认知范式：三通道交叉验证、阶段二相性、规则是负债、需求三检（不迎合用户）、写码前决策链、AI 盲点补足。每个会话自动生效 |
 | **执行层（怎么执行）** | `kixpower` | **编曲模型（v1.2.9）**：主模型自由挑成员+流程——dev/qa/reviewer 三个 activatable 成员档（人名=契约句柄）+ kixpower Sprint 流程（重路径）、DAG 拓扑、4 层 loop、可验证 gate；四条不变量地板（观察独立性/协调主线程/视角来自 prompt/门禁不变） |
 | **生态辅助** | `handoff` / `write-a-skill` / `improve-codebase-architecture` 等 17 技能 | 会话交接、技能创建、架构改进、TDD/教学/排查等通用方法论 |
-| **机械门禁** | `kix-guards` 插件 | commit budget、feature branch、force push、危险 SQL、控制面文件保护、人类确认点（232 组断言；v5 聊天内提问 + v4 GitHub 只读误拦修复；v6 gh CLI 写保护 + 重复尝试自动拒绝；v7 commit budget 三重修复；v8 终端 SQL 命令位判定 + 控制平面只读放行 + GitHub 前缀可配置） |
+| **机械门禁** | `kix-guards` 插件 | commit budget、feature branch、force push、危险 SQL、控制面文件保护（210 组断言；v9 起发布/评论/普通 push 等确认类门禁降为软约束，不再提问；硬 deny 仅保留 force push / main 保护 / 破坏性 SQL / 控制平面写 / 删除远端数据等不可逆破坏） |
 | **纪律机制化** | `kix-discipline` 插件 | 需求三检契约 gate + 验证 gate：实现编辑前查 spec 契约、回合结束无测试提醒、`kix_discipline_spec` 契约工具（v1.2.9 新增可选 mode 字段=编曲留痕：成员组合+一句理由）、`/kix-discipline` 命令（68 组断言，2026-08-16 插件化改造 P0；拒绝/转交弹问 v2；mode 占位回读防假值 + 标题正则转义修复 2026-08-17） |
 | **编排交接门禁** | `kix-orchestration` 插件 | subagent 交接前校验 sprint marker / plan+progress / blocker / QA 完成度；v2 QA 返回侧一致性校验（subagent/end）；v3 producer_closeout 收尾证据链；v4 sleep 空转等待子代理一次性提醒（**v4.1 平台无关**：命令语义双形态恒测，不按工具名门控；WSL2 实测阳性/阴性双通过）；v8 QA 完成声明负向语义防误报（共 69 组断言） |
 | **极简+渐进披露** | `kix-focus` 插件 | 三层递进：tools.restrict 把每轮工具面从 85 个（~108KB schema）裁到 ~18 个常驻核心集；`kix_capability_search` 按需查目录（v4 带参数名元数据 + 长尾兜底组：新装工具零配置即目录可达）+ `kix_capability_call` 代理执行（走完整门禁管线）；kix_tool_activate 按需激活编曲成员档（v1.2.9 枚举同步回归防线 + **symlink 部署跨平台解析修复**：候选根链 argv[1]→realpath→插件文件，WSL2 E2E 两轮实测闭环）；与 PTC/Code Mode 协同（73 组断言，2026-08-16 P4） |
@@ -110,6 +110,8 @@ kix 体系分两层，本仓库把两层 + 生态依赖一次性装齐：
 
 **关系一句话**：kixparadigm 给 AI「怎么思考」的自由度与盲点补足，kixpower 给「怎么执行」的结构化团队编排，门禁与识图插件把 DSH 变成 kix 的完整宿主。
 
+> **v1.2.11 软约束整改（DSH 版）**：发布/评论/合并/破坏默认不做；用户明确指示（如「评论到PR」）即已决策，直接执行，kix-guards 不再逐次提问。提问只留给真正缺失的决策信息。
+>
 > **v1.2.10 整改（DSH 版）**：按 KIX 自审修复「0% 误报」反例——QA 完成声明排除负向表述；控制平面门禁只拦写意图（`grep/cat/ls ~/.dsh` 放行）；终端 SQL 改为 DB 客户端命令位 + SQL payload 语句级判定；GitHub MCP 前缀可配置；跨厂商路由跳过未注册偏好候选；中英包卸载不再互相删除共享 vision-bridge；`engines` 对齐 `process.getBuiltinModule` 最低版本；常驻 persona 二次还债压至约 1.8K token（CN，原 3.1K）；新增 persona 预算/文档计数/双语插件一致性守护与 CI；vision-bridge 补纯逻辑回归并修复完整代码围栏剥离。
 
 ---
@@ -151,7 +153,7 @@ kixparadigm/
 ## 🧪 开发与验证
 
 ```bash
-npm test                                  # 一致性守护 + 全插件回归：installer 12 + vision-bridge 6 + 门禁 232 + 纪律 68 + 编排 69 + 聚焦 73 + 成本 28 + 路由 68 断言（+ commands 6 组）
+npm test                                  # 一致性守护 + 全插件回归：installer 12 + vision-bridge 6 + 门禁 210 + 纪律 68 + 编排 69 + 聚焦 73 + 成本 28 + 路由 68 断言（+ commands 6 组）
 node scripts/check-dsh-consistency.cjs       # 单独跑 persona 预算/文档计数/双语插件一致性守护
 node scripts/verify-guards.js             # 已安装 preset 与 bundle 门禁对照
 node scripts/verify-vision-bridge-resolution.cjs  # vision-bridge 加载链全链路

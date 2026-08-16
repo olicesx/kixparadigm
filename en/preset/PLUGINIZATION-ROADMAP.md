@@ -147,7 +147,7 @@ session end) — semantically aligned with skill on-demand discovery, avoiding b
 | Discipline rules carrier | prompt preaching | **mechanized (kix-discipline/kix-orchestration)** | mechanism |
 | Plugins | 5 | **8** (guards/discipline/orchestration/focus/cost/route/commands/stalled) | ≥6 |
 | Per-turn tool surface | ~85 tools / ~108KB schema | **~18 resident + search/call disclosure** | trimmed |
-| Assertions | 164+24+57 | **v1.2.10: installer 12 + guards 230 + cost 28 + route 68 + commands 6 groups + discipline 68 + orchestration 69 + focus 73** | green + new |
+| Assertions | 164+24+57 | **v1.2.11: installer 12 + vision 6 + guards 210 + cost 28 + route 68 + commands 6 groups + discipline 68 + orchestration 69 + focus 73** | green + new |
 | Cognition layer | kept | kept, slimmed | keep slimmed |
 | Copilot residue | hardcoded models/hooks | **cleared (review prompt, 6 agents, Guardrails)** | cleared |
 

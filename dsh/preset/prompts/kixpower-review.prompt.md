@@ -239,27 +239,15 @@ prompt: |
 
 ### 阶段 3：发布 GitHub pending review
 
-#### 🔴 步骤 0：发布前用户确认 gate（MUST，不可跳过）
+#### 步骤 0：发布软约束（不提问、不阻断）
 
-> 所有评论内容（行内 + PR 级汇总）准备完毕后、调用 GitHub 写工具**之前**，orchestrator 必须调用 `ask_user_question` 让用户确认。禁止"准备好就直接发布"。
+> 评论内容（行内 + PR 级汇总）准备完毕后**默认不发布**。只有当前用户消息中**明确包含发布指示**（如「评论到PR」「发布评论」「提交 review」「approve」）时，才进入步骤 1-7 调用 GitHub 写工具。
 
-> **全权委托语义（2026-08-12 实证）**：用户"全权委托/自由审阅"授权**执行**审查，**不豁免**本确认 gate；仅当用户显式声明豁免（如"跳过发布确认"）才可跳过。委托 ≠ 授权默认跳过安全 gate。
-
-**确认 gate 调用规范**：
-
-- 问题数量：1 个
-- `header`: `post-gate`
-- `question`: `即将向 PR #<N> 发布 <X> 条行内评论，并提交 <APPROVE|REQUEST_CHANGES|COMMENT> 汇总 review，是否继续？`
-- `message`（markdown 上下文）：附上评论摘要表（严重级别 / 文件 / 一句话主题），让用户能在不展开全文的情况下判断
-- `options`：
-  - `发布 <APPROVE|REQUEST_CHANGES|COMMENT>`（recommended）—— 明确授权该 GitHub review state 后 POST
-  - `我想先看完整内容` —— orchestrator 把每条评论完整 body 输出到 chat，用户阅读后再触发第二次确认
-  - `取消发布` —— 不 POST，保留 `docs/reviews/pr-<N>-draft.md`，结束模式 4
-- `allowFreeformInput`: true（用户可输入修改建议，orchestrator 据此调整后重新触发 gate）
-
-**gate 通过后才进入步骤 1-7**。用户选择"取消"则保存草稿、不再 POST；选择"先看完整内容"则展示后必须再次 gate 确认才能 POST。
-
-若带 `--save`，summary commit 完成后必须再问一个独立 `push-gate`：明确目标 PR head branch、commit SHA，并提供“推送 / 仅保留本地 / 取消”选项。评论发布确认不得替代 push 授权。
+- 用户说「审一下 PR」或 `/kixpower-review <N>` 只表示执行审查，不代表授权发布；此时输出完整评论草稿与摘要，结束回合等待用户明确指示。
+- 一旦用户明确指示，**直接发布，不再调用 `ask_user_question` 重复确认**。提问只用于真正缺失的决策信息（如不知道发到哪个 PR、应 APPROVE 还是 COMMENT），不用于用户已经做过的发布决策。
+- 用户要求先看全文时，先输出全文再等待；用户随后明确说发布，即发布。
+- 若带 `--save`：本地 summary commit 是否 push 同样默认不 push；用户明确说「推送」才 push，不再单独提问。
+- 用户明确豁免或全权委托含发布语义时，按其措辞执行；无发布语义则仍默认不发布。
 
 #### 🔴 发布纪律（POST 非幂等，2026-07-31 实证）
 
@@ -406,10 +394,10 @@ body 模板（通过类）：
 ## `--approve` 模式（可选）
 
 用户输入 `/kixpower-review --approve <N>`：
-- 该 flag 仅预选阶段 3 的 `submit_pending(APPROVE)`；执行仍走同一 pending review 事务，不跳过 post-gate 用户确认
-- 仅当 0 blocking、0 major、deterministic gate 明确通过，且两个独立 reviewer 均未发现 blocking/major 时，post-gate 才允许选择正式 APPROVE
+- 该 flag 已含明确发布授权：审查完成后直接发布 APPROVE review，不再重复确认；执行仍走同一 pending review 事务
+- 仅当 0 blocking、0 major、deterministic gate 明确通过，且两个独立 reviewer 均未发现 blocking/major 时，才允许发布正式 APPROVE
 - 任一条件不满足 → 拒绝 approve，改为 COMMENT/REQUEST_CHANGES 并列出原因
-- 未带 flag 时，用户也可在 post-gate 明确选择正式 APPROVE；禁止用 `gh pr review --approve` 另建第二个 review（PR#2980 重复发布事故模式）
+- 未带 flag 时，用户后续明确说「approve/发布 APPROVE」即授权正式 APPROVE；禁止用 `gh pr review --approve` 另建第二个 review（PR#2980 重复发布事故模式）
 
 ## 与模式 1/2/3 的关系
 
