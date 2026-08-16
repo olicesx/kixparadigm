@@ -27,6 +27,97 @@ const PRESET_DIR = CFG.presetDir || 'dsh/preset'
 const BRIDGE_DIR = CFG.bridgeDir || 'dsh/vision-bridge'
 const BRIDGE_NAME = 'dsh-vision-bridge'
 const PATCH_ID = 'dsh-vision-bridge'
+const BRIDGE_PATCH_LINES = [
+  '# ── dsh-vision-bridge（无缝识图，由 kixparadigm npm 包安装）──────────────',
+  '# 主模型无视觉时：输入框粘贴/拖入图片 → 自动调 GLM-4.6V 转文本描述后提交。',
+  '# 依赖 zai-vision provider 配置（settings.yaml 的 llm-pi-ai.providers.zai-vision）。',
+  '- insert:',
+  '    - id: dsh-vision-bridge',
+  '      name: dsh-vision-bridge',
+]
+
+/**
+ * Safely add the vision bridge to a DSH patch-list document.
+ *
+ * DSH initializes this file as the complete YAML value `[]`. Appending a
+ * block-sequence item after that value creates a second YAML root and prevents
+ * the profile from loading. Treat `[]` as an empty array to replace, repair the
+ * exact legacy `[]` + block-list shape written by <=1.2.8, and only append to
+ * a recognizable block-style top-level sequence.
+ */
+function mergeVisionBridgePatch(text) {
+  const newline = text.includes('\r\n') ? '\r\n' : '\n'
+  const lines = text.split(/\r?\n/)
+  const semantic = []
+  for (let index = 0; index < lines.length; index++) {
+    const raw = lines[index]
+    const trimmed = raw.trim()
+    if (trimmed && !trimmed.startsWith('#')) semantic.push({ index, raw, trimmed })
+  }
+
+  const bridgePattern = new RegExp(`^\\s*- id:\\s*${PATCH_ID}\\s*$`, 'm')
+  const hasBridge = bridgePattern.test(text)
+  const renderBlock = () => BRIDGE_PATCH_LINES.join(newline)
+  const appendBlock = (current) => {
+    if (!current) return `${renderBlock()}${newline}`
+    if (current.endsWith(`${newline}${newline}`)) return `${current}${renderBlock()}${newline}`
+    if (current.endsWith(newline)) return `${current}${newline}${renderBlock()}${newline}`
+    return `${current}${newline}${newline}${renderBlock()}${newline}`
+  }
+  const isBlockList = (entries) => {
+    if (!entries.length || !/^-(?:\s|$)/.test(entries[0].raw)) return false
+    return entries.every(({ raw, trimmed }) => {
+      if (trimmed === '---' || trimmed === '...') return false
+      return /^\s/.test(raw) || /^-(?:\s|$)/.test(raw)
+    })
+  }
+  const invalidRoot = () => {
+    throw new Error('cordis.patch.yml must contain one top-level YAML array; refusing to modify an unrecognized document')
+  }
+
+  if (semantic.length === 0) {
+    return { text: appendBlock(text), changed: true }
+  }
+
+  if (semantic[0].trimmed === '[]') {
+    if (semantic.length === 1) {
+      const replacement = []
+      if (semantic[0].index > 0 && lines[semantic[0].index - 1].trim() !== '') replacement.push('')
+      replacement.push(...BRIDGE_PATCH_LINES)
+      lines.splice(semantic[0].index, 1, ...replacement)
+      const merged = lines.join(newline)
+      return { text: merged.endsWith(newline) ? merged : `${merged}${newline}`, changed: true }
+    }
+
+    // Self-heal the exact malformed shape produced by the old byte-append:
+    // one completed `[]` root followed by a block-style patch list.
+    const legacyTail = semantic.slice(1)
+    if (!isBlockList(legacyTail)) return invalidRoot()
+    lines.splice(semantic[0].index, 1)
+    const repaired = lines.join(newline)
+    if (hasBridge) {
+      return { text: repaired.endsWith(newline) ? repaired : `${repaired}${newline}`, changed: true }
+    }
+    return { text: appendBlock(repaired), changed: true }
+  }
+
+  if (!isBlockList(semantic)) return invalidRoot()
+  if (hasBridge) return { text, changed: false }
+  return { text: appendBlock(text), changed: true }
+}
+
+/** Keep cordis.patch.yml as a valid empty patch-list after removing our entry. */
+function restoreEmptyPatchRoot(text) {
+  const newline = text.includes('\r\n') ? '\r\n' : '\n'
+  const hasSemanticContent = text.split(/\r?\n/).some((line) => {
+    const trimmed = line.trim()
+    return trimmed && !trimmed.startsWith('#')
+  })
+  if (hasSemanticContent) return text
+
+  const comments = text.replace(/[\s\r\n]+$/, '')
+  return comments ? `${comments}${newline}${newline}[]${newline}` : `[]${newline}`
+}
 
 function dshHome() {
   return process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
@@ -138,15 +229,24 @@ function installVisionBridge(log) {
   const profile = path.join(home, 'profiles', 'web')
   const source = path.join(profile, 'plugins', 'dsh-vision-bridge')
   const junction = path.join(profile, 'node_modules', 'dsh-vision-bridge')
+  const bridgeSource = path.join(PKG_ROOT, BRIDGE_DIR)
+  const patch = path.join(profile, 'cordis.patch.yml')
 
-  if (!fs.existsSync(path.join(PKG_ROOT, BRIDGE_DIR))) {
+  if (!fs.existsSync(bridgeSource)) {
     log.warn('本包不含 vision-bridge 源码，跳过')
     return
   }
-  log.step(`安装 vision-bridge → ${source}`)
-  copyTree(path.join(PKG_ROOT, BRIDGE_DIR), source, log)
 
-  const pkg = JSON.parse(fs.readFileSync(path.join(source, 'package.json'), 'utf8'))
+  // Validate and compose the patch before copying files or creating links. An
+  // invalid user document must fail without leaving a partial installation.
+  const existed = fs.existsSync(patch)
+  const current = existed ? fs.readFileSync(patch, 'utf8') : ''
+  const merged = mergeVisionBridgePatch(current)
+
+  log.step(`安装 vision-bridge → ${source}`)
+  copyTree(bridgeSource, source, log)
+
+  const pkg = JSON.parse(fs.readFileSync(path.join(bridgeSource, 'package.json'), 'utf8'))
   if (!pkg.exports || !pkg.exports['./package.json']) {
     log.warn('package.json exports 缺 ./package.json（client 半将无法注册），请检查源码')
   }
@@ -155,29 +255,14 @@ function installVisionBridge(log) {
   ensureLink(junction, source, log)
 
   log.step('登记 cordis.patch.yml 挂载条目')
-  const patch = path.join(profile, 'cordis.patch.yml')
-  const block = [
-    '',
-    '# ── dsh-vision-bridge（无缝识图，由 kixparadigm npm 包安装）──────────────',
-    '# 主模型无视觉时：输入框粘贴/拖入图片 → 自动调 GLM-4.6V 转文本描述后提交。',
-    '# 依赖 zai-vision provider 配置（settings.yaml 的 llm-pi-ai.providers.zai-vision）。',
-    '- insert:',
-    '    - id: dsh-vision-bridge',
-    '      name: dsh-vision-bridge',
-    '',
-  ].join('\n')
-  if (!fs.existsSync(patch)) {
-    fs.mkdirSync(path.dirname(patch), { recursive: true })
-    fs.writeFileSync(patch, block, 'utf8')
+  if (!existed) fs.mkdirSync(path.dirname(patch), { recursive: true })
+  if (merged.changed) fs.writeFileSync(patch, merged.text, 'utf8')
+  if (!existed) {
     log.ok(`已创建 ${patch}`)
+  } else if (merged.changed) {
+    log.ok('已安全合并挂载条目')
   } else {
-    const text = fs.readFileSync(patch, 'utf8')
-    if (new RegExp(`id:\\s*${PATCH_ID}\\s*$`, 'm').test(text)) {
-      log.ok('挂载条目已存在')
-    } else {
-      fs.appendFileSync(patch, block, 'utf8')
-      log.ok('已追加挂载条目')
-    }
+    log.ok('挂载条目已存在')
   }
 }
 
@@ -234,7 +319,7 @@ function uninstall(log) {
       if (lines[end] !== undefined && lines[end].trim() === '') end++
       const rest = [...lines.slice(0, start), ...lines.slice(end)].join('\n')
         .replace(/\n{3,}/g, '\n\n').trimEnd() + '\n'
-      fs.writeFileSync(patch, rest, 'utf8')
+      fs.writeFileSync(patch, restoreEmptyPatchRoot(rest), 'utf8')
       log.ok(`已从 ${patch} 移除挂载条目`)
     } else log.info('挂载条目不存在，跳过')
   }
@@ -358,4 +443,4 @@ function cli(argv) {
 
 if (require.main === module) cli(process.argv.slice(2))
 
-module.exports = { cli, dshHome, installPreset, installVisionBridge, uninstall, doctor, copyTree }
+module.exports = { cli, dshHome, installPreset, installVisionBridge, uninstall, doctor, copyTree, mergeVisionBridgePatch, restoreEmptyPatchRoot }
