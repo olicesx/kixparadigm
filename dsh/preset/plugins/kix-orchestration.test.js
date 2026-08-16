@@ -553,6 +553,47 @@ await ok('sleep 提醒不烧 handoff remind 槽位（独立标志）', (async ()
     && d.additionalContexts[0].content.some((c) => c.text.includes('marker')) // handoff reasons 而非 sleep 文案
 })())
 
+// ── 10. Tri-Block [CONTEXT] Sprint N 容错解析（v10.1，2026-08-17）────────
+// 背景：交接门禁只对 prompt 显式 current_sprint: N 契约行生效；模型用
+// Tri-Block 分派时可能只在 [CONTEXT] 段写"Sprint N"而漏写契约行 → 旧实现
+// sprint=0 门禁静默放行。无契约行时从 [CONTEXT] 段兜底解析（范围收窄防误触发，
+// 契约行永远优先）。
+section('Tri-Block [CONTEXT] Sprint N 容错解析（v10.1）')
+await ok('无契约行 + [CONTEXT] 段 Sprint 3 → 兜底解析 sprint=3', (() => {
+  const m = I.extractHandoffMeta('[CONTEXT]\n项目 @ worktree / Sprint 3\n[TASK]\n实现子任务')
+  return m.sprint === 3
+})())
+await ok('契约行与 [CONTEXT] 段并存 → 契约行优先（sprint=2 非 3）', (() => {
+  const m = I.extractHandoffMeta('[CONTEXT]\ncurrent_sprint: 2\nSprint 3 已在进行\n[TASK]')
+  return m.sprint === 2
+})())
+await ok('[CONTEXT] 段 Sprint 单词在行中（cross-lingual 标签区）→ 命中', (() => {
+  const m = I.extractHandoffMeta('[CONTEXT] 项目 / Sprint 5 / 栈\n[TASK]')
+  return m.sprint === 5
+})())
+await ok('无 [CONTEXT] 段的正文 Sprint 叙述 → 不触发（sprint=0）', (() => {
+  const m = I.extractHandoffMeta('请 review Sprint 2 的交付\n[TASK]\n只读审查')
+  return m.sprint === 0
+})())
+await ok('[CONTEXT] 段无 Sprint 字样 → sprint=0', (() => {
+  const m = I.extractHandoffMeta('[CONTEXT]\n项目 @ repo\n[TASK]\n观察')
+  return m.sprint === 0
+})())
+await ok('[TASK] 段 Sprint 叙述不进 [CONTEXT] 提取范围 → 不触发', (() => {
+  const m = I.extractHandoffMeta('[CONTEXT]\n项目 @ repo\n[TASK]\n处理 Sprint 9 的缺陷')
+  return m.sprint === 0
+})())
+await ok('checkHandoff 集成：Tri-Block [CONTEXT] Sprint N + 完整工作区 → 放行', (() => {
+  const root = makeWorkspace({ markerValue: 1 })
+  const r = I.checkHandoff({ prompt: '[CONTEXT]\n项目 @ repo / Sprint 1\n[TASK]\n实现', workspaceRoot: root })
+  return r.ok === true && r.meta.sprint === 1
+})())
+await ok('checkHandoff 集成：Tri-Block [CONTEXT] Sprint N 与 marker 不一致 → 拦截', (() => {
+  const root = makeWorkspace({ markerValue: 2 })
+  const r = I.checkHandoff({ prompt: '[CONTEXT]\nSprint 1\n[TASK]\n实现', workspaceRoot: root })
+  return r.ok === false && r.reasons.some((x) => x.includes('不一致'))
+})())
+
 // ── 清理临时工作区（2026-08-17：曾泄漏 /tmp/kix-orch-test-* 593 个目录）──
 for (const ws of createdWorkspaces) fs.rmSync(ws, { recursive: true, force: true })
 
