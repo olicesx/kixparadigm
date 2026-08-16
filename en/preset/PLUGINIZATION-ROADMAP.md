@@ -110,21 +110,30 @@ proxy calls can still execute trimmed tools (that is the disclosure semantics: c
 present, schema not resident).
 
 **Scope-tool trimming decision (2026-08-15, 2nd measurement pass + 3rd on-demand
-activation)**: restrict only trims GLOBAL tools; preset-scope tools (workflow/goal/ralph/
-job_*/subagent-control) are auto-visible and cannot be trimmed; scope tools cannot be proxied
-via capability_call (the global view cannot see scope-local names). Solution: **disabled by
-default + plugin on-demand activation** (kix-focus's `kix_tool_activate`: runtime `ctx.plugin`
-mounts the package — `createRequire(process.argv[1])` resolves dsh deps, portable within a
-deployment; callable directly next turn; `kix_tool_deactivate` unmounts; auto-cleaned at
-session end) — semantically aligned with skill on-demand discovery, avoiding both
-"fully disabled = capability lost" and "resident = schema cost every turn":
-- **Disabled + activatable**: tool-workflow / tool-ralph / tool-goal (low-frequency heavy;
-  main agent no longer receives their large schemas every turn; zero-restart activation;
-  measured: workflow 7-way parallel audit works)
-- **Mounted + resident**: tool-jobs / tool-subagent-control (background-job collection and
-  three-channel observer management are daily paradigm paths); exit_plan_mode (plan mode)
-- kix-focus catalog marks orchestration groups "not mounted by default; activate via
-  kix_tool_activate"
+activation; revised 2026-08-17 per user decision A+B)**: restrict only trims GLOBAL
+tools; preset-scope tools (workflow/goal/ralph/job_*/subagent-control) are auto-visible
+and cannot be trimmed; scope tools cannot be proxied via capability_call (the global view
+cannot see scope-local names). The plan evolved:
+- 2026-08-16 progressive surface (plan A): **disabled by default + plugin on-demand
+  activation** (kix-focus's `kix_tool_activate`: runtime `ctx.plugin` mounts the package —
+  `createRequire(process.argv[1])` resolves dsh deps, portable within a deployment; callable
+  directly next turn; `kix_tool_deactivate` unmounts; auto-cleaned at session end).
+  Measured lesson: with tool-jobs disabled, even STARTING a background job failed —
+  `run_in_background` answered "background jobs unavailable: no job controller serves
+  this agent" — persona and composition contradicted each other.
+- **2026-08-17 (current; user principle: simple mechanical tools without cognitive burden
+  stay resident, tools with cognitive burden get mechanized auto-activation)**:
+  - **Resident**: tool-jobs (job_* is a pure mechanical control surface — start/collect/
+    stop running work, no decision burden) + tool-subagent-control + exit_plan_mode;
+  - **Auto-activate on first use**: subagent tiers (lite/thinker/vision/fork/reviewer/qa/dev)
+    and goal — `kix_capability_call { tool: subagent_qa, arguments: {…} }` mounts the
+    package via `ctx.plugin` and continues executing; activation is done by the **mechanism**,
+    the model never has to remember to pre-activate; directly callable from the next turn;
+    `kix_tool_activate` remains as explicit pre-activation;
+  - **Still disabled (dynamic activation unavailable; remove `disabled` + restart)**:
+    tool-workflow (isolate-realm dependency; already mounted in the dsh edition),
+    tool-ralph (en edition).
+- kix-focus catalog marks the tiers group "auto-activate on first use".
 
 **E2E verification (✅ done, 2026-08-15, fresh session after restart)**:
 
