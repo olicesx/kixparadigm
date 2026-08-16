@@ -637,8 +637,13 @@ module.exports = {
     ])
 
     // 危险 git 子命令（写操作；branch 亦含破坏性 -D 分支删除）
+    // v10.1（2026-08-17，部署 E2E 复验实锤）：补上 `commit`——原清单缺它，
+    // isGitWrite() 对纯 `git commit` 返回 false → 2b 门禁整体跳过 → 分支/
+    // 预算检查（checkGitCommit，v10 的 cd 解析落点）对普通 commit 永不执行，
+    // main 分支直接 commit 静默放行（此前 v10 修复只覆盖了 resolveRepoRoot，
+    // 单测也只测 repoRootFromText 未测整链，缺陷长期潜伏）。
     const DANGEROUS_GIT = new Set([
-      'push', 'reset', 'rebase', 'merge', 'cherry-pick', 'revert', 'clean',
+      'push', 'commit', 'reset', 'rebase', 'merge', 'cherry-pick', 'revert', 'clean',
       'checkout', 'restore', 'stash', 'branch', 'rm', 'mv', 'gc', 'prune', 'reflog',
       'update-ref', 'symbolic-ref', 'commit-tree', 'fast-import',
       'hash-object', 'replace', 'am', 'apply', 'pull',
