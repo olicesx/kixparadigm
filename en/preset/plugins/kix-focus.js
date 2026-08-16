@@ -161,6 +161,19 @@ const CAPABILITY_GROUPS = [
   },
 ]
 
+// ── 长尾 fallback 组（2026-08-17 决策：发现面补兜底，不建动态分组系统）──
+// 未被任何 CAPABILITY_GROUPS 覆盖、且不在常驻集的按需工具（新装的非
+// mcp__* 命名空间全局工具、未归类全局/scope 工具等长尾），由
+// searchCapabilities 自动归入此组——保证「能力存在即目录可达」的装即达语义。
+// 只动态列成员（toolCount/exampleTools 实时），不做语义分组：title/hint 是
+// 设计决策，schema 推不出来；全动态分组 = 过度工程（为低频长尾建推导系统）。
+const FALLBACK_GROUP = {
+  id: 'other',
+  title: '其他按需工具（长尾/新命名空间）',
+  hint: '未归类按需工具（全局工具用 kix_capability_call 代理调用，scope 工具可直接调用）；希望常驻可在 kix-focus 配置 extraResidentTools 追加',
+  tools: [], // 动态：searchCapabilities 按实际未覆盖成员填充
+}
+
 // 纯函数：判断工具是否按需（不在常驻集）
 function isOnDemand(name) {
   if (RESIDENT_TOOLS.has(name)) return false
@@ -214,6 +227,31 @@ function searchCapabilities(schemas, query) {
         toolCount: members.length,
         exampleTools: members.slice(0, 3).map((m) => m.name),
         tools: group.tools,
+      })
+    }
+  }
+  // 长尾兜底：未被上述分组覆盖（前缀不匹配 + 精确名不匹配）且不在常驻集的
+  // 按需工具，自动归入 fallback 组。动态收集，新装工具零配置即目录可达。
+  const covered = new Set()
+  for (const group of CAPABILITY_GROUPS) {
+    if (group.tools.some((t) => t.endsWith('__'))) {
+      const prefix = group.tools[0]
+      for (const s of schemas) if (s.name && s.name.startsWith(prefix)) covered.add(s.name)
+    } else {
+      for (const t of group.tools) covered.add(t)
+    }
+  }
+  const fallbackMembers = schemas.filter((s) => s.name && !covered.has(s.name) && !RESIDENT_TOOLS.has(s.name))
+  if (fallbackMembers.length > 0) {
+    const matched = q === '' || fallbackMembers.some((s) => s.name.toLowerCase().includes(q))
+    if (matched) {
+      results.push({
+        id: FALLBACK_GROUP.id,
+        title: FALLBACK_GROUP.title,
+        hint: FALLBACK_GROUP.hint,
+        toolCount: fallbackMembers.length,
+        exampleTools: fallbackMembers.slice(0, 3).map((m) => m.name),
+        tools: fallbackMembers.slice(0, 8).map((m) => m.name),
       })
     }
   }
@@ -604,6 +642,7 @@ module.exports.__internals = {
   RESIDENT_TOOLS,
   RESTRICT_ALLOW,
   CAPABILITY_GROUPS,
+  FALLBACK_GROUP,
   ACTIVATABLE_TOOLS,
   isOnDemand,
   projectToolMeta,

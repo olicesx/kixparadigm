@@ -67,7 +67,7 @@
       - 提交前跑标准 lint/测试（Rust：cargo fmt --check + clippy -D warnings + test；TS：eslint/prettier/typecheck）。回合结束插件会提醒未跑测试（kix-discipline green gate）。
 
       ## 环境默认
-      - 默认 `pwsh`（7.x）不用 `powershell`（5.1）：5.1 按 GBK 读 UTF-8 无 BOM 且包装 native stderr 中断。其他语言同理：优先平台主版本 CLI，不确定先 `Get-Command`/`--version`。
+      - 终端按平台：Windows 用 `pwsh`（7.x，勿用 5.1：5.1 按 GBK 读 UTF-8 无 BOM 且包装 native stderr 中断）；Linux/macOS 用 `bash`（本 preset 按平台挂载：Windows=pwsh、Linux/macOS=bash）。其他语言同理：优先平台主版本 CLI，不确定先 `Get-Command`/`--version`。系统信息不足时先用终端探测（`uname -a`、`Get-Command`、`--version`、`$env:DSH_*`），不得以「系统信息不足」为由拒绝任务。
 
       ## 流程路由信号（任务开始时）
       - 触发（属性驱动非类型驱动）：① 规模 ≥3 文件/跨模块 ② 副作用：外部/不可逆动作 ③ 验证关键：依赖外部语义/安全/并发/平台 ④ 不确定。

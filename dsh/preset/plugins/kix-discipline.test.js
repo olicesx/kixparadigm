@@ -18,6 +18,7 @@ const fs = require('node:fs')
 // ── mock ctx ───────────────────────────────────────────────────────────────
 const listeners = {}
 let userQuestionsMock = null
+let sessionQueryMock = null
 let configMock = { intensity: 'remind' }
 const ctx = {
   config: configMock,
@@ -25,6 +26,7 @@ const ctx = {
   get(name) {
     if (name === 'userQuestions') return userQuestionsMock
     if (name === 'sandboxPolicy') return { workspaceRoot: os.tmpdir() }
+    if (name === 'sessionQuery') return sessionQueryMock
     return undefined
   },
   on(event, cb) {
@@ -73,6 +75,13 @@ function dispatchPost(name, args, result) {
 function dispatchTurn() {
   steered = []
   const agent = { id: 'test-agent', session: { header: sessionHeader }, steer(msg) { steered.push(msg) } }
+  return turnStopping[0]({ agent, turn: 1, signal: undefined })
+}
+// v2：带 session.id + 可控 sessionQuery 表面的 turn 派发（deflection 弹问测试）
+function dispatchTurnFor(agentId, sessionId, surface) {
+  sessionQueryMock = surface ? { readSurface: async () => surface } : null
+  steered = []
+  const agent = { id: agentId, session: { id: sessionId, header: sessionHeader }, steer(msg) { steered.push(msg) } }
   return turnStopping[0]({ agent, turn: 1, signal: undefined })
 }
 
@@ -265,6 +274,59 @@ ok('disabled 后 gate 静默', (async () => {
   const d = await dispatchPreAs('edit', { file_path: 'src/i.ts' }, 'g10')
   cmd.handler({ agent: { id: 'g10', session: { header: sessionHeader } }, rawInput: 'on' })
   return d.kind === 'allow'
+})())
+
+// ── 7. v2：拒绝/转交弹问（用户反馈 2026-08-16）─────────────────────────────
+section('deflection 弹问（v2）')
+ok('isDeflection: 不处理', I.isDeflection('该问题不处理'))
+ok('isDeflection: 在别的地方处理', I.isDeflection('此改动在别的地方处理'))
+ok('isDeflection: 系统信息不足', I.isDeflection('系统信息不足，无法判断'))
+ok('isDeflection: 超出职责', I.isDeflection('这超出我的职责范围'))
+ok("isDeflection: won't handle", I.isDeflection("I won't handle this"))
+ok('isDeflection: handled elsewhere', I.isDeflection('this is handled elsewhere'))
+ok('isDeflection: insufficient information', I.isDeflection('insufficient system information to answer'))
+ok('isDeflection 否定: 已修复', !I.isDeflection('问题已修复并补充测试'))
+ok('isDeflection 否定: 已重试', !I.isDeflection('编译失败，已重试成功'))
+ok('lastAssistantText: 取最近 assistant 文本', I.lastAssistantText({
+  events: [
+    { type: 'user/message', data: { message: { content: [{ type: 'text', text: 'u' }] } } },
+    { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'hello' }, { type: 'tool_use', id: 'x' }] } } },
+  ],
+}) === 'hello')
+ok('lastAssistantText: 非 assistant 结尾 → undefined', I.lastAssistantText({
+  events: [{ type: 'tool/result', data: { message: { content: [] } } }],
+}) === undefined)
+ok('lastAssistantText: 无 events → undefined', I.lastAssistantText({ events: [] }) === undefined)
+
+ok('弹问: 终稿「不处理」→ steer 弹问一次', (async () => {
+  const surface = { events: [{ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '该问题不处理' }] } } }] }
+  await dispatchTurnFor('dv1', 'sv1', surface)
+  return steered.length === 1 && steered[0].content && steered[0].content.some((b) => b.type === 'text' && b.text.includes('判定为'))
+})())
+ok('弹问: 每会话一次（第二次同判不再弹）', (async () => {
+  const surface = { events: [{ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '不处理' }] } } }] }
+  await dispatchTurnFor('dv2', 'sv2', surface)
+  const first = steered.length
+  await dispatchTurnFor('dv2', 'sv2', surface)
+  return first === 1 && steered.length === 0
+})())
+ok('弹问: 终稿正常（已修复）→ 不弹', (async () => {
+  const surface = { events: [{ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '问题已修复并补充测试' }] } } }] }
+  await dispatchTurnFor('dv3', 'sv3', surface)
+  return steered.length === 0
+})())
+ok('弹问: 本回合有实现 edit → 不算拒绝，不弹', (async () => {
+  await dispatchPreAs('edit', { file_path: 'src/deflect.ts' }, 'dv4')
+  const surface = { events: [{ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '该问题不处理' }] } } }] }
+  await dispatchTurnFor('dv4', 'sv4', surface)
+  // 可能触发 green 提醒（有 edit 无测试），但绝不含 deflection 弹问
+  return steered.every((m) => !(m.content && m.content.some((b) => b.text && b.text.includes('判定为'))))
+})())
+ok('弹问: 无 sessionQuery → 静默跳过', (async () => {
+  sessionQueryMock = null
+  steered = []
+  await turnStopping[0]({ agent: { id: 'dv5', session: { header: sessionHeader }, steer(msg) { steered.push(msg) } }, turn: 1, signal: undefined })
+  return steered.length === 0
 })())
 
 // ── 汇总 ──────────────────────────────────────────────────────────────────

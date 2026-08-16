@@ -67,7 +67,7 @@
       - Run standard lint/tests before commit (Rust: cargo fmt --check + clippy -D warnings + test; TS: eslint/prettier/typecheck). The plugin reminds you when a turn ends with edits but no test run (kix-discipline green gate).
 
       ## Environment Defaults
-      - Default `pwsh` (7.x), not `powershell` (5.1): 5.1 reads UTF-8-no-BOM as GBK and wraps native stderr as NativeCommandError under Stop. Other languages: prefer the platform's current major CLI; confirm with `Get-Command`/`--version` when unsure.
+      - Terminal by platform: on Windows use `pwsh` (7.x), not `powershell` (5.1): 5.1 reads UTF-8-no-BOM as GBK and wraps native stderr as NativeCommandError under Stop; on Linux/macOS use `bash` (this preset mounts pwsh on Windows and bash on Linux/macOS). Other languages: prefer the platform's current major CLI; confirm with `Get-Command`/`--version` when unsure. When system information seems insufficient, probe first via the terminal (`uname -a`, `Get-Command`, `--version`, `$env:DSH_*`) — never decline a task citing insufficient system information.
 
       ## Process Routing Signals (meta-decision at task start)
       - Trigger (attribute-driven, not type-driven): ① scale ≥3 files/cross-module ② side effects: external/irreversible action ③ verification-critical: external semantics/security/concurrency/platform ④ uncertainty.
