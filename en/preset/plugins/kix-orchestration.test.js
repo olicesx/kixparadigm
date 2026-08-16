@@ -474,8 +474,8 @@ ok('v4.1 无 command 参数的工具 → 零开销短路不注入', (async () =>
   const d = await postExecute[0](exec, { isError: false }, () => Promise.resolve({ kind: 'accept' }))
   return d.kind === 'accept' && (d.additionalContexts === undefined || d.additionalContexts.length === 0)
 })())
-ok('SUBAGENT_TOOLS 覆盖全部工具行（含 reviewer，2026-08-17 补）', (() => {
-  return I.SUBAGENT_TOOLS.has('subagent_reviewer') && I.SUBAGENT_TOOLS.has('subagent_cross') && I.SUBAGENT_TOOLS.has('subagent_lite')
+ok('SUBAGENT_TOOLS 覆盖全部工具行（含 reviewer，2026-08-17 补；含编曲成员 qa/dev）', (() => {
+  return I.SUBAGENT_TOOLS.has('subagent_reviewer') && I.SUBAGENT_TOOLS.has('subagent_cross') && I.SUBAGENT_TOOLS.has('subagent_lite') && I.SUBAGENT_TOOLS.has('subagent_qa') && I.SUBAGENT_TOOLS.has('subagent_dev')
 })())
 ok('pre→post 一次性注入提醒，第二次同模式不再注入', (async () => {
   await dispatchPre('bash', { command: 'sleep 60 && echo done', description: 'Wait for subagent C' }, 'orch-sleep')

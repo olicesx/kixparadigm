@@ -136,6 +136,22 @@ subagent（run_in_background 按需）:
 - **双通道冗余（实测坑）**：子代理「`report` 全文 + 最终消息再放全文」→ 父级为同一结果付两次注入 + 两次唤醒回合。dsh-subagent README 明文 *"A child that both reports and settles costs the parent both"*。范式约定（persona 已载）：**单通道交付**——默认最终消息即完整报告，勿再 `report` 同文。
 - **sleep 等待反模式（实测坑）**：8 次 `sleep 45~240s` 占住回合等子代理 = 纯浪费延迟（sleep 步思考≈0 但回合被钉住）。正确形态：独立工作做完 → 简短状态 → 结束回合等唤醒。kix-orchestration v4 对「bash 裸 sleep + description 提及 subagent/子代理」做一次性机械提醒（0% 误报纪律：测试退避/等锁的 sleep 不命中）。
 
+### §3.2 编曲模型与成员菜单（2026-08-17，四轮碰撞收敛）
+
+CEO「挑成员」在 DSH 的最终落点：**主模型 = 编曲者，成员 = activatable 档**。固定 producer→dev→qa 流水线是 kixpower sprint 工作流约定（重路径），不是范式不变量——S7（CEO 直做）/S8/S9（只借 dev）已实践自由组合并验证；本节把它显式化（规则是负债：拆掉一条没人遵守的固定规则是还债）。
+
+| 成员档 | 人名句柄 | 契约（蒸馏自 agents/*.agent.md，单一权威仍在文件） | 激活 |
+|---|---|---|---|
+| `subagent_dev` | Nova/Sage/Milo 三合一 | 按 plan 编码、target_rules 内写、不越权、不替 QA 签署；每任务自跑 deterministic gate | `kix_tool_activate { tool: subagent_dev }` |
+| `subagent_qa` | Ivy | 不写业务源码、证据门禁、signoff 工件（PASS/CONDITIONAL/FAIL/REVERIFY_REQUIRED 证据绑定） | `kix_tool_activate { tool: subagent_qa }` |
+| `subagent_reviewer` | 无名 | 只读 + 反方辩护三层（L1 反驳预演 / L2 深度下钻 / L3 语言模型压测）+ rebuttal 输出 | `kix_tool_activate { tool: subagent_reviewer }` |
+
+**三项不建行决策**：producer 不建行（S7 已证 CEO 自规划通常够；真需要 Remy 级规划，主线程读一次 `agents/kixpower-producer.agent.md`）；orchestrator 不建行（协调留在主线程——DSH 主 agent 有全套编排工具，物化协调子代理 = 雇个协调员协调自己；636 行 orchestrator.agent.md 是 Copilot 时代残留，不建行不蒸馏）；dev 三人合一档（Nova/Sage/Milo 内部切换本就发生在同一 agent body）。
+
+**四条不变量地板**（自由组合不侵蚀，见 persona「编曲模型」节）：① 观察独立性（二相性）——组合的是"手"，"眼"不能自证；② 协调留在主线程；③ 视角来自 prompt 不做角色化——人名是契约句柄不是人设，轻路径观察位仍用无名视角 prompt（双层菜单）；④ 门禁地板与组合无关（发布/合并/破坏性仍走人类确认，kix-guards/kix-discipline 照常，团队产出仍是 claim）。
+
+**漂移解药（不加新门禁）**：组合决策说出来（本单用了谁、为什么）+ `kix_discipline_spec` mode 字段留痕（成员组合 + 一句理由，2026-08-17 新增，可选字段）+ 「规则是负债」回收纪律观测组合分布（过度组合 / 默认独奏均回收）。中途组合错位 → 重路由一次并说出来。
+
 ## 4. DSH 原生特性利用（范式增强点）
 
 kix 的原始编排假设只有 runSubagent；DSH 提供更结构化的原生能力，范式应优先使用：

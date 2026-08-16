@@ -324,17 +324,47 @@ section('按需激活')
 const activateTool = registeredTools.find((t) => t.name === 'kix_tool_activate')
 const deactivateTool = registeredTools.find((t) => t.name === 'kix_tool_deactivate')
 ok('activate/deactivate 工具已注册', activateTool !== undefined && deactivateTool !== undefined)
-ok('ACTIVATABLE_TOOLS 含 workflow/goal/细分档位/jobs/reviewer(ralph 已移除)', (() => {
-  return ['workflow', 'goal', 'subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork', 'subagent_reviewer', 'jobs']
+ok('ACTIVATABLE_TOOLS 含 workflow/goal/细分档位/jobs/reviewer/qa/dev(ralph 已移除)', (() => {
+  return ['workflow', 'goal', 'subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork', 'subagent_reviewer', 'subagent_qa', 'subagent_dev', 'jobs']
     .every((n) => I.ACTIVATABLE_TOOLS[n] && I.ACTIVATABLE_TOOLS[n].package)
     && I.ACTIVATABLE_TOOLS.ralph === undefined
 })())
-ok('subagent_reviewer 激活配置含反方辩护 persona', (() => {
+ok('subagent_reviewer 激活配置含反方辩护三层 persona', (() => {
   const c = I.ACTIVATABLE_TOOLS.subagent_reviewer.config
   return c.toolName === 'subagent_reviewer'
     && c.persona.includes('adversarial reviewer')
+    && c.persona.includes('L1 rebuttal rehearsal')
+    && c.persona.includes('L2 depth probe')
+    && c.persona.includes('L3 language-model stress')
     && c.persona.includes('rebuttal')
     && c.agentOptions.maxTokens === 65536
+})())
+ok('subagent_qa 激活配置含 Ivy 契约（不写业务源码/证据门禁/REVERIFY）', (() => {
+  const c = I.ACTIVATABLE_TOOLS.subagent_qa.config
+  return c.toolName === 'subagent_qa'
+    && c.persona.includes('Ivy')
+    && c.persona.includes('never business source code')
+    && c.persona.includes('Evidence gate')
+    && c.persona.includes('REVERIFY_REQUIRED')
+    && c.agentOptions.maxTokens === 65536
+})())
+ok('subagent_dev 激活配置含三人合一契约（Nova/Sage/Milo/不替 QA 签署）', (() => {
+  const c = I.ACTIVATABLE_TOOLS.subagent_dev.config
+  return c.toolName === 'subagent_dev'
+    && c.persona.includes('Nova') && c.persona.includes('Sage') && c.persona.includes('Milo')
+    && c.persona.includes('target_rules')
+    && c.persona.includes('Never sign QA verdicts')
+    && c.agentOptions.maxTokens === 65536
+})())
+ok('激活/卸载描述完整枚举 ACTIVATABLE_TOOLS（枚举 bug 回归防线：reviewer 曾漏）', (() => {
+  const names = Object.keys(I.ACTIVATABLE_TOOLS)
+  const actParam = activateTool.parameters.properties.tool.description
+  const deaParam = deactivateTool.parameters.properties.tool.description
+  // workflow 依赖 isolate realm 动态激活不可用 → 永不进入 activated 集合，
+  // deactivate 不枚举它（激活描述仍提及并说明原因）。
+  return names.every((n) => n === 'workflow'
+    ? activateTool.description.includes(n)
+    : activateTool.description.includes(n) && actParam.includes(n) && deaParam.includes(n))
 })())
 ok('subagent_lite 激活配置含 toolName/toolFilter', (() => {
   const c = I.ACTIVATABLE_TOOLS.subagent_lite.config

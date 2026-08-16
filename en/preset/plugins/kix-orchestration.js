@@ -64,6 +64,9 @@ const execFileP = promisify(execFile)
 const SUBAGENT_TOOLS = new Set([
   'subagent', 'subagent_fork', 'subagent_cross', 'subagent_lite',
   'subagent_thinker', 'subagent_vision', 'subagent_reviewer',
+  // 2026-08-17 编曲成员档：集合本意 = 全部 subagent 行（2026-08-17 前例
+  // reviewer 漏收已修过一次），qa/dev 分派携带 sprint 元数据同样过交接 gate。
+  'subagent_qa', 'subagent_dev',
   'subagent_codex', 'subagent_claude_code',
 ])
 const SPRINT_MARKER = '.kixpower-current-sprint'
