@@ -18,18 +18,25 @@ const registeredTools = []
 let restrictCalls = []
 let executeCalls = []
 let mockSchemas = []
-// 按需激活 spy：ctx.plugin 记录挂载调用，返回 dispose spy
+// 按需激活 spy：ctx.plugin 返回 Fiber 形对象（await 后取 fiber.dispose()）
 const pluginCalls = []
 let disposeCalls = 0
+// 可配置 fiber.state：默认 ACTIVE(2)；非 ACTIVE 回滚路径测试用 fiberStateOverride
+let fiberStateOverride = null
+// ctx.effect 记录（回归防线：激活不得注册自动清理回调——真实 DSH 的工具
+// execute effect 域在调用结束时触发清理，会立即卸载刚激活的插件；mock 的
+// no-op effect 曾让该缺陷在 49 断言全绿下漏网）
+const effectCalls = []
 const ctx = {
   config: configMock,
   logger: { info() {}, warn() {}, error() {} },
   get() { return undefined },
   on(event, cb) { (listeners[event] ||= []).push(cb) },
-  effect() {},
+  effect(cb) { effectCalls.push(cb) },
+  setInterval() { return { clear() {} } },
   plugin(pkg, cfg) {
     pluginCalls.push({ pkg, cfg })
-    return () => { disposeCalls++ }
+    return { dispose: async () => { disposeCalls++ }, state: fiberStateOverride !== null ? fiberStateOverride : 2 }
   },
 }
 ctx.tools = {
@@ -78,14 +85,17 @@ ok('edit 常驻', I.RESIDENT_TOOLS.has('edit'))
 ok('read 常驻', I.RESIDENT_TOOLS.has('read'))
 ok('subagent 常驻', I.RESIDENT_TOOLS.has('subagent'))
 ok('subagent_cross 常驻', I.RESIDENT_TOOLS.has('subagent_cross'))
+ok('subagent_lite 未挂载(渐进面,默认 disabled)', I.isOnDemand('subagent_lite'))
+ok('subagent_fork 未挂载(渐进面,默认 disabled)', I.isOnDemand('subagent_fork'))
 ok('ask_user_question 常驻', I.RESIDENT_TOOLS.has('ask_user_question'))
 ok('kix_capability_search 常驻', I.RESIDENT_TOOLS.has('kix_capability_search'))
 ok('mcp__github__get_issue 按需', I.isOnDemand('mcp__github__get_issue'))
+ok('web_search 按需(低频,移出常驻)', I.isOnDemand('web_search'))
 ok('read_image 按需', I.isOnDemand('read_image'))
 ok('workflow 未挂载(默认 disabled,不在常驻集)', I.isOnDemand('workflow'))
 ok('ralph 未挂载(默认 disabled,不在常驻集)', I.isOnDemand('ralph'))
 ok('create_goal 未挂载(默认 disabled,不在常驻集)', I.isOnDemand('create_goal'))
-ok('job_output 常驻(scope 自动可见)', !I.isOnDemand('job_output'))
+ok('job_output 未挂载(渐进面,默认 disabled)', I.isOnDemand('job_output'))
 ok('list_agents 常驻(scope 自动可见)', !I.isOnDemand('list_agents'))
 ok('edit 非按需', !I.isOnDemand('edit'))
 
@@ -201,15 +211,33 @@ ok('output.schema.type 合法(JsonSchemaType 枚举,防挂载失败回归)', (()
 ok('parameters 含顶层 type:object(register 原样投影,防 type:null 回归)', (() => {
   return registeredTools.every((t) => t.parameters && t.parameters.type === 'object' && t.parameters.properties !== undefined)
 })())
-ok('restrict allow 只含全局常驻工具', (() => {
-  const allow = restrictCalls[0].allow
-  return Array.isArray(allow) && allow.length > 0
-    && allow.every((n) => I.RESTRICT_ALLOW.includes(n))
+ok('restrict deny 裁剪 MCP 全局工具(deny 模式,allow 在 web 架构失效)', (() => {
+  const deny = restrictCalls[0].deny
+  return Array.isArray(deny) && deny.includes('mcp__github__get_issue')
 })())
-ok('restrict allow 不含 scope-local 工具(restrict 对 scope 名 fail)', (() => {
-  const allow = restrictCalls[0].allow
-  const scopeLocals = ['subagent', 'subagent_cross', 'subagent_lite', 'kix_capability_search', 'kix_capability_call']
-  return allow.every((n) => !scopeLocals.includes(n))
+ok('restrict deny 含 web_search(低频移出常驻)', (() => {
+  // mockSchemas 需要含 web_search 才会被收集——追加后触发 tools/change
+  if (!mockSchemas.some((s) => s.name === 'web_search')) {
+    mockSchemas.push({ name: 'web_search', description: 'Search' })
+    ;(listeners['tools/change'] || []).forEach((cb) => cb())
+  }
+  const last = restrictCalls[restrictCalls.length - 1]
+  return Array.isArray(last.deny) && last.deny.includes('web_search')
+})())
+ok('restrict deny 不含 scope-local 工具', (() => {
+  const deny = restrictCalls[0].deny
+  const scopeLocals = ['subagent', 'subagent_cross', 'subagent_lite', 'kix_capability_search', 'kix_capability_call', 'edit', 'read', 'pwsh']
+  return deny.every((n) => !scopeLocals.includes(n))
+})())
+ok('增量 deny:tools/change 后新注册 mcp__ 工具被追加', (() => {
+  // 模拟 MCP 晚注册:mockSchemas 追加 semgrep 工具 → 触发 tools/change
+  mockSchemas.push({ name: 'mcp__semgrep__deprecation_notice', description: 'Deprecated' })
+  const before = restrictCalls.length
+  ;(listeners['tools/change'] || []).forEach((cb) => cb())
+  const last = restrictCalls[restrictCalls.length - 1]
+  return restrictCalls.length === before + 1
+    && Array.isArray(last.deny) && last.deny.includes('mcp__semgrep__deprecation_notice')
+    && !last.deny.includes('mcp__github__get_issue') // 增量:不重复 deny 已覆盖的
 })())
 ok('RESTRICT_ALLOW 全部是全局工具名', (() => {
   const scopeLocals = ['subagent', 'subagent_fork', 'subagent_cross', 'subagent_lite', 'subagent_thinker', 'subagent_vision', 'kix_capability_search', 'kix_capability_call']
@@ -224,9 +252,15 @@ section('按需激活')
 const activateTool = registeredTools.find((t) => t.name === 'kix_tool_activate')
 const deactivateTool = registeredTools.find((t) => t.name === 'kix_tool_deactivate')
 ok('activate/deactivate 工具已注册', activateTool !== undefined && deactivateTool !== undefined)
-ok('ACTIVATABLE_TOOLS 含 workflow/ralph/goal', (() => {
-  return ['workflow', 'ralph', 'goal'].every((n) => I.ACTIVATABLE_TOOLS[n] && I.ACTIVATABLE_TOOLS[n].package)
+ok('ACTIVATABLE_TOOLS 含 workflow/ralph/goal/细分档位/jobs', (() => {
+  return ['workflow', 'ralph', 'goal', 'subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork', 'jobs']
+    .every((n) => I.ACTIVATABLE_TOOLS[n] && I.ACTIVATABLE_TOOLS[n].package)
 })())
+ok('subagent_lite 激活配置含 toolName/toolFilter', (() => {
+  const c = I.ACTIVATABLE_TOOLS.subagent_lite.config
+  return c.toolName === 'subagent_lite' && Array.isArray(c.toolFilter.allow) && c.agentOptions.maxTokens === 8192
+})())
+ok('jobs 激活指向 dsh-tool-jobs', I.ACTIVATABLE_TOOLS.jobs.package === '@deepseek-ai/dsh-tool-jobs')
 ok('activationNote 文本引导 deactivate', I.activationNote('workflow').includes('kix_tool_deactivate'))
 ok('激活未知工具 → 报错', (async () => {
   const r = await activateTool.execute({ tool: 'nonexistent' })
@@ -234,9 +268,20 @@ ok('激活未知工具 → 报错', (async () => {
 })())
 ok('激活 workflow → ctx.plugin 挂载', (async () => {
   pluginCalls.length = 0
+  const before = effectCalls.length
   const r = await activateTool.execute({ tool: 'workflow' })
   return r.ok === true && r.tool === 'workflow'
     && pluginCalls.length === 1 && pluginCalls[0].cfg && pluginCalls[0].cfg.subagentProvider === undefined
+    && effectCalls.length === before // 回归防线：激活不得注册自动清理 effect
+})())
+ok('激活 fiber 非 ACTIVE(PENDING,依赖服务不可达) → 回滚并报错', (async () => {
+  fiberStateOverride = 0 // PENDING
+  const beforeDispose = disposeCalls
+  const r = await activateTool.execute({ tool: 'workflow' })
+  fiberStateOverride = null
+  return r.ok === false && String(r.error).includes('未生效')
+    && disposeCalls === beforeDispose + 1 // 回滚：dispose 被调
+    && r.tool === 'workflow'
 })())
 ok('重复激活 → 拒绝', (async () => {
   const r = await activateTool.execute({ tool: 'workflow' })
