@@ -88,7 +88,14 @@ async function main() {
     const weird = { listProviders: () => [{ id: 'real-key', name: 'Display 智谱' }, { name: 'only-display' }, { provider: 'legacy-shape' }] }
     const got2 = registeredProviders(weird)
     check('B1 回归：显示名被排除 / legacy provider 字段兜底', JSON.stringify(got2) === JSON.stringify(['real-key', 'legacy-shape']))
-    check('B1 回归：listProviders 抛错 → []', JSON.stringify(registeredProviders({ listProviders: () => { throw new Error('x') } })) === '[]')
+    check('B1 回归：listProviders 抛错 → 抛 probe 错误（非静默 []，审查修复）', (() => {
+      try {
+        registeredProviders({ listProviders: () => { throw new Error('boom') } })
+        return false // 应抛
+      } catch (e) {
+        return e.probe === true && /探测已注册 provider 失败/.test(e.message)
+      }
+    })())
   }
 
   // ── orderedModels ───────────────────────────────────────────────────────
@@ -224,7 +231,14 @@ async function main() {
   }
   {
     const broken = { listModels: async () => { throw new Error('boom') }, resolveModelInfo: async () => { throw new Error('x') } }
-    check('pickModel：listModels 抛错 → undefined', (await pickModel(broken, 'p', {})) === undefined)
+    check('pickModel：listModels 抛错 → 抛 probe 错误（审查修复，非静默 undefined）', (async () => {
+      try {
+        await pickModel(broken, 'p', {})
+        return false
+      } catch (e) {
+        return e.probe === true && /探测 p 模型目录失败/.test(e.message)
+      }
+    })())
   }
   {
     // n1 契约防御：listModels 返回非数组（目录破坏）按空目录处理，不裸抛 TypeError
@@ -344,6 +358,13 @@ async function main() {
     let msg = 'no-throw'
     try { await call(child(), { provider: 'x', model: 'kix-route:cross' }) } catch (e) { msg = String(e.message) }
     check('L9 llm 缺失 → throw', msg.includes('llm'))
+  })
+  await withListener(routeMod, { llm: { listProviders: () => { throw new Error('directory down') } } }, async ({ call, warns }) => {
+    let msg = 'no-throw'
+    try { await call(child(), { provider: 'zai-coding-cn', model: 'kix-route:cross' }) } catch (e) { msg = String(e.message) }
+    check('L11 探测失败 → 文案「探测失败，请重试」（审查修复，非「本部署无能力」）',
+      msg.includes('探测失败') && msg.includes('请稍后重试') && !msg.includes('本部署无跨厂商正交验证能力'))
+    check('L11b 底层错误已记录 warn', warns.some((w) => w.includes('探测已注册 provider 失败') && w.includes('directory down')))
   })
 
   // L10 组合顺序无关：kix-cost × kix-route 两种嵌套结果一致

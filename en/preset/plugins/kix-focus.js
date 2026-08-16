@@ -27,12 +27,13 @@
 //   - 常驻核心集 = 三通道执行/观察/交互必需 + 发现入口；其余按需。
 //   - MCP 工具（GitHub/Playwright/Context7/Semgrep）schema 大且低频 → 全部按需。
 //   - cordis_*（宿主平面注册的全局工具）→ 按需代理。
-//   - scope 重型编排（workflow/goal/ralph）：restrict 裁剪不到（自动可见），
-//     2026-08-15 决策 = 默认 disabled + **按需激活**（kix_tool_activate 运行时
-//     ctx.plugin 挂载，下一轮直呼；kix_tool_deactivate 卸载）——避免"全禁"
-//     与"常驻占 schema"两极，语义对齐 skill 按需发现。job_*/subagent-control
-//     是范式日常路径 → 保留挂载并纳入语义常驻集。实测（2026-08-15）：
-//     workflow 7 路并行审计成功——机制可用，激活即用。
+//   - scope 重型编排（workflow/goal）：restrict 裁剪不到（自动可见）。
+//     2026-08-16：workflow 临时启用（自发使用测试中，测试后按「规则是负债」
+//     决定去留；依赖 workflowEngine isolate realm，动态激活不可用，唯一
+//     启用路径 = 取消 disabled 重启）；goal 默认 disabled + 按需激活
+//     （kix_tool_activate 运行时 ctx.plugin 挂载，下一轮直呼；实测闭环）。
+//     ralph 已移除（极低频 + 可替代，负债判定，2026-08-16）。job_*/subagent
+//     -control 是范式日常路径 → 保留挂载并纳入语义常驻集。
 //
 // 挂载：agent.cordis.yml 一行（同款相对路径）：
 //   - id: kix-focus
@@ -51,7 +52,7 @@ const { randomUUID } = require('node:crypto')
 // （kix 的 subagent 五档、kix_capability_*、门禁插件工具）不受 restrict 影响、
 // 自动可见，列入 allow 反而会 fail。所以 RESTRICT_ALLOW 只列全局工具；
 // RESIDENT_TOOLS 是"常驻语义全集"（含 scope 工具，用于 search/感知判断）。
-// 2026-08-15 实测（workflow 7 路并行审计）：workflow/ralph/goal/job_* 等
+// 2026-08-15 实测（workflow 7 路并行审计）：workflow/goal/job_* 等
 // preset 行注册的编排工具同为 scope-local —— restrict 裁剪不到、对模型
 // 自动可见、可直接调用，无需经 capability_call 代理（全局视图查不到
 // scope-local 名，代理反而失败）。故 SCOPE_RESIDENT 把它们纳入语义常驻集，
@@ -66,9 +67,9 @@ const RESTRICT_ALLOW = [
 ]
 
 // scope 注册、自动可见（restrict 裁剪不到）的编排/后台/控制工具
-// 2026-08-15 精简：workflow/ralph/goal 低频重型 → agent.cordis.yml 默认
-// disabled（主 agent 工具面只留范式必需；restrict 裁不到 scope 工具，
-// disabled 是唯一精简手段）。
+// 2026-08-15 精简：workflow/goal 低频重型 → 默认 disabled（主 agent 工具面
+// 只留范式必需；restrict 裁不到 scope 工具，disabled 是唯一精简手段）。
+// 2026-08-16：workflow 临时启用（自发使用测试）；ralph 移除。
 // 2026-08-16 渐进面（方案 A，用户拍板）：subagent_lite/thinker/vision/fork
 // 与 tool-jobs 默认 disabled + 按需激活（inject 宿主服务，动态挂载可行，
 // 与 goal 同机制）。此处只列仍挂载的 scope 工具。
@@ -84,6 +85,8 @@ const RESIDENT_TOOLS = new Set([
   ...RESTRICT_ALLOW,
   // scope 注册（delegation group 的 subagent 核心两档 + 本插件发现入口）
   'subagent', 'subagent_cross',
+  // workflow 已挂载（2026-08-16 临时启用,自发使用测试中）
+  'workflow',
   'kix_capability_search', 'kix_capability_call',
   ...SCOPE_RESIDENT,
 ])
@@ -116,9 +119,9 @@ const CAPABILITY_GROUPS = [
   },
   {
     id: 'orchestration',
-    title: '重型编排（workflow/goal/ralph）',
-    hint: 'goal 可按需激活（kix_tool_activate，下一轮直呼，kix_tool_deactivate 卸载）；workflow/ralph 依赖 isolate realm 服务，动态激活不可用 → 取消 agent.cordis.yml 对应行 disabled 并重启后直接可用',
-    tools: ['workflow', 'create_goal', 'update_goal', 'get_goal', 'ralph', 'exit_plan_mode'],
+    title: '重型编排（workflow/goal）',
+    hint: 'workflow 已挂载（直接可用，批量扇出/多阶段编排）；goal 默认未挂载，可按需激活（kix_tool_activate，下一轮直呼，kix_tool_deactivate 卸载）',
+    tools: ['workflow', 'create_goal', 'update_goal', 'get_goal', 'exit_plan_mode'],
   },
   {
     id: 'subagent-tiers',
@@ -237,7 +240,6 @@ function makeUserMessage(text) {
 // 两极，语义对齐 skill 的按需发现。
 const ACTIVATABLE_TOOLS = {
   workflow: { package: '@deepseek-ai/dsh-tool-workflow', config: {} },
-  ralph: { package: '@deepseek-ai/dsh-tool-ralph', config: { subagentProvider: 'spawn', maxRounds: 64 } },
   goal: { package: '@deepseek-ai/dsh-tool-goal', config: {} },
   // 2026-08-16 渐进面（方案 A）：细分档位 + 后台任务默认 disabled，按需激活。
   // config 与 agent.cordis.yml 对应行保持一致（toolName 决定注册的工具名）。
@@ -322,7 +324,7 @@ module.exports = {
       }
     }
     // 目录视图 = scope（常驻 + scope 工具）∪ 全局（含被 restrict 裁剪的 MCP 等）
-    // scope 优先：workflow/ralph/goal/job_* 等 scope 工具在目录中 toolCount 正确，
+    // scope 优先：workflow/goal/job_* 等 scope 工具在目录中 toolCount 正确，
     // 且全局视图查不到 scope-local 名（capability_call 对它们不可代理）。
     function catalogSchemas() {
       const scope = scopeSchemas()
@@ -412,7 +414,7 @@ module.exports = {
             denyCount: restrictDenyCount,
             error: restrictError,
           },
-          guidance: '用 kix_capability_call { tool, arguments } 代理调用选中的全局按需工具（MCP 等，走完整门禁管线）；scope 常驻工具（subagent/subagent_cross/子代理控制）可直接调用；subagent 细分档位/jobs/goal 用 kix_tool_activate 按需激活（激活后下一轮直呼）；workflow/ralph 需取消 agent.cordis.yml 对应行 disabled 并重启。',
+          guidance: '用 kix_capability_call { tool, arguments } 代理调用选中的全局按需工具（MCP 等，走完整门禁管线）；scope 常驻工具（subagent/subagent_cross/子代理控制）可直接调用；workflow 已挂载可直接调用（批量扇出）；subagent 细分档位/jobs/goal 用 kix_tool_activate 按需激活（激活后下一轮直呼）。',
         }
       },
     })
@@ -471,18 +473,18 @@ module.exports = {
     ctx.effect(() => disposeCall)
 
     // ── Phase 2 扩展：kix_tool_activate / kix_tool_deactivate（按需激活）───
-    // scope 重型工具（workflow/ralph/goal）在 agent.cordis.yml 默认 disabled，
-    // 经此按需运行时挂载：activate 解析包 → ctx.plugin 挂载 → 下一轮直呼；
-    // deactivate 卸载。激活集合挂在 ctx.effect，会话/插件卸载时自动清理。
+    // scope 工具（goal/subagent 细分档位/jobs）默认 disabled，经此按需运行时
+    // 挂载：activate 解析包 → ctx.plugin 挂载 → 下一轮直呼；deactivate 卸载。
+    // 激活集合挂在 ctx.effect，会话/插件卸载时自动清理。
     const activated = new Map()
     const resolvePkg = typeof cfg.resolvePkg === 'function' ? cfg.resolvePkg : defaultResolvePkg
     const disposeActivate = tools.register({
       name: 'kix_tool_activate',
-      description: '按需激活一个默认未挂载的 scope 工具（渐进面）：goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / jobs；workflow/ralph 依赖 isolate realm 服务、动态激活不可用（激活会报错）。运行时挂载其工具包，激活后下一轮请求即可直接调用（无需代理）。用 kix_tool_deactivate 卸载。',
+      description: '按需激活一个默认未挂载的 scope 工具（渐进面）：goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / jobs；workflow 依赖 isolate realm 服务、动态激活不可用（激活会报错，直接挂载可用）。运行时挂载其工具包，激活后下一轮请求即可直接调用（无需代理）。用 kix_tool_deactivate 卸载。',
       parameters: {
         type: 'object',
         properties: {
-          tool: { type: 'string', description: '要激活的工具名（workflow / ralph / goal）' },
+          tool: { type: 'string', description: '要激活的工具名（goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / jobs）' },
         },
         required: ['tool'],
       },
@@ -511,10 +513,10 @@ module.exports = {
           // 无需手动 effect；显式卸载走 kix_tool_deactivate。
           const fiber = await ctx.plugin(pkg, entry.config)
           // fiber.state：PENDING=0 LOADING=1 ACTIVE=2 FAILED=3 DISPOSED=4
-          // UNLOADING=5。非 ACTIVE = 依赖服务不可达——workflow/ralph inject
+          // UNLOADING=5。非 ACTIVE = 依赖服务不可达——workflow inject
           // workflowEngine，该服务在 delegation group 的 isolate realm 内提供，
           // realm 外动态挂载的 fiber 解析不到、停在 PENDING（实测 2026-08-16：
-          // goal 激活成功且下一轮可见；workflow/ralph 激活后工具永不注册）。
+          // goal 激活成功且下一轮可见；workflow 激活后工具永不注册）。
           // 诚实边界：回滚并报错附建议，绝不返回假成功。
           if (fiber.state !== 2 /* ACTIVE */) {
             fiber.dispose().catch(() => {})
@@ -535,11 +537,11 @@ module.exports = {
 
     const disposeDeactivate = tools.register({
       name: 'kix_tool_deactivate',
-      description: '卸载一个已激活的 scope 重型工具（workflow/goal/ralph）：下一轮请求起不再可见。',
+      description: '卸载一个已激活的 scope 工具（goal/subagent 细分档位/jobs）：下一轮请求起不再可见。',
       parameters: {
         type: 'object',
         properties: {
-          tool: { type: 'string', description: '要卸载的工具名（workflow / ralph / goal）' },
+          tool: { type: 'string', description: '要卸载的工具名（goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / jobs）' },
         },
         required: ['tool'],
       },

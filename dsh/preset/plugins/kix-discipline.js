@@ -144,6 +144,7 @@ function makeState({ sessionKey, workspaceRoot, io }) {
   const specFile = workspaceRoot ? join(workspaceRoot, SPEC_DIRNAME, SPEC_FILENAME) : undefined
   let cached = undefined
   let specLoaded = false
+  let loadPromise = undefined
   return {
     specFile,
     enabled: true,
@@ -155,16 +156,26 @@ function makeState({ sessionKey, workspaceRoot, io }) {
     turnTests: 0,
     spec: undefined,
     async loadSpec() {
+      // 2026-08-16（审查修复，spec 加载竞态）：eager 调用（fire-and-forget）
+      // 与门禁调用共享同一个 in-flight promise——旧实现 specLoaded latch
+      // 在 eager 未完成时即置位，门禁随后调用 loadSpec 立即返回 cached
+      // （undefined），首编辑被「假性无 spec」误判（remind 烧掉唯一提醒 /
+      // ask、block 误拒绝）。
       if (specLoaded) return cached
       specLoaded = true
-      if (specFile) {
-        try {
-          const text = io && io.readText ? await io.readText(specFile) : readFileSync(specFile, 'utf8')
-          const parsed = parseSpec(text)
-          if (parsed && specComplete(parsed)) cached = parsed
-        } catch { cached = undefined }
+      if (loadPromise === undefined) {
+        loadPromise = (async () => {
+          if (specFile) {
+            try {
+              const text = io && io.readText ? await io.readText(specFile) : readFileSync(specFile, 'utf8')
+              const parsed = parseSpec(text)
+              if (parsed && specComplete(parsed)) cached = parsed
+            } catch { cached = undefined }
+          }
+          return cached
+        })()
       }
-      return cached
+      return loadPromise
     },
     async saveSpec(spec) {
       cached = spec
@@ -320,14 +331,12 @@ module.exports = {
       const args = exec && (exec.arguments ?? exec.args)
       const agent = exec && exec.agent
 
-      // 只关心实现编辑工具
+      // 只关心实现编辑工具；非编辑工具（含测试命令）直接放行。
+      // 2026-08-16（审查修复，turnTests 双重计数）：pre-execute 不再对测试
+      // 命令 +1——命令尚未执行，成功/被拦/失败都未知；green 证据只在
+      // post-execute 对「成功结果」计数（被门禁/sandbox 拦截或失败的测试
+      // 不构成证据，turn-stopping 会据此提醒）。
       if (!isMutationTool(tool)) {
-        // 测试运行识别（任何工具：bash/pwsh 文本匹配测试命令）
-        const cmdText = args && (args.command || args.cmd)
-        if (typeof cmdText === 'string' && isTestCommand(cmdText) && agent) {
-          const st = stateFor(agent)
-          st.turnTests++
-        }
         return next()
       }
 
@@ -408,7 +417,7 @@ module.exports = {
       if (!hadEdits || hadTests) return
       if (st.remindOnce && st.greenReminded) return
       st.greenReminded = true
-      const reason = 'kix-discipline: 本回合有实现编辑但未运行测试。交付前验证三问：① 测试镜像真实链路吗 ② 证据维度对吗 ③ 关键 claim 独立验证过吗。运行相关测试后再声称完成（kix 提交前必跑 lint/test）。'
+      const reason = 'kix-discipline: 本回合有实现编辑，但测试未通过或未运行（turnTests 只计成功结果——被拦/失败的测试不构成 green 证据）。交付前验证三问：① 测试镜像真实链路吗 ② 证据维度对吗 ③ 关键 claim 独立验证过吗。运行相关测试后再声称完成（kix 提交前必跑 lint/test）。'
       agent.steer(makeUserMessage(reason))
     })
 

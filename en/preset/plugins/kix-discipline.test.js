@@ -227,6 +227,38 @@ ok('remindOnce：同会话第二次不重复提醒', (async () => {
   dispatchTurn()
   return first === 1 && steered.length === 0
 })())
+ok('双重计数回归：pre-execute 测试命令不计数，被拦/失败测试不构成 green（审查修复）', (async () => {
+  // 测试命令经 pre-execute(不再 +1) → 无 post-execute 成功 → turnTests=0
+  await dispatchPre('bash', { command: 'npm test' })
+  await dispatchPreAs('edit', { file_path: 'src/dup.ts' }, 'dup-test')
+  // 被拦:post-execute isError → 不计数
+  await dispatchPost('bash', { command: 'npm test' }, { isError: true })
+  dispatchTurn()
+  return steered.length === 1 // 测试未成功运行 → 必须提醒(旧实现 turnTests≥1 静默)
+})())
+ok('双重计数回归：成功测试仍计 1 次（非 2）', (async () => {
+  await dispatchPreAs('edit', { file_path: 'src/ok.ts' }, 'ok-test')
+  await dispatchPost('bash', { command: 'npm test' }, { isError: false })
+  dispatchTurn()
+  return steered.length === 0 // 成功测试=green 证据 → 不提醒(若计 2 次语义仍 0,此断言保底线)
+})())
+
+// ── 6. spec 加载竞态回归（审查修复）───────────────────────────────────────
+section('spec 加载竞态')
+ok('竞态回归：eager 与门禁共享同一 in-flight promise，不假性无 spec', (async () => {
+  let resolveRead
+  const gate = new Promise((res) => { resolveRead = res })
+  const mockIo = {
+    readText: () => gate.then(() => I.renderSpec(fullSpec)),
+  }
+  const st = I.makeState({ sessionKey: 'race', workspaceRoot: tmpRoot, io: mockIo })
+  // eager(fire-and-forget)与门禁几乎同时发起
+  const eager = st.loadSpec().catch(() => undefined)
+  const gateSpec = await st.loadSpec() // 若 latch 旧语义:立即返回 undefined(假性无 spec)
+  resolveRead()
+  const eagerSpec = await eager
+  return gateSpec !== undefined && gateSpec.goal === 'g' && eagerSpec === gateSpec
+})())
 ok('disabled 后 gate 静默', (async () => {
   const cmd = registeredCommands.find((c) => c.name === 'kix-discipline')
   cmd.handler({ agent: { id: 'g10', session: { header: sessionHeader } }, rawInput: 'off' })

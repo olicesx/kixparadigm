@@ -409,13 +409,16 @@
         enableRunInBackground: false
         maxDepth: provider-managed
 
-    # 2026-08-15 精简决策：workflow/ralph/goal 低频重型 → 默认 disabled。
+    # 2026-08-15 精简决策：workflow/goal 低频重型 → 默认 disabled。
     # goal 经 kix_tool_activate 按需激活（2026-08-16 实测：激活 → 下一轮
-    # 直呼 → deactivate 卸载，闭环可用）。workflow/ralph 依赖 workflowEngine
+    # 直呼 → deactivate 卸载，闭环可用）。
+    # 2026-08-16 启用 workflow（自发使用测试）：workflow 依赖 workflowEngine
     # （本 isolate realm 内提供），动态挂载在 realm 外解析不到 → 激活会
-    # 诚实报错；需要时取消对应行 disabled 并重启。worker 行必须留在本
-    # realm 内——曾移出导致重启后 UI 损坏（commands/list 空 + 设置 Failed
-    # to fetch + 轮询风暴），已回退（2026-08-16）。
+    # 诚实报错；唯一启用路径 = 取消 disabled 重启（临时启用待实测自发使用，
+    # 测试后按「规则是负债」决定去留）。ralph 已移除（极低频 + 可替代，
+    # 负债判定）。worker 行必须留在本 realm 内——曾移出导致重启后 UI 损坏
+    # （commands/list 空 + 设置 Failed to fetch + 轮询风暴），已回退
+    # （2026-08-16）。
     - id: workflow-worker-thread
       name: '@deepseek-ai/dsh-workflow-worker-thread'
       config:
@@ -423,14 +426,6 @@
 
     - id: tool-workflow
       name: '@deepseek-ai/dsh-tool-workflow'
-      disabled: true
-
-    - id: tool-ralph
-      name: '@deepseek-ai/dsh-tool-ralph'
-      disabled: true
-      config:
-        subagentProvider: spawn
-        maxRounds: 64
 
 # ── remaining model-facing rows ─────────────────────────────────────────────
 
