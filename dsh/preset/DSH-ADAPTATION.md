@@ -147,7 +147,7 @@ kix 的原始编排假设只有 runSubagent；DSH 提供更结构化的原生能
 **技能（17 个，preset `skills/`）**：kixparadigm / kixpower / handoff / write-a-skill / improve-codebase-architecture（原 5 个）+ **新增 12 个通用方法论**：tdd / teach / grill-me / grill-with-docs / diagnose / prototype / triage / to-issues / to-prd / zoom-out / migrate-to-shoehorn / caveman。
 **不迁移**（领域/项目专属，遵循"规则是负债"）：rpgmaker-mv-debug-menu / unity-bepinex-debug-menu / unity-il2cpp-debug-menu / scaffold-exercises / setup-matt-pocock-skills / setup-pre-commit / git-guardrails（Copilot hooks 设定，已被 kix-guards 替代）。
 
-**记忆（6 个，preset `memories/`）**：原 3 个 + **新增 2 个通用**：kix-review-patterns.md（审查方法论，私有项目 PR 实证）、tech-patterns.md（Windows/Unity/开发工具模式）+ **dsh-capability-map.md**（DSH 机制事实地图，kix×DSH 任务先查；2026-08-15 补入 preset）。
+**记忆（4 个，preset `memories/`）**：ai-agent-practices.md（跨项目实践）、ai-test-pruning.md（测试缩减方法论）、kix-review-patterns.md（审查方法论，私有项目 PR 实证）+ **dsh-capability-map.md**（DSH 机制事实地图，kix×DSH 任务先查；2026-08-15 补入 preset）。Copilot 语境记忆（vscode-copilot-customization / tech-patterns / kixpower-v39-legacy-notes）已移出 preset（2026-08-17，规则是负债），保留在根 `memories/` 供 Copilot 分发版。
 **不迁移**（领域专属，内部系统与运维记忆 5 个：机器配置 / 内部业务公式 / 数据库链路模式等，名字从略）。
 
 ### §6.1 迁移完整性审计（2026-08-16，用户"迁移是否失真"质疑驱动）

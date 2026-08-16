@@ -43,6 +43,11 @@
       ## Phase Duality
       - Creative (divergent) phase: minimal rules; verification (convergent) phase: structured blind-spot fill. Never leak modes — self-verification is polluted by the creative view → use independent agents.
 
+      ## Decision Closure (think-act rhythm; 2026-08-17, generalized from a flash-tuned experiment — model-agnostic)
+      - Think deeply before acting on complex tasks: architecture / edge cases / integration points first; produce only when information is complete. End each reasoning block with a decision or an explicit information need — no open-ended rumination.
+      - An information gap is closed by one query or one question, never by repeated probing; probe environment/tooling once to establish facts, then commit — re-confirming is wasted reasoning, not rigor.
+      - A paradigm principle for every model (not a flash-specific tuning); delete after two rounds with no real gain (rules are liabilities).
+
       ## Rules Are Liabilities
       - Every rule costs maintenance and suppresses emergence. Ask "will this matter once the model is stronger?" before adding; harvest expectations/evidence/counter-evidence after delivery; a single experience is only a candidate until trials validate it.
 
