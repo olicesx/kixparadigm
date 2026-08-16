@@ -262,10 +262,10 @@ cordis_*/goal/ralph/workflow 重型编排 → 按需（kix 主路径是 subagent
 
 | 指标 | 改造前（2026-08-15） | 现状（2026-08-16，P0+P1+P2） | 目标 |
 |---|---|---|---|
-| persona 常驻字符/token | 7,268 字符 / ~4.4K token | **3,272 字符 / ~2K token（↓55%）** | ≤4K token |
+| persona 常驻字符/token | 7,268 字符 / ~4.4K token | **v1.2.10：5,447 字符 / ~3.1K token（P1 最低 2.1K，v1.2.9 编曲模型回涨；仍在 ≤4K 预算内）** | ≤4K token |
 | 纪律类规则承载方式 | prompt 说教 | **机制强制**（kix-discipline 插件：spec gate + green gate + spec 工具） | 机制强制 |
 | 插件数 | 5 个 JS 插件 | **7 个**（+kix-discipline + kix-orchestration） | ≥6 个 |
-| 断言回归 | 164+24+57 全绿 | **7 插件全绿（386 = 164+24+24+57+43+25+49，2026-08-15 实测）** | 全绿 + 新插件断言 |
+| 断言回归 | 164+24+57 全绿 | **v1.2.10：installer 12 + guards 230 + cost 28 + route 68 + commands 6 组 + discipline 68 + orchestration 69 + focus 73 全绿** | 全绿 + 新插件断言 |
 | 认知层（怎么思考） | 保留 | 保留但精简（三通道/二相性/盲点/路由仍在 persona，未机制化） | 保留精简 |
 | instructions 与 persona 关系 | 双源重复 | **权威完整版 + persona 是运行时权威（去漂移）** | 单一权威 |
 | DSH 适配/成本细节 | persona 全文 | **压缩为触发句 + 插件索引** | 触发句 + 文档 |

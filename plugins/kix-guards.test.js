@@ -1,4 +1,4 @@
-// kix-guards 回归测试（v7，2026-08-16：commit budget 三重修复——reflog %gs 口径 / 完结 sprint 回退 / plan.md max_commits 兜底 + 冷启动 warn）
+// kix-guards 回归测试（v8，v1.2.10：在 v7 commit budget 三重修复之上，新增终端 SQL 命令位判定 / 控制平面只读放行 / GitHub 前缀配置回归）
 //
 // 单元级验证：加载 kix-guards.js，mock DSH pre-execute 派发
 // （模拟 dsh-tools createExecution 的输出结构：{ name, arguments, ... }），
@@ -76,9 +76,9 @@ async function askCase(label, name, args) {
   check('pwsh: psql -c "drop table users" → deny', await dispatch('pwsh', { command: 'psql -c "drop table users"' }), true)
   check('pwsh: psql -c "DELETE FROM users" → deny', await dispatch('pwsh', { command: 'psql -c "DELETE FROM users"' }), true)
   // 终端保守硬拦（ps1 310 行）：DB 客户端含破坏性关键字即 deny，不区分 WHERE
-  check('pwsh: psql -c "DELETE FROM users WHERE id = 1" → deny（保守）', await dispatch('pwsh', { command: 'psql -c "DELETE FROM users WHERE id = 1"' }), true)
+  check('pwsh: psql -c "DELETE FROM users WHERE id = 1" → allow（v8 语句级）', await dispatch('pwsh', { command: 'psql -c "DELETE FROM users WHERE id = 1"' }), false)
   check('pwsh: psql -c "UPDATE users SET admin = 1" → deny (v2)', await dispatch('pwsh', { command: 'psql -c "UPDATE users SET admin = 1"' }), true)
-  check('pwsh: psql -c "UPDATE users SET admin = 1 WHERE id = 2" → deny（保守）', await dispatch('pwsh', { command: 'psql -c "UPDATE users SET admin = 1 WHERE id = 2"' }), true)
+  check('pwsh: psql -c "UPDATE users SET admin = 1 WHERE id = 2" → allow（v8 语句级）', await dispatch('pwsh', { command: 'psql -c "UPDATE users SET admin = 1 WHERE id = 2"' }), false)
   check('pwsh: psql -c "ALTER TABLE t ADD c int" → deny', await dispatch('pwsh', { command: 'psql -c "ALTER TABLE t ADD c int"' }), true)
   check('pwsh: psql -c "SELECT 1" → allow', await dispatch('pwsh', { command: 'psql -c "SELECT 1"' }), false)
   check('pwsh: mysql -e "DROP TABLE users" → deny', await dispatch('pwsh', { command: 'mysql -e "DROP TABLE users"' }), true)
@@ -89,10 +89,14 @@ async function askCase(label, name, args) {
   check('pwsh: psql -c "DELETE FROM t /* WHERE 1 */" → deny (v3)', await dispatch('pwsh', { command: 'psql -c "DELETE FROM t /* WHERE 1 */"' }), true)
   // schema 限定名/引号名（v3）
   check('pwsh: psql -c "UPDATE public.users SET admin = 1" → deny (v3)', await dispatch('pwsh', { command: 'psql -c "UPDATE public.users SET admin = 1"' }), true)
-  check('pwsh: psql -c "UPDATE \\"users\\" SET x = 1" → deny (v3)', await dispatch('pwsh', { command: 'psql -c "UPDATE "users" SET x = 1"' }), true)
+  check('pwsh: psql -c "UPDATE \\"users\\" SET x = 1" → deny (v3)', await dispatch('pwsh', { command: 'psql -c "UPDATE \\"users\\" SET x = 1"' }), true)
   // 脱域误伤修复（v3）：裸终端文本不再判 SQL
   check('pwsh: grep -r "DELETE FROM users" src/ → allow (v3)', await dispatch('pwsh', { command: 'grep -r "DELETE FROM users" src/' }), false)
   check('pwsh: echo "drop table users" → allow (v3)', await dispatch('pwsh', { command: 'echo "drop table users"' }), false)
+  check('pwsh: echo \'use psql; DELETE from users\' → allow (v8 命令位判定)', await dispatch('pwsh', { command: "echo 'use psql; DELETE from users'" }), false)
+  check('pwsh: cat notes.md | grep psql && echo DELETE → allow (v8 命令位判定)', await dispatch('pwsh', { command: 'cat notes.md | grep psql && echo DELETE' }), false)
+  check('pwsh: psql -c "SELECT \'DROP TABLE\'" → allow (v8 SQL 字符串剥离)', await dispatch('pwsh', { command: "psql -c \"SELECT 'DROP TABLE'\"" }), false)
+  check('pwsh: echo DROP TABLE users | psql → deny (v8 管道喂 SQL)', await dispatch('pwsh', { command: 'echo DROP TABLE users | psql' }), true)
 
   // ── SQL 工具门禁（v3：SQL_TOOLS 已入白名单，门禁 4 可达）────────────────
   check('sql: DELETE FROM users → deny (v3)', await dispatch('sql', { sql: 'DELETE FROM users' }), true)
@@ -154,7 +158,14 @@ async function askCase(label, name, args) {
 
   // ══ 3. 控制平面保护（v3：home 限定，项目级同名文件不误伤）════════════
   const HOME = (process.env.USERPROFILE || os.homedir()).replace(/\\/g, '/')
-  check(`pwsh: 读 ${HOME}/.dsh/settings.yaml → deny`, await dispatch('pwsh', { command: `Get-Content ${HOME}\\.dsh\\settings.yaml` }), true)
+  check(`pwsh: 读 ${HOME}/.dsh/settings.yaml → allow（v8 只读放行）`, await dispatch('pwsh', { command: `Get-Content ${HOME}\\.dsh\\settings.yaml` }), false)
+  check('pwsh: grep/cat/ls 控制平面路径 → allow（v8 只读放行）', await dispatch('pwsh', { command: `grep -R kix ${HOME}/.dsh && cat ${HOME}/.dsh/agent.cordis.yml && ls ${HOME}/.dsh` }), false)
+  check('pwsh: rm 控制平面文件 → deny（v8 写意图）', await dispatch('pwsh', { command: `rm ${HOME}/.dsh/agent.cordis.yml` }), true)
+  check('pwsh: 重定向写控制平面 → deny（v8 写意图）', await dispatch('pwsh', { command: `echo x > ${HOME}/.dsh/settings.yaml` }), true)
+  check('pwsh: cp 控制平面 → 外部备份 → allow（v8 目标非控制平面）', await dispatch('pwsh', { command: `cp ${HOME}/.dsh/settings.yaml /tmp/settings.bak` }), false)
+  check('pwsh: cp 外部 → 控制平面 → deny（v8 目标命中）', await dispatch('pwsh', { command: `cp /tmp/settings.yaml ${HOME}/.dsh/settings.yaml` }), true)
+  check(`pwsh: curl -o ${HOME}/.dsh/settings.yaml URL → deny（v8 下载目标）`, await dispatch('pwsh', { command: `curl -o ${HOME}/.dsh/settings.yaml https://example.com/x` }), true)
+  check(`pwsh: curl -o /tmp/x URL → allow（v8 下载目标非控制平面）`, await dispatch('pwsh', { command: 'curl -o /tmp/x https://example.com/x' }), false)
   check('pwsh: 其他用户 home 的 .dsh → allow (v3)', await dispatch('pwsh', { command: 'Get-Content C:\\Users\\other\\.dsh\\settings.yaml' }), false)
   check('write: 编辑 preset 文件 → deny', await dispatch('write', { file_path: 'C:\\Users\\x\\.dsh\\.agent-presets\\kixparadigm\\agent.cordis.yml' }), true)
   check('edit: 项目 settings.yaml → allow (v3)', await dispatch('edit', { file_path: 'C:\\work\\project\\settings.yaml' }), false)
@@ -394,6 +405,22 @@ async function askCase(label, name, args) {
   assert.deepStrictEqual(I.resolveSprintContextPaths(docsRoot, 0), { dir: 'sprint-9', fallbackFrom: undefined, staleAll: false }, '无 marker → 最大编号')
   fsx.rmSync(tmpBase, { recursive: true, force: true })
   passed += 5
+
+  // 9e. v8：GitHub 前缀可配置（部署命名不同时不再静默失效）
+  {
+    const customListeners = {}
+    const customCtx = {
+      logger: { info() {}, warn() {}, error() {} },
+      get(name) { return name === 'userQuestions' ? userQuestionsMock : undefined },
+      on(event, cb) { ;(customListeners[event] ||= []).push(cb) },
+    }
+    plugin.apply(customCtx, { githubToolPrefix: 'mcp__gh__' })
+    const customPre = customListeners['tools/pre-execute'][0]
+    const customDispatch = (name, args) => customPre({ name, arguments: args, token: 't', callId: 'c', agent: { id: 'test-agent' } }, () => Promise.resolve({ kind: 'allow' }))
+    check('v8 自定义 GitHub 前缀：mcp__gh__ 写 main → deny', await customDispatch('mcp__gh__create_or_update_file', { owner: 'o', repo: 'r', path: 'a.ts', branch: 'main', content: 'x' }), true)
+    check('v8 自定义 GitHub 前缀：旧 mcp__github__ 前缀不再误纳入 → allow', await customDispatch('mcp__github__create_or_update_file', { owner: 'o', repo: 'r', path: 'a.ts', branch: 'feature', content: 'x' }), false)
+    check('v8 自定义 GitHub 前缀：新前缀只读 get → allow', await customDispatch('mcp__gh__get_issue', { owner: 'o', repo: 'r', issue_number: 1 }), false)
+  }
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

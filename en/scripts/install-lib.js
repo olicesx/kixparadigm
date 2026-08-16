@@ -123,6 +123,19 @@ function dshHome() {
   return process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
 }
 
+/**
+ * 中英双包共享同一个 vision-bridge 时，卸载其一不得删除共享组件。
+ * 只要另一个已知 preset 仍安装在目标 DSH_HOME 中，就保留 bridge 目录、
+ * node_modules 链接与 cordis.patch.yml 挂载条目。
+ */
+function hasOtherPresetOwner(home, currentPresetId) {
+  for (const id of ['kixparadigm', 'kixparadigm-en']) {
+    if (id === currentPresetId) continue
+    if (fs.existsSync(path.join(home, '.agent-presets', id, 'agent.cordis.yml'))) return true
+  }
+  return false
+}
+
 function makeLog(quiet) {
   return {
     info(msg) { if (!quiet) console.log(`  ${msg}`) },
@@ -293,19 +306,27 @@ function uninstall(log) {
   const junction = path.join(home, 'profiles', 'web', 'node_modules', BRIDGE_NAME)
   const patch = path.join(home, 'profiles', 'web', 'cordis.patch.yml')
 
-  log.step('卸载 kixparadigm 安装内容')
+  log.step(`卸载 ${PRESET_ID} 安装内容`)
+  const keepSharedBridge = hasOtherPresetOwner(home, PRESET_ID)
+  if (keepSharedBridge) {
+    log.info('检测到另一 kix preset 仍安装，vision-bridge 为共享组件，本次保留')
+  }
   if (fs.existsSync(preset)) { fs.rmSync(preset, { recursive: true, force: true }); log.ok(`已删除 preset: ${preset}`) }
   else log.info('preset 不存在，跳过')
-  if (fs.existsSync(junction)) {
-    try {
-      const st = fs.lstatSync(junction)
-      if (st.isSymbolicLink()) fs.unlinkSync(junction)
-      else fs.rmSync(junction, { recursive: true, force: true })
-      log.ok(`已删除链接: ${junction}`)
-    } catch (e) { log.warn(`删除链接失败: ${e.message}`) }
+  if (keepSharedBridge) {
+    log.info('共享 vision-bridge 与挂载条目已保留')
+  } else {
+    if (fs.existsSync(junction)) {
+      try {
+        const st = fs.lstatSync(junction)
+        if (st.isSymbolicLink()) fs.unlinkSync(junction)
+        else fs.rmSync(junction, { recursive: true, force: true })
+        log.ok(`已删除链接: ${junction}`)
+      } catch (e) { log.warn(`删除链接失败: ${e.message}`) }
+    }
+    if (fs.existsSync(source)) { fs.rmSync(source, { recursive: true, force: true }); log.ok(`已删除插件: ${source}`) }
   }
-  if (fs.existsSync(source)) { fs.rmSync(source, { recursive: true, force: true }); log.ok(`已删除插件: ${source}`) }
-  if (fs.existsSync(patch)) {
+  if (!keepSharedBridge && fs.existsSync(patch)) {
     const lines = fs.readFileSync(patch, 'utf8').split('\n')
     const idx = lines.findIndex((l) => l.trim() === `- id: ${PATCH_ID}`)
     if (idx >= 0) {
@@ -443,4 +464,4 @@ function cli(argv) {
 
 if (require.main === module) cli(process.argv.slice(2))
 
-module.exports = { cli, dshHome, installPreset, installVisionBridge, uninstall, doctor, copyTree, mergeVisionBridgePatch, restoreEmptyPatchRoot }
+module.exports = { cli, dshHome, hasOtherPresetOwner, installPreset, installVisionBridge, uninstall, doctor, copyTree, mergeVisionBridgePatch, restoreEmptyPatchRoot }

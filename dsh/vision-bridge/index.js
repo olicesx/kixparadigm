@@ -71,6 +71,16 @@ function sendJson(res, status, payload) {
   res.end(body);
 }
 
+/**
+ * 剥离模型偶尔返回的完整代码围栏包装。只匹配「以 ``` 开头且以 ``` 结尾」的
+ * 整体包装；正文中间有代码块时原样保留（旧实现会从开头一路删到首个围栏）。
+ */
+function cleanModelText(text) {
+  const value = String(text || '').trim()
+  const m = /^```[^\r\n]*\r?\n([\s\S]*?)\r?\n```\s*$/.exec(value)
+  return m ? m[1].trim() : value
+}
+
 /** 调 GLM 视觉模型识别图片，返回文本描述。images: [{mime, base64}]。 */
 async function describeImages(apiKey, images, question, model = GLM_MODEL) {
   const content = images.map((img) => ({
@@ -102,7 +112,7 @@ async function describeImages(apiKey, images, question, model = GLM_MODEL) {
     }
     const data = await res.json();
     const text = data?.choices?.[0]?.message?.content ?? '';
-    return text.replace(/^[\s\S]*?```[\s\S]*?\n/, '').trim(); // 剥离可能的 think/代码块包装
+    return cleanModelText(text); // 仅剥离完整代码围栏包装，不误删普通正文
   } finally {
     clearTimeout(timer);
   }
@@ -191,4 +201,4 @@ function apply(ctx) {
   waitForWebServer();
 }
 
-module.exports = { name: 'dsh-vision-bridge', apply, ROUTE_PATH, describeImages, readCredential };
+module.exports = { name: 'dsh-vision-bridge', apply, ROUTE_PATH, describeImages, cleanModelText, readCredential };

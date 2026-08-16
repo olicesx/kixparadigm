@@ -569,6 +569,8 @@
 # ── kix 机械门禁（DSH 原生 hook）────────────────────────────────────────────
 # 移植自 kixpower blast-radius/block-source-edit 核心门禁，以 tools/pre-execute
 # 监听器形态自动拦截（等价 Copilot PreToolUse hook，scope-filtered 只拦本 preset）。
+# v8：终端 SQL 命令位判定 + 控制平面只拦写意图（grep/cat/ls 放行）+ GitHub 前缀
+# 可配置（githubToolPrefix，默认 mcp__github__）。单元测试 232 断言。
 # 相对路径插件由 loader 以 baseUrl 解析（name 以 "." 开头 → new URL(name, baseUrl)）。
 - id: kix-guards
   name: ./plugins/kix-guards.js
@@ -595,11 +597,12 @@
 #   - subagent 分派携带 current_sprint 时，校验工作区 docs/.kixpower-current-sprint
 #     marker 一致、docs/sprint-N/{plan,progress}.md 存在、progress 无 blocker、
 #     切 QA 时任务全部完成（默认 remind；ask/block 需显式配置）。
-#   - v2 subagent/end：QA 返回完成声明但 progress.md 未同步 → steer 提醒（remindOnce）。
+#   - v2 subagent/end：QA 返回**明确正向**完成声明但 progress.md 未同步 → steer
+#     提醒（remindOnce）；v8 负向表述（not done/undone/not passed）不再误报。
 #   - v3 producer_closeout 收尾证据链：spec「验收标准」在档 / 任务全完成 /
 #     测试文件自 l2_verified_sha 有变更要求重验（替代 Copilot qa-signoff 深度校验
 #     中可机械的部分；worktree/SHA 数学/stash 绑定 Copilot 特有流程不移植）。
-# 单元测试：node plugins/kix-orchestration.test.js（67 断言）。
+# 单元测试：node plugins/kix-orchestration.test.js（69 断言）。
 - id: kix-orchestration
   name: ./plugins/kix-orchestration.js
 
@@ -624,7 +627,8 @@
 # 假独立性比失败更糟）；thinker 无 deepseek 时降级环境默认（角色仍成立）+
 # 告警；插件缺失时哨兵直达适配器响亮失败（不静默同厂商降级）。与 kix-cost
 # 顺序无关协作（effort 规则同源复用）。见 plugins/kix-route.js 头部注释；
-# 单元测试：node plugins/kix-route.test.js。
+# v8：cross 偏好表候选先过滤未注册 provider，目录探测失败不再放大为 cross 失败。
+# 单元测试：node plugins/kix-route.test.js（68 断言）。
 - id: kix-route
   name: ./plugins/kix-route.js
 

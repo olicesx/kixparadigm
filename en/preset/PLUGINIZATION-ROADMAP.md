@@ -33,7 +33,9 @@ Ecosystem plugins (dsh-doublecheck etc.) proved these can be **hooks + tools + d
 
 ### P1 — Persona/instructions slimming ✅
 - CN persona 7,268 → 3,272 chars (↓55%); EN persona 16,432 → 14,418 (↓12%, EN keeps the full
-  English cognition layer). Mechanized discipline compressed to "mechanism index + trigger
+  English cognition layer). **v1.2.10 measured drift**: CN 5,447 chars / ~3.1K o200k tokens and
+  EN 11,851 chars / ~2.7K tokens after the v1.2.9 arranger model — still inside the ≤4K budget,
+  now guarded by `scripts/check-dsh-consistency.cjs`. Mechanized discipline compressed to "mechanism index + trigger
   phrase"; cognition layer (three-channel / duality / blind spots / routing) retained, slimmed.
 - `instructions/kixparadigm-core.instructions.md` rewritten as "authoritative full edition +
   persona is the runtime authority" (kills dual-source drift).
@@ -141,11 +143,11 @@ session end) — semantically aligned with skill on-demand discovery, avoiding b
 
 | Metric | Before | Now (P0-P4) | Target |
 |---|---|---|---|
-| Persona chars/tokens | CN 7,268 / ~4.4K | **CN 3,272 / ~2K (↓55%)** | ≤4K |
+| Persona chars/tokens | CN 7,268 / ~4.4K | **v1.2.10 CN 5,447 / ~3.1K · EN 11,851 / ~2.7K（budget-guarded）** | ≤4K |
 | Discipline rules carrier | prompt preaching | **mechanized (kix-discipline/kix-orchestration)** | mechanism |
 | Plugins | 5 | **8** (guards/discipline/orchestration/focus/cost/route/commands/stalled) | ≥6 |
 | Per-turn tool surface | ~85 tools / ~108KB schema | **~18 resident + search/call disclosure** | trimmed |
-| Assertions | 164+24+57 | **386 (164+24+24+57+43+25+49, measured 2026-08-15)** | green + new |
+| Assertions | 164+24+57 | **v1.2.10: installer 12 + guards 230 + cost 28 + route 68 + commands 6 groups + discipline 68 + orchestration 69 + focus 73** | green + new |
 | Cognition layer | kept | kept, slimmed | keep slimmed |
 | Copilot residue | hardcoded models/hooks | **cleared (review prompt, 6 agents, Guardrails)** | cleared |
 
