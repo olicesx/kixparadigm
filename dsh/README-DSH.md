@@ -74,7 +74,7 @@ pwsh -File .\scripts\sync-dsh-preset.ps1 -Force
 npm test                                        # 一致性守护 + 全插件回归（zh）
 node scripts\check-dsh-consistency.cjs          # persona 预算 / 文档计数 / zh-en 插件一致性
 node --test dsh\vision-bridge\test.js           # vision-bridge 纯逻辑回归 6 用例
-node .\dsh\preset\plugins\kix-guards.test.js      # 机械门禁 232 组断言（v8）
+node .\dsh\preset\plugins\kix-guards.test.js      # 机械门禁 210 组断言（v9 软约束）
 node .\dsh\preset\plugins\kix-commands.test.js    # 命令注册 6 组断言
 node .\dsh\preset\plugins\kix-cost.test.js        # 成本纪律 28 组断言
 node .\dsh\preset\plugins\kix-route.test.js       # 跨厂商路由 68 组断言（v8）

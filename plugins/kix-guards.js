@@ -1,4 +1,4 @@
-// kix-guards — kixparadigm 机械门禁的 DSH 原生实现（v8，v1.2.10）
+// kix-guards — kixparadigm 机械门禁的 DSH 原生实现（v9，v1.2.11）
 //
 // 移植自 kixpower 的 blast-radius-check.ps1 / block-source-edit.ps1 核心门禁，
 // 以 DSH `tools/pre-execute` 监听器形态自动拦截（等价 Copilot PreToolUse hook）。
@@ -45,6 +45,14 @@
 //     原拒绝原因 +「禁止重复尝试」，不再反复提问。memo 存插件闭包（每
 //     agent scope 一份 = 每会话独立），只记录拒绝（用户放行的不记录）。
 // v7（2026-08-16，dae 仓库实测误报驱动；0% 误报纪律）：
+// v9（v1.2.11 用户决策：发布/评论等确认类门禁降为软约束）：
+//   - 用户明确指示（如「评论到PR」）= 已决策；机械层不再逐操作提问。
+//   - 原 ASK 级门禁（普通 push / 本地破坏性 git / gh 与 GitHub mutation）
+//     全部改为放行，由 persona + kixpower-review 流程做软约束。
+//   - 硬 DENY 仅保留真正不可逆/可机械判定为破坏性的操作：force push、
+//     main/master 保护、控制平面写、破坏性 SQL、未知执行工具、run_code
+//     受限能力、gh/GitHub 删除远端数据。
+//
 // v8（v1.2.10 自审整改；0% 误报反例回归）：
 //   - 终端破坏性 SQL 改为「DB 客户端命令位 + SQL payload 语句级判定」：
 //     echo/grep/字符串字面量不再误拦；显式 SQL 交给 isDestructiveSql 剥字符串/
@@ -594,7 +602,6 @@ module.exports = {
     const GH_PREFIX = String(cfg.githubToolPrefix || 'mcp__github__')
     const GH_RE = new RegExp('^' + escapeRegex(GH_PREFIX))
     const DENY = (reason) => ({ kind: 'deny', reason })
-    const ASK = (reason) => ({ kind: 'ask', reason })
     // v6：会话内重复尝试记忆（key → 原拒绝原因；只记录拒绝，用户放行不记）
     const denyMemo = new Map()
 
@@ -773,47 +780,10 @@ module.exports = {
         return undefined
       }
       if (GITHUB_MUTATION.has(name)) {
-        return ASK('BLAST RADIUS: 该 GitHub 操作会写入共享系统。确认目标、内容与分支后再继续。')
-      }
-      return undefined
-    }
-
-    // ── v5：聊天内提问（替代 approval 服务弹窗）───────────────────────────
-    // 调用 ctx.userQuestions.ask() —— 即 ask_user_question 工具底层的同一服务，
-    // 问题显示在聊天里，用户回答「允许执行/拒绝」后继续。
-    // 返回：true=用户允许 / false=用户拒绝 / undefined=降级拒绝
-    //   （无 userQuestions 服务 / exec 无 agent / 提问被中止或抛错，如子代理
-    //   DELEGATED_CALLER、无 UI provider —— fail-safe 一律拒绝）。
-    async function askUser(exec, reason) {
-      const userQuestions = ctx.get('userQuestions')
-      if (userQuestions === void 0 || exec === void 0 || exec.agent === void 0) return undefined
-      try {
-        const { answers } = await userQuestions.ask({
-          questions: [{
-            id: 'kix-guards-confirm',
-            question: reason,
-            header: 'BLAST RADIUS 确认',
-            options: [
-              { label: '允许执行', description: '确认这是有意的操作，放行执行。' },
-              { label: '拒绝', description: '阻止该操作执行。' },
-            ],
-          }],
-          agent: exec.agent,
-          ...exec.signal !== void 0 ? { signal: exec.signal } : {},
-        })
-        const selected = answers && answers[0] && answers[0].selected
-        return Array.isArray(selected) && selected.includes('允许执行')
-      } catch {
+        // v9：软约束——是否发布/评论由 persona + review 流程判断；用户明确指示
+        // 即已决策，机械层不再重复提问。
         return undefined
       }
-    }
-
-    // 门禁 ask 决策统一处理：拒绝/降级 → deny（reason 区分），允许 → 继续后续检查
-    async function resolveAsk(exec, decision) {
-      if (decision.kind !== 'ask') return decision
-      const ok = await askUser(exec, decision.reason)
-      if (ok === false) return DENY('BLAST RADIUS: 用户拒绝执行该操作。')
-      if (ok === void 0) return DENY('BLAST RADIUS: 无法向用户提问（无提问通道或非主会话），已自动拒绝。')
       return undefined
     }
 
@@ -840,12 +810,6 @@ module.exports = {
         if (memoKey) denyMemo.set(memoKey, reason)
         return DENY(reason)
       }
-      const resolveAskRecord = async (execArg, decision) => {
-        const resolved = await resolveAsk(execArg, decision)
-        if (resolved && resolved.kind === 'deny' && memoKey) denyMemo.set(memoKey, resolved.reason)
-        return resolved
-      }
-
       // 1. 未知代码执行工具（无副作用的脚本类）→ deny
       if (/exec|run|eval|shell|snippet|python|node|jupyter|pylance|debug|repl|kernel|interpreter/.test(tool) && !KNOWN_SAFE_TOOLS.has(tool)) {
         return deny(`BLAST RADIUS: 未登记的工具 ${name} 无法验证副作用，拒绝执行。`)
@@ -866,23 +830,16 @@ module.exports = {
         if (isTerminalDestructiveSql(text)) {
           return deny('BLAST RADIUS: 终端数据库客户端中的破坏性 SQL（DELETE/UPDATE without WHERE / DROP/TRUNCATE/ALTER）已拦截。请改用结构化工具或先在事务/只读副本中验证。')
         }
-        // 2b. git 写保护（v3：解析式子命令门 + 顺序对齐 ps1：force → local ask →
-        //     push main → push ask → budget/分支；v5：ask 级门禁改为聊天内提问）
+        // 2b. git 写保护（v3：解析式子命令门；v9：确认类操作软约束，不再提问）
         if (isGitWrite(text)) {
           if (isForcePush(text)) {
             return deny('BLAST RADIUS: git push --force 会重写远端历史。需用户明确确认；优先使用 --force-with-lease 或 git revert。')
           }
-          if (isLocalDestructiveAsk(text)) {
-            const decision = await resolveAskRecord(exec, ASK('BLAST RADIUS: 检测到会丢失本地工作的 Git 操作（reset --hard / clean -f / branch -D / stash drop|clear / checkout -- / restore）。请确认目标仓库、分支和待丢弃内容。'))
-            if (decision) return decision
-          }
+          // v9：本地破坏性 git 仅软约束，不提问；硬保护仍由 force-push/main 等 deny 承担。
           if (pushTargetsProtectedRef(text)) {
             return deny('BLAST RADIUS: 禁止直接 push 到 main/master。请推送 feature 分支并通过 PR 合并。')
           }
-          if (hasGitSubcommand(text, 'push')) {
-            const decision = await resolveAskRecord(exec, ASK('BLAST RADIUS: git push 会写入共享远端。确认远端、源分支和目标分支后再继续。'))
-            if (decision) return decision
-          }
+          // v9：普通 push 仅软约束，不提问；受保护分支/force push 仍 deny。
           if (hasGitSubcommand(text, 'commit')) {
             const decision = await checkGitCommit(text, exec)
             if (decision) return decision
@@ -896,10 +853,7 @@ module.exports = {
         if (isGhDestructive(text)) {
           return deny('BLAST RADIUS: gh 破坏性操作（repo delete / api DELETE / release delete）会删除远程数据，禁止执行。')
         }
-        if (isGhMutation(text)) {
-          const decision = await resolveAskRecord(exec, ASK('BLAST RADIUS: gh 写操作会写入共享 GitHub（与 MCP GitHub 门禁同档）。确认目标仓库、分支与内容后再继续。'))
-          if (decision) return decision
-        }
+        // v9：gh 普通写操作仅软约束，不提问；gh 破坏性删除仍 deny。
       }
 
       // 3. 编辑工具控制平面保护
@@ -918,13 +872,10 @@ module.exports = {
         }
       }
 
-      // 5. MCP GitHub 远程写保护（v5：mutation 的 ask 级门禁改为聊天内提问）
+      // 5. MCP GitHub 远程写保护（v9：mutation 软约束；write main/缺 branch 仍 deny）
       if (name && GH_RE.test(name)) {
         const decision = checkGitHubWrite(name, args)
-        if (decision) {
-          const resolved = await resolveAskRecord(exec, decision)
-          if (resolved) return resolved
-        }
+        if (decision) return decision
       }
 
       return next()
@@ -932,7 +883,7 @@ module.exports = {
 
     // 记录挂载
     ctx.on('ready', () => {
-      ctx.logger?.info?.('[kix-guards] 机械门禁监听器已挂载（pre-execute，v7：解析式子命令门/budget/branch/force-push/GitHub/SQL 完整；ask 级门禁聊天内提问；commit budget 三重修复——reflog %gs 口径/完结 sprint 回退/预算兜底+来源标注）')
+      ctx.logger?.info?.('[kix-guards] 机械门禁监听器已挂载（v9：硬 deny 仅保留不可逆破坏；发布/评论/普通 push 等确认类操作软约束）')
     })
   },
 }

@@ -265,7 +265,7 @@ cordis_*/goal/ralph/workflow 重型编排 → 按需（kix 主路径是 subagent
 | persona 常驻字符/token | 7,268 字符 / ~4.4K token | **v1.2.10 二次还债：3,211 字符 / ~1.8K token（P1 最低 2.1K；v1.2.9 曾回涨至 5,447/3.1K，已压回并加预算守护）** | ≤4K token |
 | 纪律类规则承载方式 | prompt 说教 | **机制强制**（kix-discipline 插件：spec gate + green gate + spec 工具） | 机制强制 |
 | 插件数 | 5 个 JS 插件 | **7 个**（+kix-discipline + kix-orchestration） | ≥6 个 |
-| 断言回归 | 164+24+57 全绿 | **v1.2.10：installer 12 + guards 230 + cost 28 + route 68 + commands 6 组 + discipline 68 + orchestration 69 + focus 73 全绿** | 全绿 + 新插件断言 |
+| 断言回归 | 164+24+57 全绿 | **v1.2.11：installer 12 + vision 6 + guards 210 + cost 28 + route 68 + commands 6 组 + discipline 68 + orchestration 69 + focus 73 全绿** | 全绿 + 新插件断言 |
 | 认知层（怎么思考） | 保留 | 保留但精简（三通道/二相性/盲点/路由仍在 persona，未机制化） | 保留精简 |
 | instructions 与 persona 关系 | 双源重复 | **权威完整版 + persona 是运行时权威（去漂移）** | 单一权威 |
 | DSH 适配/成本细节 | persona 全文 | **压缩为触发句 + 插件索引** | 触发句 + 文档 |

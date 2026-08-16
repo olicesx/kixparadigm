@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict'
-// kixparadigm-en package-level consistency guard (v1.2.10).
+// kixparadigm-en package-level consistency guard (v1.2.11).
 // Mirrors the repo-level scripts/check-dsh-consistency.cjs checks that can run
 // from the packed EN package (only en/preset + en README are present there).
 
@@ -91,7 +91,7 @@ if (persona !== undefined) {
 }
 
 const pkg = JSON.parse(read('package.json'))
-if (pkg.version !== '1.2.10') fail(`en/package.json 版本应为 1.2.10，实际 ${pkg.version}`)
+if (pkg.version !== '1.2.11') fail(`en/package.json 版本应为 1.2.11，实际 ${pkg.version}`)
 else ok(`en/package.json 版本 ${pkg.version}`)
 if (!pkg.engines || pkg.engines.node !== '>=20.16.0') fail('en/package.json engines.node 应为 >=20.16.0')
 else ok('en/package.json engines.node >=20.16.0')

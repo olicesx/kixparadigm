@@ -1,4 +1,4 @@
-// kix-guards 回归测试（v8，v1.2.10：在 v7 commit budget 三重修复之上，新增终端 SQL 命令位判定 / 控制平面只读放行 / GitHub 前缀配置回归）
+// kix-guards 回归测试（v9，v1.2.11：确认类门禁降为软约束——普通 push / 本地破坏性 git / gh 与 GitHub mutation 不再提问；硬 deny 仅保留不可逆破坏性操作）
 //
 // 单元级验证：加载 kix-guards.js，mock DSH pre-execute 派发
 // （模拟 dsh-tools createExecution 的输出结构：{ name, arguments, ... }），
@@ -62,13 +62,11 @@ function check(label, decision, expect) {
 
 // v5：ask 级门禁 → 聊天内提问。模拟用户两种回答各跑一次：
 //   允许执行 → allow；拒绝 → deny。
-async function askCase(label, name, args) {
-  userQuestionsMock = { ask: async () => ({ answers: [{ id: 'kix-guards-confirm', selected: ['允许执行'] }] }) }
-  const allowed = await dispatch(name, args)
-  check(`${label}（用户允许）→ allow`, allowed, false)
-  userQuestionsMock = { ask: async () => ({ answers: [{ id: 'kix-guards-confirm', selected: ['拒绝'] }] }) }
-  const denied = await dispatch(name, args)
-  check(`${label}（用户拒绝）→ deny`, denied, true)
+async function softCase(label, name, args) {
+  // v9：确认类门禁不再提问；无论 userQuestions 是否存在都放行。
+  userQuestionsMock = undefined
+  const decision = await dispatch(name, args)
+  check(`${label} → allow（v9 软约束）`, decision, false)
 }
 
 ;(async () => {
@@ -109,23 +107,23 @@ async function askCase(label, name, args) {
   check('pwsh: git push origin +main → deny (v2)', await dispatch('pwsh', { command: 'git push origin +main' }), true)
   check('pwsh: git push --mirror origin → deny (v2)', await dispatch('pwsh', { command: 'git push --mirror origin' }), true)
   // v5：ask 级门禁改为聊天内提问（force-with-lease 非硬 deny）
-  await askCase('pwsh: git push --force-with-lease origin feature', 'pwsh', { command: 'git push --force-with-lease origin feature' })
+  await softCase('pwsh: git push --force-with-lease origin feature', 'pwsh', { command: 'git push --force-with-lease origin feature' })
   // v3 修复：-C / -c / git.exe 不再绕过
   check('pwsh: git -C C:\\repo push --force origin main → deny (v3)', await dispatch('pwsh', { command: 'git -C C:\\repo push --force origin main' }), true)
   check('pwsh: git -c user.name=x push --force origin main → deny (v3)', await dispatch('pwsh', { command: 'git -c user.name=x push --force origin main' }), true)
   check('pwsh: git.exe push --force origin main → deny (v3)', await dispatch('pwsh', { command: 'git.exe push --force origin main' }), true)
   // 人类确认点 ask（v5：聊天内提问）
-  await askCase('pwsh: git -C C:\\repo reset --hard HEAD', 'pwsh', { command: 'git -C C:\\repo reset --hard HEAD' })
-  await askCase('pwsh: git reset --hard HEAD', 'pwsh', { command: 'git reset --hard HEAD' })
-  await askCase('pwsh: git clean -fd', 'pwsh', { command: 'git clean -fd' })
-  await askCase('pwsh: git branch -D old', 'pwsh', { command: 'git branch -D old-branch' })
-  await askCase('pwsh: git stash drop', 'pwsh', { command: 'git stash drop' })
-  await askCase('pwsh: git checkout -- src/a.ts', 'pwsh', { command: 'git checkout -- src/a.ts' })
-  await askCase('pwsh: git restore src/a.ts', 'pwsh', { command: 'git restore src/a.ts' })
+  await softCase('pwsh: git -C C:\\repo reset --hard HEAD', 'pwsh', { command: 'git -C C:\\repo reset --hard HEAD' })
+  await softCase('pwsh: git reset --hard HEAD', 'pwsh', { command: 'git reset --hard HEAD' })
+  await softCase('pwsh: git clean -fd', 'pwsh', { command: 'git clean -fd' })
+  await softCase('pwsh: git branch -D old', 'pwsh', { command: 'git branch -D old-branch' })
+  await softCase('pwsh: git stash drop', 'pwsh', { command: 'git stash drop' })
+  await softCase('pwsh: git checkout -- src/a.ts', 'pwsh', { command: 'git checkout -- src/a.ts' })
+  await softCase('pwsh: git restore src/a.ts', 'pwsh', { command: 'git restore src/a.ts' })
   // push 目标受保护分支（v3：参数检测，不扫 commit message）
-  await askCase('pwsh: git push origin feature', 'pwsh', { command: 'git push origin feature' })
+  await softCase('pwsh: git push origin feature', 'pwsh', { command: 'git push origin feature' })
   check('pwsh: git push origin main → deny (v3)', await dispatch('pwsh', { command: 'git push origin main' }), true)
-  await askCase('pwsh: git push origin main-branch', 'pwsh', { command: 'git push origin main-branch' })
+  await softCase('pwsh: git push origin main-branch', 'pwsh', { command: 'git push origin main-branch' })
   check('pwsh: git push origin refs/heads/main → deny (v3)', await dispatch('pwsh', { command: 'git push origin refs/heads/main' }), true)
   check('pwsh: git commit -am "x" && git push origin main → deny', await dispatch('pwsh', { command: 'git commit -am "x" && git push origin main' }), true)
   // 只读/常规操作放行
@@ -142,19 +140,17 @@ async function askCase(label, name, args) {
   check('pwsh: git commit -m "sync master notes" → allow (v3)', await dispatch('pwsh', { command: 'git commit -m "sync master notes"' }), false)
   check('pwsh: git commit -m "update main.rs docs" → allow (v3)', await dispatch('pwsh', { command: 'git commit -m "update main.rs docs"' }), false)
   // lookbehind 前缀断言（v3）：分支名含 --force 不算 force push
-  await askCase('pwsh: git push origin abc--force', 'pwsh', { command: 'git push origin abc--force' })
+  await softCase('pwsh: git push origin abc--force', 'pwsh', { command: 'git push origin abc--force' })
   // commit budget/分支（无 agent 仓库根 → 放行不崩）
   check('pwsh: git commit -am x（mock 无仓库根）→ allow', await dispatch('pwsh', { command: 'git commit -am "wip"' }), false)
 
-  // ── v5 降级路径：无 userQuestions 服务 / 无 agent → fail-safe deny ─────
+  // ── v9 软约束：普通 push / 本地破坏性 git 不再依赖 userQuestions ─────
   userQuestionsMock = null
-  check('pwsh: git push origin feature（无 userQuestions）→ deny 降级', await dispatch('pwsh', { command: 'git push origin feature' }), true)
-  check('pwsh: git reset --hard HEAD（无 userQuestions）→ deny 降级', await dispatch('pwsh', { command: 'git reset --hard HEAD' }), true)
-  userQuestionsMock = { ask: async () => ({ answers: [{ id: 'kix-guards-confirm', selected: ['允许执行'] }] }) }
-  check('pwsh: git push origin feature（无 agent）→ deny 降级', await dispatchNoAgent('pwsh', { command: 'git push origin feature' }), true)
-  // 提问抛错（如子代理 DELEGATED_CALLER / 无 UI provider）→ deny 降级
+  check('pwsh: git push origin feature（无 userQuestions）→ allow（v9 软约束）', await dispatch('pwsh', { command: 'git push origin feature' }), false)
+  check('pwsh: git reset --hard HEAD（无 userQuestions）→ allow（v9 软约束）', await dispatch('pwsh', { command: 'git reset --hard HEAD' }), false)
+  check('pwsh: git push origin feature（无 agent）→ allow（v9 软约束）', await dispatchNoAgent('pwsh', { command: 'git push origin feature' }), false)
   userQuestionsMock = { ask: async () => { throw new Error('DELEGATED_CALLER') } }
-  check('pwsh: git push origin feature（提问抛错）→ deny 降级', await dispatch('pwsh', { command: 'git push origin feature' }), true)
+  check('pwsh: gh pr create（提问服务不可用）→ allow（v9 软约束）', await dispatch('pwsh', { command: 'gh pr create --title v9-soft' }), false)
 
   // ══ 3. 控制平面保护（v3：home 限定，项目级同名文件不误伤）════════════
   const HOME = (process.env.USERPROFILE || os.homedir()).replace(/\\/g, '/')
@@ -192,8 +188,8 @@ async function askCase(label, name, args) {
   check('github create_or_update_file branch=feature → allow', await dispatch('mcp__github__create_or_update_file', { owner: 'o', repo: 'r', path: 'a.ts', branch: 'feature/x', content: 'x' }), false)
   check('github push_files branch=master → deny', await dispatch('mcp__github__push_files', { owner: 'o', repo: 'r', branch: 'master', files: [], message: 'm' }), true)
   // v5：mutation 类 ask → 聊天内提问
-  await askCase('github merge_pull_request', 'mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 3 })
-  await askCase('github add_issue_comment', 'mcp__github__add_issue_comment', { owner: 'o', repo: 'r', issue_number: 1, body: 'b' })
+  await softCase('github merge_pull_request', 'mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 3 })
+  await softCase('github add_issue_comment', 'mcp__github__add_issue_comment', { owner: 'o', repo: 'r', issue_number: 1, body: 'b' })
   check('github get_file_contents → allow', await dispatch('mcp__github__get_file_contents', { owner: 'o', repo: 'r', path: 'README.md' }), false)
   // v4 修复：只读工具不再被 `.*request_` 误判为 mutation（日志实测 2026-08-15）
   check('github get_pull_request → allow (v4)', await dispatch('mcp__github__get_pull_request', { owner: 'o', repo: 'r', pull_number: 1 }), false)
@@ -206,11 +202,11 @@ async function askCase(label, name, args) {
   check('github search_code → allow (v4)', await dispatch('mcp__github__search_code', { q: 'x' }), false)
   check('github list_commits → allow (v4)', await dispatch('mcp__github__list_commits', { owner: 'o', repo: 'r', sha: 'a' }), false)
   // v4：mutation 精确名单仍须提问（v5：聊天内提问）
-  await askCase('github create_pull_request', 'mcp__github__create_pull_request', { owner: 'o', repo: 'r', title: 't', head: 'h', base: 'b' })
-  await askCase('github create_pull_request_review', 'mcp__github__create_pull_request_review', { owner: 'o', repo: 'r', pull_number: 1, event: 'APPROVE' })
-  await askCase('github update_issue', 'mcp__github__update_issue', { owner: 'o', repo: 'r', issue_number: 1, state: 'closed' })
-  await askCase('github fork_repository', 'mcp__github__fork_repository', { owner: 'o', repo: 'r' })
-  await askCase('github create_branch', 'mcp__github__create_branch', { owner: 'o', repo: 'r', branch: 'x' })
+  await softCase('github create_pull_request', 'mcp__github__create_pull_request', { owner: 'o', repo: 'r', title: 't', head: 'h', base: 'b' })
+  await softCase('github create_pull_request_review', 'mcp__github__create_pull_request_review', { owner: 'o', repo: 'r', pull_number: 1, event: 'APPROVE' })
+  await softCase('github update_issue', 'mcp__github__update_issue', { owner: 'o', repo: 'r', issue_number: 1, state: 'closed' })
+  await softCase('github fork_repository', 'mcp__github__fork_repository', { owner: 'o', repo: 'r' })
+  await softCase('github create_branch', 'mcp__github__create_branch', { owner: 'o', repo: 'r', branch: 'x' })
 
   // ══ 7. __internals 纯逻辑 ═════════════════════════════════════════════
   const I = plugin.__internals
@@ -320,39 +316,26 @@ async function askCase(label, name, args) {
   passed += 15
 
   // 8b. gh 门禁派发（v6：写操作 ask 聊天提问 / 破坏性 deny / 只读放行）
-  await askCase('pwsh: gh pr create --title v6-gh', 'pwsh', { command: 'gh pr create --title v6-gh' })
-  await askCase('pwsh: gh pr merge 12', 'pwsh', { command: 'gh pr merge 12' })
-  await askCase('pwsh: gh issue close 7', 'pwsh', { command: 'gh issue close 7' })
+  await softCase('pwsh: gh pr create --title v6-gh', 'pwsh', { command: 'gh pr create --title v6-gh' })
+  await softCase('pwsh: gh pr merge 12', 'pwsh', { command: 'gh pr merge 12' })
+  await softCase('pwsh: gh issue close 7', 'pwsh', { command: 'gh issue close 7' })
   check('pwsh: gh repo delete o/r → deny', await dispatch('pwsh', { command: 'gh repo delete o/r' }), true)
   check('pwsh: gh api -X DELETE repos/o/r → deny', await dispatch('pwsh', { command: 'gh api -X DELETE repos/o/r' }), true)
   check('pwsh: gh pr view 3 → allow', await dispatch('pwsh', { command: 'gh pr view 3' }), false)
   check('pwsh: gh issue list → allow', await dispatch('pwsh', { command: 'gh issue list' }), false)
   check('pwsh: gh api repos/o/r → allow', await dispatch('pwsh', { command: 'gh api repos/o/r' }), false)
 
-  // 8c. 重复尝试记忆：同操作（终端命令归一 / edit 路径 / GitHub 工具+参数）
-  // 已被拒 → 直接 deny 且不再提问；用户放行的操作不记录。
-  let askCalls = 0
-  userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['允许执行'] }] } } }
-  check('v6: git push 首次（用户允许）→ allow 且不记录', await dispatch('pwsh', { command: 'git push origin v6-repeat' }), false)
-  userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['拒绝'] }] } } }
-  check('v6: gh pr create（用户拒绝）→ deny + 记录', await dispatch('pwsh', { command: 'gh pr create --title v6-repeat' }), true)
-  userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['允许执行'] }] } } }
-  const v6Repeat = await dispatch('pwsh', { command: 'gh   pr    create --title v6-repeat' })
-  check('v6: 同操作重复（空白归一）→ deny 不再提问', v6Repeat, true)
-  assert.strictEqual(askCalls, 2, 'v6: 重复时未再次调用 userQuestions（askCalls=2）')
-  passed += 1
-  check('v6: 不同命令不受 memo 影响 → allow', await dispatch('pwsh', { command: 'git status' }), false)
-  // edit 路径重复（用全新路径保证「首次」语义）
-  const v6Cp = 'C:\\Users\\v6\\.dsh\\.agent-presets\\kixparadigm\\agent.cordis.yml'
-  check('v6: edit 控制平面首次 → deny + 记录', await dispatch('edit', { file_path: v6Cp }), true)
-  check('v6: edit 同路径重复 → deny（memo）', await dispatch('edit', { file_path: v6Cp }), true)
-  // GitHub 工具同参重复（不同参数不算重复）
-  userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['拒绝'] }] } } }
-  await dispatch('mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 99 })
-  userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['允许执行'] }] } } }
-  check('v6: GitHub 工具同参重复 → deny（memo）', await dispatch('mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 99 }), true)
-  userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['允许执行'] }] } } }
-  check('v6: GitHub 工具异参（pull_number 不同）不受 memo 影响 → ask 放行', await dispatch('mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 100 }), false)
+  // 8c. 重复尝试记忆：只记录硬 deny；软约束操作（v9）放行且不记录。
+  check('v9: 普通 git push 软约束 → allow 且不记录', await dispatch('pwsh', { command: 'git push origin v9-repeat' }), false)
+  check('v9: gh pr create 软约束 → allow 且不记录', await dispatch('pwsh', { command: 'gh pr create --title v9-repeat' }), false)
+  check('v9: GitHub merge_pull_request 软约束 → allow', await dispatch('mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 99 }), false)
+  // 硬 deny 路径重复记忆仍然有效（edit 控制平面 / force push）
+  const v9Cp = 'C:\\Users\\v9\\.dsh\\.agent-presets\\kixparadigm\\agent.cordis.yml'
+  check('v9: edit 控制平面首次 → deny + 记录', await dispatch('edit', { file_path: v9Cp }), true)
+  check('v9: edit 同路径重复 → deny（memo）', await dispatch('edit', { file_path: v9Cp }), true)
+  check('v9: force push 首次 → deny + 记录', await dispatch('pwsh', { command: 'git push --force origin v9-force' }), true)
+  check('v9: 同 force push 重复 → deny（memo，不再重复检查）', await dispatch('pwsh', { command: 'git   push --force origin v9-force' }), true)
+  check('v9: 不同命令不受 memo 影响 → allow', await dispatch('pwsh', { command: 'git status' }), false)
 
   // ══ 9. v7：commit budget 三重修复（reflog %gs 口径 / 完结 sprint 回退 / 预算兜底）══
   // 9a. countReflogCommits：%gs 口径只数 commit 类条目
@@ -417,9 +400,9 @@ async function askCase(label, name, args) {
     plugin.apply(customCtx, { githubToolPrefix: 'mcp__gh__' })
     const customPre = customListeners['tools/pre-execute'][0]
     const customDispatch = (name, args) => customPre({ name, arguments: args, token: 't', callId: 'c', agent: { id: 'test-agent' } }, () => Promise.resolve({ kind: 'allow' }))
-    check('v8 自定义 GitHub 前缀：mcp__gh__ 写 main → deny', await customDispatch('mcp__gh__create_or_update_file', { owner: 'o', repo: 'r', path: 'a.ts', branch: 'main', content: 'x' }), true)
-    check('v8 自定义 GitHub 前缀：旧 mcp__github__ 前缀不再误纳入 → allow', await customDispatch('mcp__github__create_or_update_file', { owner: 'o', repo: 'r', path: 'a.ts', branch: 'feature', content: 'x' }), false)
-    check('v8 自定义 GitHub 前缀：新前缀只读 get → allow', await customDispatch('mcp__gh__get_issue', { owner: 'o', repo: 'r', issue_number: 1 }), false)
+    check('v9 自定义 GitHub 前缀：mcp__gh__ 写 main → deny', await customDispatch('mcp__gh__create_or_update_file', { owner: 'o', repo: 'r', path: 'a.ts', branch: 'main', content: 'x' }), true)
+    check('v9 自定义 GitHub 前缀：旧 mcp__github__ 前缀不再误纳入 → allow', await customDispatch('mcp__github__create_or_update_file', { owner: 'o', repo: 'r', path: 'a.ts', branch: 'feature', content: 'x' }), false)
+    check('v9 自定义 GitHub 前缀：新前缀只读 get → allow', await customDispatch('mcp__gh__get_issue', { owner: 'o', repo: 'r', issue_number: 1 }), false)
   }
 
   console.log(`\n${passed} passed, ${failed} failed`)
