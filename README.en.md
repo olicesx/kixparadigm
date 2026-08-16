@@ -2,7 +2,9 @@
 
 > **AI self-orchestrated minimal paradigm (resident cognition layer) × multi-agent orchestration × coding-agent preset** — the whole kix family in one repository: one-command `npm` import into DeepSeek Harness, script import into VS Code Copilot.
 
-[![License](https://img.shields.io/badge/license-MIT-green)]()
+[![CI](https://github.com/olicesx/kixparadigm/actions/workflows/ci.yml/badge.svg)](https://github.com/olicesx/kixparadigm/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/kixparadigm)](https://www.npmjs.com/package/kixparadigm)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)]()
 
 > **中文版:** [README.md](README.md) · **English:** this file
@@ -11,7 +13,7 @@
 
 ## 🧭 Why this repository exists: the kix × DSH fit
 
-kix started as a **VS Code Copilot customization bundle**: resident cognition instructions, 17 skills, 6 team agents, 5 slash commands, mechanical-guard hooks, methodology memories — an AI self-orchestration system refined inside the Copilot ecosystem.
+kix started as a **VS Code Copilot customization bundle**: resident cognition instructions, 17 skills, 6 team agents, 5 slash commands, mechanical-guard hooks, methodology memories — an AI self-orchestration system refined inside the Copilot ecosystem (in this repo: the DSH preset carries all 17 skills; the Copilot distribution ships 7 of them).
 
 When we studied **DeepSeek Harness (DSH)**, we found the two are a **natural fit** — not a port, but "mechanism matching mechanism":
 
@@ -112,6 +114,8 @@ kix is layered in two, and this repository ships both layers plus the ecosystem 
 
 > **v1.2.13 (2026-08-17) deployment re-verification fixes**: ① handoff-gate mechanical injection — `kix-focus` auto-carries `current_sprint: N` on orchestration-member (qa/dev/reviewer) capability_call dispatch (workspace-marker driven, `sprintInjected` returned) + `kix-orchestration` v10.1 Tri-Block `[CONTEXT]` `Sprint N` tolerant parsing (double insurance, covers direct-dispatch paths); ② lite tier usable on Linux — `ACTIVATABLE_TOOLS` snapshot toolFilter made platform-conditional (v1.2.12 only fixed the agent.cordis.yml row, so the capability_call auto-activation path still failed with unknown global tool "pwsh"; proven by deployment E2E); ③ kix-guards v10.1 commit-on-main full-chain fix (`commit` added to `DANGEROUS_GIT`). Unit suites: kix-focus **102** / kix-orchestration **77** / kix-guards **219** all green; WSL2 deployment E2E re-verification passed (lite / commit interception / persona rule + mechanical-injection evidence).
 >
+> **v1.2.12 (2026-08-17) iterate-verify-release**: ① subagent-lite toolFilter.allow made platform-conditional (win32→pwsh, others→bash) — the hardcoded pwsh broke Linux deployments with an unknown-global-tool error from tools.restrict(), leaving the lite tier unusable (proven by WSL2 E2E); ② kix-guards v10: repoRootFromText now extracts the `cd <repo> && git commit` (no -C) command position — when the session cwd ≠ repo root the commit check silently skipped; unit suite grew 142→213; ③ persona: sprint dispatch contract lines now carry `current_sprint: N` so the kix-orchestration handoff gate actually fires; ④ jobs made resident + tier/goal auto-activate-on-first-use synced (see PR #6).
+>
 > **v1.2.11 soft-gate rectification (DSH editions)**: publish/comment/merge/destructive actions are off by default; an explicit user instruction ("comment on the PR") is the decision, so the model executes directly and kix-guards no longer re-asks per operation. Questions are reserved for genuinely missing decision information.
 >
 > **v1.2.10 rectification (DSH editions)**: fixes the KIX self-audit "0% false-positive" counterexamples — QA completion detection now excludes negated statements; control-plane guard only blocks write intent (`grep/cat/ls ~/.dsh` pass); terminal SQL uses command-position + SQL-payload statement analysis; GitHub MCP prefix is configurable; cross-vendor routing skips unregistered preference candidates; uninstalling one bilingual package no longer removes the shared vision-bridge; `engines` aligned with `process.getBuiltinModule`; resident persona second debt pass down to ~1.8K tokens (CN, was ~3.1K); persona-budget / doc-count / bilingual-parity guard and CI added; vision-bridge got regression tests and a complete-code-fence cleanup fix.
@@ -128,6 +132,9 @@ kixparadigm/
 │   ├── install-lib.js               ← cross-platform installer (preset + vision-bridge mount)
 │   ├── sync-dsh-preset.ps1          ← dev workflow: mirror dsh/preset → ~/.dsh (one-way)
 │   ├── ensure-vision-bridge.ps1     ← vision-bridge self-check/self-heal
+│   ├── check-dsh-consistency.cjs    ← persona budget / doc-count / bilingual-parity guard
+│   ├── install-kix-stalled.ps1      ← enable the optional kix-stalled plugin (opt-in)
+│   ├── list-plugin-tools.cjs / quantify-focus.cjs / wsl-restart-dsh.sh ← tool inventory / focus quantification / WSL helpers
 │   └── verify-*.js / .cjs           ← guard and load-chain verification
 │
 ├── dsh/                             ← DSH side (single source of truth)
@@ -135,8 +142,10 @@ kixparadigm/
 │   │   ├── agent.cordis.yml         ← composition (resident cognition persona + all capability rows)
 │   │   ├── preset.yml               ← roster display metadata
 │   │   ├── DSH-ADAPTATION.md        ← authoritative mechanism mapping (tools/guards/orchestration/vision)
+│   │   ├── DSH-FUSION-MATRIX.md     ← mechanism fusion matrix
+│   │   ├── PLUGINIZATION-ROADMAP.md ← pluginization roadmap (2026-08-16)
 │   │   ├── skills/  agents/  prompts/  instructions/  memories/
-│   │   └── plugins/                 ← kix-guards.js + kix-commands.js + tests
+│   │   └── plugins/                 ← kix-guards + kix-discipline + kix-orchestration + kix-focus + kix-cost + kix-route + kix-commands + kix-stalled (opt-in) + tests
 │   ├── vision-bridge/               ← dsh-vision-bridge plugin source (client + server + package.json)
 │   └── README-DSH.md                ← DSH deployment notes
 │
@@ -146,6 +155,7 @@ kixparadigm/
 │   ├── bridge/  bin/  scripts/      ← vision-bridge copy, CLI, parameterized installer
 │   └── README.md                    ← EN package readme
 │
+├── .github/workflows/ci.yml         ← CI: ubuntu+windows × node 20/22 dual-package tests + pack dry-run
 ├── skills/  agents/  prompts/  memories/  instructions/   ← VS Code Copilot distribution (kept as-is)
 ├── plugins/                         ← Copilot-side kix-guards original
 ├── install.ps1 / install.sh / INSTALL.md   ← Copilot install scripts
@@ -160,7 +170,7 @@ kixparadigm/
 ## 🧪 Development & verification
 
 ```bash
-npm test                                  # consistency guard + full regression: installer 12 + vision-bridge 6 + guards 210 + discipline 68 + orchestration 69 + focus 73 + cost 28 + route 68 assertions (+ commands 6 groups)
+npm test                                  # consistency guard + full regression: installer 12 + vision-bridge 6 + guards 219 + discipline 68 + orchestration 77 + focus 102 + cost 28 + route 68 assertions (+ commands 6 groups)
 node scripts/check-dsh-consistency.cjs       # persona budget / doc counts / bilingual plugin parity guard
 node scripts/verify-guards.js             # compare installed preset vs bundle guards
 node scripts/verify-vision-bridge-resolution.cjs  # vision-bridge load-chain full path
