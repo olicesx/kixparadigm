@@ -600,6 +600,160 @@ await ok('全候选落空 → 抛最后错误（不静默 undefined）', (() => 
   return threw
 })())
 
+// ── 11. lite 档平台条件化 shell（2026-08-17 部署 E2E 复验实锤修复）───────
+// v1.2.12 只修了 agent.cordis.yml 的 tool-subagent-lite 行；ACTIVATABLE_TOOLS
+// 快照漏改（硬编码 pwsh）→ capability_call 首次使用自动激活路径在 Linux 部署
+// tools.restrict() 报 unknown global tool "pwsh"。此处断言与 preset 行同源。
+section('lite 档平台条件化 shell（ACTIVATABLE_TOOLS 快照）')
+await ok('subagent_lite toolFilter 平台条件化（win32=pwsh / 其余=bash）', (() => {
+  const allow = I.ACTIVATABLE_TOOLS.subagent_lite.config.toolFilter.allow
+  const shell = process.platform === 'win32' ? 'pwsh' : 'bash'
+  return Array.isArray(allow) && allow.length === 4
+    && allow.includes(shell)
+    && !allow.includes(process.platform === 'win32' ? 'bash' : 'pwsh')
+})())
+await ok('编曲成员清单含 qa/dev/reviewer（交接门禁机械注入目标）', (() => {
+  return I.ORCH_MEMBER_TOOLS.has('subagent_qa')
+    && I.ORCH_MEMBER_TOOLS.has('subagent_dev')
+    && I.ORCH_MEMBER_TOOLS.has('subagent_reviewer')
+    && !I.ORCH_MEMBER_TOOLS.has('subagent_lite')
+    && !I.ORCH_MEMBER_TOOLS.has('subagent')
+})())
+
+// ── 12. 交接 gate 机械注入（2026-08-17，v1.2.13）─────────────────────────
+// 背景：kix-orchestration 交接门禁只对 prompt 显式 current_sprint: N 契约行
+// 生效；persona 规则靠模型自觉（上轮只加了提示）。机制兜底 = 编曲成员经
+// capability_call 分派时，工作区存在 docs/.kixpower-current-sprint 即自动注入
+// 契约行（复用 activationKeyFor 同款映射思路，见 kix-focus.js 注释）。
+section('交接 gate 机械注入（current_sprint 契约行）')
+const fsKix = require('node:fs')
+const osKix = require('node:os')
+const sprintWorkspaces = []
+function makeSprintWorkspace(markerValue) {
+  const root = fsKix.mkdtempSync(path.join(osKix.tmpdir(), 'kix-focus-sprint-'))
+  sprintWorkspaces.push(root)
+  if (markerValue !== undefined && markerValue !== null) {
+    fsKix.mkdirSync(path.join(root, 'docs'), { recursive: true })
+    fsKix.writeFileSync(path.join(root, 'docs', '.kixpower-current-sprint'), String(markerValue), 'utf8')
+  }
+  return root
+}
+function agentWithCwd(cwd) {
+  return { id: 'agent-sprint-test', session: { header: { cwd } } }
+}
+await ok('injectSprintContractLine：无契约行 → 追加（changed=true, replaced=false）', (() => {
+  const r = I.injectSprintContractLine('[CONTEXT]\n项目 @ repo\n[TASK]\n实现子任务', 3)
+  return r.changed === true && r.replaced === false
+    && /current_sprint: 3/.test(r.prompt)
+    && r.prompt.endsWith('current_sprint: 3\n')
+})())
+await ok('injectSprintContractLine：已有契约行且值不同 → 替换（replaced=true）', (() => {
+  const r = I.injectSprintContractLine('[CONTEXT]\ncurrent_sprint: 1\n[TASK]', 3)
+  return r.changed === true && r.replaced === true
+    && /current_sprint: 3/.test(r.prompt) && !/current_sprint: 1/.test(r.prompt)
+})())
+await ok('injectSprintContractLine：值一致 → 零改写（changed=false）', (() => {
+  const p = '[CONTEXT]\ncurrent_sprint: 2\n[TASK]'
+  const r = I.injectSprintContractLine(p, 2)
+  return r.changed === false && r.prompt === p
+})())
+await ok('injectSprintContractLine：替换保留行尾注释', (() => {
+  const r = I.injectSprintContractLine('current_sprint: 1 # sprint 标记', 4)
+  return /current_sprint: 4 # sprint 标记/.test(r.prompt)
+})())
+await ok('injectSprintContractLine：行锚定不误替换正文 "Sprint N" 叙述', (() => {
+  // 正文里的 "Sprint 2" 自然语言不是契约行 → 无契约行时追加，不原地改写正文
+  const r = I.injectSprintContractLine('[CONTEXT]\nSprint 2 已在进行\n[TASK]', 5)
+  return /Sprint 2 已在进行/.test(r.prompt) && /current_sprint: 5/.test(r.prompt)
+})())
+await ok('readActiveSprint：marker 纯数字 → N', (() => {
+  const root = makeSprintWorkspace(7)
+  return I.readActiveSprint(root) === 7
+})())
+await ok('readActiveSprint：marker 缺失 → 0', (() => {
+  const root = makeSprintWorkspace(null)
+  return I.readActiveSprint(root) === 0
+})())
+await ok('readActiveSprint：marker 非纯数字 → 0（fail-safe 不注入）', (() => {
+  const root = makeSprintWorkspace('v3-beta')
+  return I.readActiveSprint(root) === 0
+})())
+await ok('readActiveSprint：marker 为目录 → 0（沿用 fail-open 修复语义）', (() => {
+  const root = makeSprintWorkspace(null)
+  fsKix.mkdirSync(path.join(root, 'docs', '.kixpower-current-sprint'), { recursive: true })
+  return I.readActiveSprint(root) === 0
+})())
+await ok('readActiveSprint：workspaceRoot 空 → 0', I.readActiveSprint('') === 0)
+await ok('workspaceRootOf：agent.session.header.cwd 解析', (() => {
+  return I.workspaceRootOf({ agent: { session: { header: { cwd: '/ws' } } } }) === '/ws'
+    && I.workspaceRootOf({ agent: { id: 'x' } }) === undefined
+    && I.workspaceRootOf(undefined) === undefined
+})())
+await ok('capability_call 分派 subagent_qa + 工作区 marker → 自动注入契约行', (async () => {
+  const root = makeSprintWorkspace(2)
+  executeCalls = []
+  const r = await callTool.execute(
+    { tool: 'subagent_qa', arguments: { prompt: '[CONTEXT]\n项目 @ repo\n[TASK]\n验收' } },
+    { agent: agentWithCwd(root) })
+  return r.ok === true && r.sprintInjected === 2
+    && executeCalls.length === 1
+    && /current_sprint: 2/.test(executeCalls[0].arguments.prompt)
+    && executeCalls[0].arguments.prompt.includes('项目 @ repo')
+})())
+await ok('capability_call 分派 subagent_dev + 契约行值不符 → 修正为 marker 值', (async () => {
+  const root = makeSprintWorkspace(3)
+  executeCalls = []
+  const r = await callTool.execute(
+    { tool: 'subagent_dev', arguments: { prompt: '[CONTEXT]\ncurrent_sprint: 1\n[TASK]\n实现' } },
+    { agent: agentWithCwd(root) })
+  return r.ok === true && r.sprintInjected === 3
+    && executeCalls.length === 1
+    && /current_sprint: 3/.test(executeCalls[0].arguments.prompt)
+    && !/current_sprint: 1/.test(executeCalls[0].arguments.prompt)
+})())
+await ok('capability_call 分派 subagent_reviewer + 值已一致 → 零改写不注入', (async () => {
+  const root = makeSprintWorkspace(4)
+  executeCalls = []
+  const p = '[CONTEXT]\ncurrent_sprint: 4\n[TASK]\n反方辩护'
+  const r = await callTool.execute(
+    { tool: 'subagent_reviewer', arguments: { prompt: p } },
+    { agent: agentWithCwd(root) })
+  return r.ok === true && r.sprintInjected === undefined
+    && executeCalls.length === 1 && executeCalls[0].arguments.prompt === p
+})())
+await ok('capability_call 分派 subagent_qa + 无 marker 工作区 → 不注入', (async () => {
+  const root = makeSprintWorkspace(null)
+  executeCalls = []
+  const p = '[CONTEXT]\n项目 @ repo\n[TASK]\n验收'
+  const r = await callTool.execute(
+    { tool: 'subagent_qa', arguments: { prompt: p } },
+    { agent: agentWithCwd(root) })
+  return r.ok === true && r.sprintInjected === undefined
+    && executeCalls.length === 1 && executeCalls[0].arguments.prompt === p
+})())
+await ok('capability_call 分派非编曲成员（subagent_lite）→ 不注入', (async () => {
+  const root = makeSprintWorkspace(5)
+  executeCalls = []
+  const p = '机械核对'
+  const r = await callTool.execute(
+    { tool: 'subagent_lite', arguments: { prompt: p } },
+    { agent: agentWithCwd(root) })
+  return r.ok === true && r.sprintInjected === undefined
+    && executeCalls.length === 1 && executeCalls[0].arguments.prompt === p
+})())
+await ok('capability_call 分派 subagent_qa + 无 prompt 参数 → 不注入', (async () => {
+  const root = makeSprintWorkspace(5)
+  executeCalls = []
+  const r = await callTool.execute(
+    { tool: 'subagent_qa', arguments: {} },
+    { agent: agentWithCwd(root) })
+  return r.ok === true && r.sprintInjected === undefined
+    && executeCalls.length === 1
+})())
+
+// ── 清理临时工作区（2026-08-17：与 kix-orchestration.test 同款纪律）──────
+for (const ws of sprintWorkspaces) fsKix.rmSync(ws, { recursive: true, force: true })
+
 // ── 汇总 ──
 console.log('\n──────────────────────────────')
 console.log(`kix-focus: ${passed} passed, ${failed} failed`)

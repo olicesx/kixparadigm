@@ -49,6 +49,11 @@ function dispatchNoAgent(name, args) {
   const exec = { name, arguments: args, token: 't', callId: 'c' }
   return preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
 }
+// 带会话 cwd 派发（checkGitCommit 的仓库根 fallback / v10 cd 提取验证需要）
+function dispatchIn(cwd, name, args) {
+  const exec = { name, arguments: args, token: 't', callId: 'c', agent: { id: 'test-agent', session: { header: { cwd } } } }
+  return preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+}
 
 let passed = 0
 let failed = 0
@@ -264,10 +269,10 @@ async function softCase(label, name, args) {
   assert.strictEqual(I.repoRootFromText('git -C C:\\work\\repo status'), 'C:\\work\\repo')
   assert.strictEqual(I.repoRootFromText('git -C "C:/work/repo" commit -am x'), 'C:/work/repo')
   assert.strictEqual(I.repoRootFromText('git status'), undefined)
-  // v10: `cd <repo> && git commit` (no -C) also resolves the repo root (WSL2 E2E boundary fix)
+  // v10：cd <repo> && git commit（无 -C）也能解析仓库根（WSL2 E2E 边界修复）
   assert.strictEqual(I.repoRootFromText('cd /root/kix-guards-e2e && git add a.txt && git commit -m x'), '/root/kix-guards-e2e')
   assert.strictEqual(I.repoRootFromText('cd "C:/work/repo" && git commit -m x'), 'C:/work/repo')
-  assert.strictEqual(I.repoRootFromText('echo cd /tmp && git status'), undefined, 'echo cd is not a directory switch')
+  assert.strictEqual(I.repoRootFromText('echo cd /tmp && git status'), undefined, 'git 前的 echo cd 不是目录切换')
   passed += 6
 
   // isDestructiveSql 语句级
@@ -407,6 +412,38 @@ async function softCase(label, name, args) {
     check('v9 自定义 GitHub 前缀：mcp__gh__ 写 main → deny', await customDispatch('mcp__gh__create_or_update_file', { owner: 'o', repo: 'r', path: 'a.ts', branch: 'main', content: 'x' }), true)
     check('v9 自定义 GitHub 前缀：旧 mcp__github__ 前缀不再误纳入 → allow', await customDispatch('mcp__github__create_or_update_file', { owner: 'o', repo: 'r', path: 'a.ts', branch: 'feature', content: 'x' }), false)
     check('v9 自定义 GitHub 前缀：新前缀只读 get → allow', await customDispatch('mcp__gh__get_issue', { owner: 'o', repo: 'r', issue_number: 1 }), false)
+  }
+
+  // ══ 10. v10.1：main 分支 commit 整链拦截（2026-08-17 部署 E2E 复验实锤）══
+  // 事故根因：DANGEROUS_GIT 缺 `commit` → isGitWrite() 对纯 `git commit` 返回
+  // false → 2b 门禁整体跳过 → checkGitCommit（分支/预算检查，v10 cd 解析的
+  // 落点）永不执行 → main 分支直接 commit 静默放行。此前 v10 单测只覆盖
+  // repoRootFromText，未测整链（部署会话实测：cd repo && git commit 成功）。
+  // 本组用真实 git 仓库做整链断言。
+  {
+    const { execFileSync } = require('node:child_process')
+    const fsg = require('node:fs')
+    const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+    const gitRepo = fsg.mkdtempSync(path.join(os.tmpdir(), 'kix-guards-commit-'))
+    git(['init', '-q'], gitRepo)
+    git(['checkout', '-q', '-b', 'main'], gitRepo)
+    git(['config', 'user.email', 'test@kix.local'], gitRepo)
+    git(['config', 'user.name', 'kix-test'], gitRepo)
+    fsg.writeFileSync(path.join(gitRepo, 'a.txt'), 'x')
+    git(['add', 'a.txt'], gitRepo)
+    git(['commit', '-qm', 'init'], gitRepo)
+    const nonRepo = fsg.mkdtempSync(path.join(os.tmpdir(), 'kix-guards-nonrepo-'))
+    check('commit：会话 cwd=仓库根（main 分支）git commit → deny（分支检查）', await dispatchIn(gitRepo, 'pwsh', { command: 'git commit -am "test"' }), true)
+    check('commit：会话 cwd≠仓库根 + cd 进入（无 -C）→ deny（v10 cd 解析 + 分支检查）', await dispatchIn(nonRepo, 'pwsh', { command: `cd ${gitRepo} && git commit -am "test"` }), true)
+    check('commit：git -C 显式仓库 + main → deny（-C 解析路径不变）', await dispatchIn(nonRepo, 'pwsh', { command: `git -C ${gitRepo} commit -am "test"` }), true)
+    check('commit：feature 分支 → allow（分支检查通过，预算冷启动 3 未超）', (async () => {
+      git(['checkout', '-q', '-b', 'feature'], gitRepo)
+      return dispatchIn(gitRepo, 'pwsh', { command: 'git commit -am "test"' })
+    })(), false)
+    check('commit：非仓库 cwd + 无 cd/-C → allow（fail-safe 不误拦）', await dispatchIn(nonRepo, 'pwsh', { command: 'git commit -am "test"' }), false)
+    check('commit：message 含 push/main 字样 → allow（v3 消息域不误拦，分支检查放行）', await dispatchIn(gitRepo, 'pwsh', { command: 'git commit -m "push main docs"' }), false)
+    fsg.rmSync(gitRepo, { recursive: true, force: true })
+    fsg.rmSync(nonRepo, { recursive: true, force: true })
   }
 
   console.log(`\n${passed} passed, ${failed} failed`)

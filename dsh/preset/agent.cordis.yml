@@ -607,7 +607,7 @@
 #   - v3 producer_closeout 收尾证据链：spec「验收标准」在档 / 任务全完成 /
 #     测试文件自 l2_verified_sha 有变更要求重验（替代 Copilot qa-signoff 深度校验
 #     中可机械的部分；worktree/SHA 数学/stash 绑定 Copilot 特有流程不移植）。
-# 单元测试：node plugins/kix-orchestration.test.js（69 断言）。
+# 单元测试：node plugins/kix-orchestration.test.js（77 断言；v10.1 Tri-Block [CONTEXT] Sprint N 容错）。
 - id: kix-orchestration
   name: ./plugins/kix-orchestration.js
 
@@ -675,9 +675,10 @@
 #     机械多步），kix 红线「验证/观察用 native 直呼（证据可回放）」不变；
 #     capability_call 亦可被 run_code SDK 子分派调用（子分派过门禁）。
 # 关闭裁剪（仅保留 search/call）：config: { enableRestrict: false }。
-# 单元测试：node plugins/kix-focus.test.js（83 断言，含枚举同步回归防线 +
+# 单元测试：node plugins/kix-focus.test.js（102 断言，含枚举同步回归防线 +
 #   symlink 部署跨平台解析：候选根链 argv[1]→realpath→插件文件，2026-08-17
-#   WSL2 E2E 发现修复；2026-08-17 jobs 常驻化 + 首次使用自动激活用例）。
+#   WSL2 E2E 发现修复；jobs 常驻化 + 首次使用自动激活；v1.2.13 lite 平台
+#   条件化 shell + 编曲成员 current_sprint 机械注入用例）。
 - id: kix-focus
   name: ./plugins/kix-focus.js
 
