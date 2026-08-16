@@ -262,7 +262,7 @@ cordis_*/goal/ralph/workflow 重型编排 → 按需（kix 主路径是 subagent
 
 | 指标 | 改造前（2026-08-15） | 现状（2026-08-16，P0+P1+P2） | 目标 |
 |---|---|---|---|
-| persona 常驻字符/token | 7,268 字符 / ~4.4K token | **v1.2.10：5,447 字符 / ~3.1K token（P1 最低 2.1K，v1.2.9 编曲模型回涨；仍在 ≤4K 预算内）** | ≤4K token |
+| persona 常驻字符/token | 7,268 字符 / ~4.4K token | **v1.2.10 二次还债：3,211 字符 / ~1.8K token（P1 最低 2.1K；v1.2.9 曾回涨至 5,447/3.1K，已压回并加预算守护）** | ≤4K token |
 | 纪律类规则承载方式 | prompt 说教 | **机制强制**（kix-discipline 插件：spec gate + green gate + spec 工具） | 机制强制 |
 | 插件数 | 5 个 JS 插件 | **7 个**（+kix-discipline + kix-orchestration） | ≥6 个 |
 | 断言回归 | 164+24+57 全绿 | **v1.2.10：installer 12 + guards 230 + cost 28 + route 68 + commands 6 组 + discipline 68 + orchestration 69 + focus 73 全绿** | 全绿 + 新插件断言 |

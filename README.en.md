@@ -110,7 +110,7 @@ kix is layered in two, and this repository ships both layers plus the ecosystem 
 
 **In one sentence**: kixparadigm gives the AI the freedom of "how to think" plus blind-spot compensation; kixpower gives "how to execute" structured team orchestration; the guard and vision plugins make DSH a complete host for kix.
 
-> **v1.2.10 rectification (DSH editions)**: fixes the KIX self-audit "0% false-positive" counterexamples — QA completion detection now excludes negated statements; control-plane guard only blocks write intent (`grep/cat/ls ~/.dsh` pass); terminal SQL uses command-position + SQL-payload statement analysis; GitHub MCP prefix is configurable; cross-vendor routing skips unregistered preference candidates; uninstalling one bilingual package no longer removes the shared vision-bridge; `engines` aligned with `process.getBuiltinModule`; persona-budget / doc-count / bilingual-parity guard and CI added; vision-bridge got regression tests and a complete-code-fence cleanup fix.
+> **v1.2.10 rectification (DSH editions)**: fixes the KIX self-audit "0% false-positive" counterexamples — QA completion detection now excludes negated statements; control-plane guard only blocks write intent (`grep/cat/ls ~/.dsh` pass); terminal SQL uses command-position + SQL-payload statement analysis; GitHub MCP prefix is configurable; cross-vendor routing skips unregistered preference candidates; uninstalling one bilingual package no longer removes the shared vision-bridge; `engines` aligned with `process.getBuiltinModule`; resident persona second debt pass down to ~1.8K tokens (CN, was ~3.1K); persona-budget / doc-count / bilingual-parity guard and CI added; vision-bridge got regression tests and a complete-code-fence cleanup fix.
 
 ---
 

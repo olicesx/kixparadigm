@@ -33,9 +33,9 @@ Ecosystem plugins (dsh-doublecheck etc.) proved these can be **hooks + tools + d
 
 ### P1 — Persona/instructions slimming ✅
 - CN persona 7,268 → 3,272 chars (↓55%); EN persona 16,432 → 14,418 (↓12%, EN keeps the full
-  English cognition layer). **v1.2.10 measured drift**: CN 5,447 chars / ~3.1K o200k tokens and
-  EN 11,851 chars / ~2.7K tokens after the v1.2.9 arranger model — still inside the ≤4K budget,
-  now guarded by `scripts/check-dsh-consistency.cjs`. Mechanized discipline compressed to "mechanism index + trigger
+  English cognition layer). **v1.2.10 second debt pass**: CN 3,211 chars / ~1.8K o200k tokens and EN 7,624 chars /
+  ~1.7K tokens after compressing the arranger model — below the P1 minimum for CN, with the
+  persona budget now enforced by `scripts/check-dsh-consistency.cjs` / `scripts/check-consistency.cjs`. Mechanized discipline compressed to "mechanism index + trigger
   phrase"; cognition layer (three-channel / duality / blind spots / routing) retained, slimmed.
 - `instructions/kixparadigm-core.instructions.md` rewritten as "authoritative full edition +
   persona is the runtime authority" (kills dual-source drift).
@@ -143,7 +143,7 @@ session end) — semantically aligned with skill on-demand discovery, avoiding b
 
 | Metric | Before | Now (P0-P4) | Target |
 |---|---|---|---|
-| Persona chars/tokens | CN 7,268 / ~4.4K | **v1.2.10 CN 5,447 / ~3.1K · EN 11,851 / ~2.7K（budget-guarded）** | ≤4K |
+| Persona chars/tokens | CN 7,268 / ~4.4K | **v1.2.10 CN 3,211 / ~1.8K · EN 7,624 / ~1.7K（budget-guarded）** | ≤4K |
 | Discipline rules carrier | prompt preaching | **mechanized (kix-discipline/kix-orchestration)** | mechanism |
 | Plugins | 5 | **8** (guards/discipline/orchestration/focus/cost/route/commands/stalled) | ≥6 |
 | Per-turn tool surface | ~85 tools / ~108KB schema | **~18 resident + search/call disclosure** | trimmed |
