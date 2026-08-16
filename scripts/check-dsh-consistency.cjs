@@ -118,8 +118,8 @@ function checkSyntax(root, label) {
 function main() {
   console.log('== kixparadigm DSH consistency check ==')
 
-  checkPersonaBudget('dsh/preset/agent.cordis.yml', 6500, 3600)
-  checkPersonaBudget('en/preset/agent.cordis.yml', 13500, 3400)
+  checkPersonaBudget('dsh/preset/agent.cordis.yml', 4500, 2600)
+  checkPersonaBudget('en/preset/agent.cordis.yml', 9500, 2600)
 
   const memories = fs.readdirSync(path.join(ROOT, 'dsh/preset/memories')).filter((f) => f.endsWith('.md'))
   if (memories.length !== 4) fail(`dsh/preset/memories 预期 4 个，实际 ${memories.length}`)

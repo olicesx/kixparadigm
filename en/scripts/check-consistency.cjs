@@ -85,8 +85,8 @@ function checkSyntax(root, label) {
 const persona = extractPersona('preset/agent.cordis.yml')
 if (persona !== undefined) {
   const est = estimateTokens(persona)
-  if (persona.length > 13500) fail(`EN persona ${persona.length} chars 超过 13500`)
-  if (est > 3400) fail(`EN persona 估算 token ${est} 超过 3400`)
+  if (persona.length > 9500) fail(`EN persona ${persona.length} chars 超过 9500`)
+  if (est > 2600) fail(`EN persona 估算 token ${est} 超过 2600`)
   ok(`EN persona: ${persona.length} chars / ~${est} est tokens`)
 }
 
