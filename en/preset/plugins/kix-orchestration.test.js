@@ -410,6 +410,46 @@ ok('isCloseoutTestPath 测试文件命中', (() => {
   return I.isCloseoutTestPath('src/tests/flow.rs') && I.isCloseoutTestPath('a.test.ts') && !I.isCloseoutTestPath('src/main.rs')
 })())
 
+// ── 10. v4：sleep 空转等待子代理检测（WSL2 实测驱动，2026-08-17）─────────
+section('v4 sleep 等待子代理检测')
+ok('实测样本：sleep + subagent description → 命中', (() => {
+  return I.isSleepWaitForSubagent({ command: 'sleep 45 && echo done', description: 'Wait for subagents to progress' })
+})())
+ok('实测样本：长 sleep + broad-scope subagent → 命中', (() => {
+  return I.isSleepWaitForSubagent({ command: 'sleep 240 && echo done', description: 'Extended wait for broad-scope subagent C' })
+})())
+ok('测试退避 sleep（description 无 subagent）→ 不命中（0% 误报）', (() => {
+  return !I.isSleepWaitForSubagent({ command: 'sleep 5', description: 'Retry backoff before re-running test' })
+})())
+ok('复合命令内 sleep + 子代理中文 description → 命中', (() => {
+  return I.isSleepWaitForSubagent({ command: 'cd /root/dae && sleep 90; echo done', description: '等待子代理完成' })
+})())
+ok('非 sleep 命令（description 提及 subagent）→ 不命中', (() => {
+  return !I.isSleepWaitForSubagent({ command: 'git status', description: 'Wait for subagent' })
+})())
+ok('pre→post 一次性注入提醒，第二次同模式不再注入', (async () => {
+  await dispatchPre('bash', { command: 'sleep 60 && echo done', description: 'Wait for subagent C' }, 'orch-sleep')
+  const exec = { name: 'bash', arguments: { command: 'sleep 60' }, token: 't', callId: 'c', agent: { id: 'orch-sleep', session: { header: sessionHeader } } }
+  const d = await postExecute[0](exec, { isError: false }, () => Promise.resolve({ kind: 'accept' }))
+  const injected = d.kind === 'accept' && Array.isArray(d.additionalContexts) && d.additionalContexts.length === 1
+    && d.additionalContexts[0].content.some((c) => c.text.includes('sleep'))
+  // 同会话第二次同模式调用 → sleepReminded 已置位，不再注入
+  await dispatchPre('bash', { command: 'sleep 60', description: 'wait subagent again' }, 'orch-sleep')
+  const d2 = await postExecute[0](exec, { isError: false }, () => Promise.resolve({ kind: 'accept' }))
+  return injected && (d2.additionalContexts === undefined || d2.additionalContexts.length === 0)
+})())
+ok('sleep 提醒不烧 handoff remind 槽位（独立标志）', (async () => {
+  // 先触发 sleep 提醒（burn 掉一次性），再触发 handoff remind → 仍应注入
+  await dispatchPre('bash', { command: 'sleep 30', description: 'Wait for subagent B' }, 'orch-slot')
+  const execBash = { name: 'bash', arguments: { command: 'sleep 30' }, token: 't', callId: 'c', agent: { id: 'orch-slot', session: { header: sessionHeader } } }
+  await postExecute[0](execBash, { isError: false }, () => Promise.resolve({ kind: 'accept' }))
+  await dispatchPre('subagent', { prompt: 'current_sprint: 8' }, 'orch-slot')
+  const execSub = { name: 'subagent', arguments: { prompt: 'x' }, token: 't', callId: 'c', agent: { id: 'orch-slot', session: { header: sessionHeader } } }
+  const d = await postExecute[0](execSub, { isError: false }, () => Promise.resolve({ kind: 'accept' }))
+  return d.kind === 'accept' && Array.isArray(d.additionalContexts) && d.additionalContexts.length === 1
+    && d.additionalContexts[0].content.some((c) => c.text.includes('marker')) // handoff reasons 而非 sleep 文案
+})())
+
 // ── 汇总 ──────────────────────────────────────────────────────────────────
 console.log('\n──────────────────────────────')
 console.log(`kix-orchestration: ${passed} passed, ${failed} failed`)

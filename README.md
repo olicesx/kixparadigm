@@ -100,7 +100,7 @@ kix 体系分两层，本仓库把两层 + 生态依赖一次性装齐：
 | **生态辅助** | `handoff` / `write-a-skill` / `improve-codebase-architecture` 等 17 技能 | 会话交接、技能创建、架构改进、TDD/教学/排查等通用方法论 |
 | **机械门禁** | `kix-guards` 插件 | commit budget、feature branch、force push、危险 SQL、控制面文件保护、人类确认点（164 组断言；v5 聊天内提问 + v4 GitHub 只读误拦修复；v6 gh CLI 写保护 + 重复尝试自动拒绝） |
 | **纪律机制化** | `kix-discipline` 插件 | 需求三检契约 gate + 验证 gate：实现编辑前查 spec 契约、回合结束无测试提醒、`kix_discipline_spec` 契约工具、`/kix-discipline` 命令（63 组断言，2026-08-16 插件化改造 P0；拒绝/转交弹问 v2） |
-| **编排交接门禁** | `kix-orchestration` 插件 | subagent 交接前校验 sprint marker / plan+progress / blocker / QA 完成度（48 组断言，2026-08-16 P2 补缺）；v2 QA 返回侧一致性校验（subagent/end）；v3 producer_closeout 收尾证据链（spec 验收标准在档/任务全完成/测试变更要求重验） |
+| **编排交接门禁** | `kix-orchestration` 插件 | subagent 交接前校验 sprint marker / plan+progress / blocker / QA 完成度（48 组断言，2026-08-16 P2 补缺）；v2 QA 返回侧一致性校验（subagent/end）；v3 producer_closeout 收尾证据链（spec 验收标准在档/任务全完成/测试变更要求重验）；v4 sleep 空转等待子代理一次性提醒（2026-08-17 WSL2 实测驱动，共 55 组断言） |
 | **极简+渐进披露** | `kix-focus` 插件 | 三层递进：tools.restrict 把每轮工具面从 85 个（~108KB schema）裁到 ~18 个常驻核心集；`kix_capability_search` 按需查目录（v4 带参数名元数据 + 长尾兜底组：新装工具零配置即目录可达）+ `kix_capability_call` 代理执行（走完整门禁管线）；与 PTC/Code Mode 协同（66 组断言，2026-08-16 P4） |
 | **成本纪律** | `kix-cost` 插件 | 子代理思考强度归一化（thinker→max、其余 deepseek→high）+ lite 档首选路由探测自动回退（28 组断言，v5.8；多轮回退路由缓存 bug 修复 2026-08-17） |
 | **路由层** | `kix-route` 插件 | 哨兵模型名（`kix-route:cross/vision/thinker`）→ 运行时可用路由自动解析：跨厂商取反/识图模型/深思考档位；偏好表可配置（`modelPreference`/`crossProviderOrder` 经插件 config 覆盖，2026-08-17）（67 组断言，v5.9.1） |
@@ -149,7 +149,7 @@ kixparadigm/
 ## 🧪 开发与验证
 
 ```bash
-npm test                                  # 全插件回归：门禁 199 + 纪律 63 + 编排 48 + 聚焦 66 + 成本 28 + 路由 67 断言
+npm test                                  # 全插件回归：门禁 199 + 纪律 63 + 编排 55 + 聚焦 66 + 成本 28 + 路由 67 断言
 node scripts/verify-guards.js             # 已安装 preset 与 bundle 门禁对照
 node scripts/verify-vision-bridge-resolution.cjs  # vision-bridge 加载链全链路
 pwsh -File .\scripts\sync-dsh-preset.ps1 -DryRun   # 预览 preset 差异

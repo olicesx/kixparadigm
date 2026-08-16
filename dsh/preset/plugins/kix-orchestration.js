@@ -291,6 +291,27 @@ function baselineShaFromProgress(progressMd) {
   return m ? m[1] : undefined
 }
 
+// ── v4（2026-08-17，WSL2 实测驱动）：sleep 空转等待子代理检测 ─────────────
+// 实测（dae 审查会话）：主线程 8 次 `sleep 45~240s` 占住回合等后台子代理，
+// description 全部含 subagent/子代理 字样。DSH 机制事实（dsh-subagent
+// notifySettlement 源码）：结算投递无条件（token 耗尽/失败/取消/拆卸都通知
+// 父级），父级 idle → followup 自动开新回合——收回合零丢失风险，sleep 等待
+// 纯属浪费延迟与回合占用。检测面刻意收窄（0% 误报纪律）：bash 命令含裸
+// sleep 数字 **且** description 提及 subagent/子代理 → 一次性提醒改收回合。
+// 测试退避/重试/等锁的 sleep（description 不匹配）不提醒；等后台 job 的
+// 正确形态是 job_output wait:true（另一模式，不在本检测面）。
+const SLEEP_WAIT_CMD = /(^|[;&|]\s*)sleep\s+\d/
+const SLEEP_WAIT_DESC = /subagent|子代理/i
+const SLEEP_WAIT_REMIND =
+  'kix-orchestration: 检测到用 sleep 等待后台子代理。DSH 的结算/报告投递会无条件唤醒父级（收回合后自动开新回合，无丢失风险）；请改为：独立工作做完仍缺结果 → 简短状态后结束回合，等 subagent-settled/subagent-report 唤醒继续。sleep 只用于测试与超时语义（退避/等锁）。'
+
+/** bash sleep 等待子代理判定（纯函数，测试经 __internals 验证）。 */
+function isSleepWaitForSubagent({ command, description }) {
+  const cmd = typeof command === 'string' ? command : ''
+  const desc = typeof description === 'string' ? description : ''
+  return SLEEP_WAIT_CMD.test(cmd) && SLEEP_WAIT_DESC.test(desc)
+}
+
 function makeUserMessage(text) {
   return {
     id: randomUUID(),
@@ -319,7 +340,7 @@ module.exports = {
         const session = agent && agent.session
         const header = session && session.header
         const cwd = header && header.cwd && typeof header.cwd === 'string' ? header.cwd : undefined
-        st = { enabled: true, reminded: false, returnReminded: false, workspaceRoot: defaultRoot || cwd || undefined }
+        st = { enabled: true, reminded: false, returnReminded: false, sleepReminded: false, workspaceRoot: defaultRoot || cwd || undefined }
         states.set(key, st)
       }
       return st
@@ -358,11 +379,26 @@ module.exports = {
       }
     }
 
-    // ── pre-execute：subagent 交接门禁 ────────────────────────────────────
+    // ── pre-execute：subagent 交接门禁 + v4 sleep 等待检测 ────────────────
     ctx.on('tools/pre-execute', async (exec, next) => {
       const name = exec && exec.name
       const tool = (name || '').toLowerCase()
-      if (!SUBAGENT_TOOLS.has(tool)) return next()
+      if (!SUBAGENT_TOOLS.has(tool)) {
+        // v4：sleep 空转等待子代理（一次性提醒）。刻意不参与 intensity
+        // block/ask——sleep 是编排卫生问题不是危险操作，remind 恰当。
+        if (tool === 'bash') {
+          const st = exec && exec.agent ? stateFor(exec.agent) : undefined
+          if (st && st.enabled && !st.sleepReminded) {
+            const args = exec && (exec.arguments ?? exec.args)
+            const cmd = args && typeof args.command === 'string' ? args.command : ''
+            const desc = args && typeof args.description === 'string' ? args.description : ''
+            if (isSleepWaitForSubagent({ command: cmd, description: desc })) {
+              st.pendingSleepRemind = { callId: exec.callId }
+            }
+          }
+        }
+        return next()
+      }
 
       const args = exec && (exec.arguments ?? exec.args)
       const agent = exec && exec.agent
@@ -441,11 +477,20 @@ module.exports = {
       return next()
     })
 
-    // ── post-execute：注入 remind ─────────────────────────────────────────
+    // ── post-execute：注入 remind（handoff 槽 + v4 sleep 槽各自独立）──────
     ctx.on('tools/post-execute', async (exec, result, next) => {
       const agent = exec && exec.agent
       const st = agent ? stateFor(agent) : undefined
-      if (!st || !st.enabled || !st.pendingRemind) return next()
+      if (!st || !st.enabled) return next()
+      // v4：sleep 等待提醒（独立槽位 + 独立一次性标志，不烧 handoff 的
+      // pendingRemind/reminded）。callId 不匹配时落回 handoff 槽继续判，
+      // 两个槽的工具面不相交（bash vs subagent*），互不干扰。
+      if (st.pendingSleepRemind && st.pendingSleepRemind.callId === (exec && exec.callId)) {
+        st.pendingSleepRemind = false
+        st.sleepReminded = true
+        return { kind: 'accept', additionalContexts: [makeUserMessage(SLEEP_WAIT_REMIND)] }
+      }
+      if (!st.pendingRemind) return next()
       // 只消费与发起调用同 callId 的 post-execute；dispatch 抛错（不经
       // post-execute）时标志滞留，下一次无关工具调用不会错位注入。
       if (st.pendingRemind.callId !== (exec && exec.callId)) return next()
@@ -529,7 +574,7 @@ module.exports = {
       },
     })
 
-    ctx.logger?.info?.('[kix-orchestration] 编排交接门禁已挂载（subagent pre-execute：sprint marker/plan/progress/blocker 校验 + producer_closeout 收尾证据链 v3；subagent/end：QA 返回侧一致性校验 v2）')
+    ctx.logger?.info?.('[kix-orchestration] 编排交接门禁已挂载（subagent pre-execute：sprint marker/plan/progress/blocker 校验 + producer_closeout 收尾证据链 v3；subagent/end：QA 返回侧一致性校验 v2；bash sleep 等待子代理一次性提醒 v4）')
   },
 }
 
@@ -542,6 +587,9 @@ module.exports.__internals = {
   lastAssistantText,
   isCloseoutTestPath,
   baselineShaFromProgress,
+  isSleepWaitForSubagent,
+  SLEEP_WAIT_CMD,
+  SLEEP_WAIT_DESC,
   makeUserMessage,
   SUBAGENT_TOOLS,
   SPRINT_MARKER,

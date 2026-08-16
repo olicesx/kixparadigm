@@ -123,6 +123,19 @@ subagent（run_in_background 按需）:
     硬刷新（Ctrl+F5）即恢复。
   - 零配置基线：**异质 prompt 视角**（不同角色/不同关注维度）始终可用
 
+### §3.1 子代理结果回传通道（2026-08-17 WSL2 实测固化）
+
+后台（continuable）子代理有两条回传通道，机制事实来自 dsh-subagent 源码（`notifySettlement`/`deliverReport`）+ dae 审查会话实测：
+
+| 通道 | 触发方 | 语义 | 成本 |
+|---|---|---|---|
+| `report` 工具 | 子代理运行中主动调 | 只入父级**后续**回合（不结束子代理回合、不改变生命周期）；运行中中继 | 每调一条注入 |
+| 结算通知 `subagent-settled` | 运行时（Activation 结算） | **无条件**投递：end_turn / token 上限 / 模型失败 / 取消 / 拆卸都通知；带终止原因 + 最终 assistant 消息全文 | 每子代理恰好一条 |
+
+- **唤醒机制**：父级 idle → `followup` 自动开新回合；运行中 → `steer` 注入当前回合。⇒ 父级**收回合等待零丢失风险**（实测：主回合结束后 report/settled 各自唤醒短回合完成整合）。
+- **双通道冗余（实测坑）**：子代理「`report` 全文 + 最终消息再放全文」→ 父级为同一结果付两次注入 + 两次唤醒回合。dsh-subagent README 明文 *"A child that both reports and settles costs the parent both"*。范式约定（persona 已载）：**单通道交付**——默认最终消息即完整报告，勿再 `report` 同文。
+- **sleep 等待反模式（实测坑）**：8 次 `sleep 45~240s` 占住回合等子代理 = 纯浪费延迟（sleep 步思考≈0 但回合被钉住）。正确形态：独立工作做完 → 简短状态 → 结束回合等唤醒。kix-orchestration v4 对「bash 裸 sleep + description 提及 subagent/子代理」做一次性机械提醒（0% 误报纪律：测试退避/等锁的 sleep 不命中）。
+
 ## 4. DSH 原生特性利用（范式增强点）
 
 kix 的原始编排假设只有 runSubagent；DSH 提供更结构化的原生能力，范式应优先使用：
