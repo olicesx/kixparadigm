@@ -1,6 +1,14 @@
 // 量化 kix-focus 裁剪效果:改造前(85 工具全量) vs 改造后(常驻集)
+// 用法: node scripts/quantify-focus.cjs <工具目录 JSON 文本文件路径>
+//   导出方法: 在 DSH 会话内 cordis_inspect_query Tool.listTools, 把输出存成文本文件
 const fs = require('fs')
-const raw = fs.readFileSync('C:/Users/37112/AppData/Local/Temp/dsh-spill-49zQmj/session-bc5f9e0200fc/79bf7c72fb30-cordis_inspect_query.txt', 'utf8')
+const inputPath = process.argv[2]
+if (!inputPath) {
+  console.error('用法: node scripts/quantify-focus.cjs <工具目录 JSON 文本文件>')
+  console.error('  先在 DSH 会话内用 cordis_inspect_query Tool.listTools 导出工具目录, 存为文本文件后传入')
+  process.exit(1)
+}
+const raw = fs.readFileSync(inputPath, 'utf8')
 // 切分工具条目:按顶层 "name": 出现位置切块
 const re = /"name": "([^"]+)"/g
 const chunks = []

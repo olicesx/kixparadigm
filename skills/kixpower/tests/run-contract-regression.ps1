@@ -288,7 +288,7 @@ ci_pending: false
     Set-Content -LiteralPath $dangerSql -Value 'DROP TABLE users;' -Encoding utf8
     $blastCases = @(
         @{ name = 'indirect-control-plane'; tool = 'run_in_terminal'; command = '$p=Join-Path $HOME ''.copilot''; Set-Content -Path $p x'; deny = $true },
-        @{ name = 'file-uri-control-plane'; tool = 'create_file'; filePath = 'file:///C:/Users/testuser/.copilot/agents/x.agent.md'; deny = $true },
+        @{ name = 'file-uri-control-plane'; tool = 'create_file'; filePath = ('file:///' + ($HOME -replace '\\', '/') + '/.copilot/agents/x.agent.md'); deny = $true },
         @{ name = 'sql-file-danger'; tool = 'run_in_terminal'; command = "psql -f `"$dangerSql`""; deny = $true },
         @{ name = 'sql-file-safe'; tool = 'run_in_terminal'; command = "psql -f `"$safeSql`""; deny = $false },
         @{ name = 'github-no-branch'; tool = 'mcp_github_create_or_update_file'; command = 'remote write without branch'; deny = $true },

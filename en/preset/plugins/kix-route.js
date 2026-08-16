@@ -75,8 +75,24 @@ const GENERIC_CROSS_ORDER = ['deepseek-official', 'zai-coding-cn']
 // 各 provider 内部模型偏好（新的在前）；目录里不在表中的模型排在表后（目录序）。
 const MODEL_PREFERENCE = {
   'deepseek-official': ['deepseek-v4-flash'],
-  'zai-coding-cn': ['glm-5.3', 'glm-5.2', 'glm-5.1', 'glm-5-turbo', 'glm-4.7', 'glm-4.5-air'],
+  'zai-coding-cn': ['glm-5.3', 'glm-5.2', 'glm-5.1', 'glm-5-turbo', 'glm-4.7', 'glm-5.5', 'glm-4.5-air'],
   'zai-vision': ['glm-4.6v', 'glm-4.6v-flash', 'glm-4.5v'],
+}
+
+// ── 2026-08-17（外部审查 5.6「硬编码偏好」技术债最小配置化）────────────────
+// 上述三表是默认偏好；插件 config 可覆盖（agent.cordis.yml 该行 config 传
+// crossProviderOrder / genericCrossOrder / modelPreference 的任意子集，浅合并
+// 到默认表）。动机：模型线升级（如新增 glm-5.5）只改 preset config 或默认表
+// 一处，不必改解析逻辑。行为默认零变化（不传 config = 旧表）。
+// 运行时可变副本：模块级纯函数读默认表；apply 内合并 config 后经闭包传入
+// 解析路径（orderedModels/crossProviderOrder 经 options 注入，测试可覆盖）。
+function mergePreferences(config) {
+  const cfg = config || {}
+  return {
+    crossProviderOrder: { ...CROSS_PROVIDER_ORDER, ...(cfg.crossProviderOrder || {}) },
+    genericCrossOrder: cfg.genericCrossOrder || GENERIC_CROSS_ORDER,
+    modelPreference: { ...MODEL_PREFERENCE, ...(cfg.modelPreference || {}) },
+  }
 }
 
 /**
@@ -106,9 +122,10 @@ function registeredProviders(llm) {
   }
 }
 
-/** provider 内模型排序：偏好表 ∩ 目录 在前，其余按目录序追加。 */
-function orderedModels(provider, listedIds) {
-  const pref = MODEL_PREFERENCE[provider] ?? []
+/** provider 内模型排序：偏好表 ∩ 目录 在前，其余按目录序追加。
+ * prefs 可注入（mergePreferences 产物；默认读模块级 MODEL_PREFERENCE）。 */
+function orderedModels(provider, listedIds, prefs) {
+  const pref = (prefs && prefs.modelPreference ? prefs.modelPreference : MODEL_PREFERENCE)[provider] ?? []
   const listed = new Set(listedIds)
   const head = pref.filter((id) => listed.has(id))
   const tail = listedIds.filter((id) => !pref.includes(id))
@@ -122,7 +139,7 @@ function orderedModels(provider, listedIds) {
  * resolveModelInfo 单个模型失败仍试下一个（正常降级），但目录整体不可达
  * 不再静默伪装成「无模型」。
  */
-async function pickModel(llm, provider, { wantImage = false, signal } = {}) {
+async function pickModel(llm, provider, { wantImage = false, signal, prefs } = {}) {
   let listed
   try {
     listed = await llm.listModels(provider)
@@ -132,7 +149,7 @@ async function pickModel(llm, provider, { wantImage = false, signal } = {}) {
   }
   // 契约防御：非数组返回（目录破坏）按空目录处理，不让裸 TypeError 逃出 pickModel
   const entries = Array.isArray(listed) ? listed : []
-  const ids = orderedModels(provider, entries.map((m) => m && m.id).filter((id) => typeof id === 'string'))
+  const ids = orderedModels(provider, entries.map((m) => m && m.id).filter((id) => typeof id === 'string'), prefs)
   for (const id of ids) {
     if (signal?.aborted) return undefined // 取消后不再浪费探测；中止语义由循环层 throwIfAborted 收口
     try {
@@ -147,11 +164,14 @@ async function pickModel(llm, provider, { wantImage = false, signal } = {}) {
   return undefined
 }
 
-/** 取反候选 provider 顺序：偏好表在前（剔除父厂商），其余已注册异厂商按目录序追加。 */
-function crossProviderOrder(llm, parentProvider) {
+/** 取反候选 provider 顺序：偏好表在前（剔除父厂商），其余已注册异厂商按目录序追加。
+ * prefs 可注入（mergePreferences 产物；默认读模块级表）。 */
+function crossProviderOrder(llm, parentProvider, prefs) {
   const parentVendor = vendorOf(parentProvider)
   const registered = registeredProviders(llm)
-  const head = (CROSS_PROVIDER_ORDER[parentVendor] ?? GENERIC_CROSS_ORDER).filter(
+  const table = prefs && prefs.crossProviderOrder ? prefs.crossProviderOrder : CROSS_PROVIDER_ORDER
+  const generic = prefs && prefs.genericCrossOrder ? prefs.genericCrossOrder : GENERIC_CROSS_ORDER
+  const head = (table[parentVendor] ?? generic).filter(
     (p) => vendorOf(p) !== parentVendor,
   )
   const tail = registered.filter((p) => vendorOf(p) !== parentVendor && !head.includes(p))
@@ -159,22 +179,22 @@ function crossProviderOrder(llm, parentProvider) {
 }
 
 /** cross：父厂商取反，第一个可用异厂商模型。 */
-async function resolveCrossRoute(llm, parentProvider, signal) {
-  for (const provider of crossProviderOrder(llm, parentProvider)) {
-    const hit = await pickModel(llm, provider, { signal })
+async function resolveCrossRoute(llm, parentProvider, signal, prefs) {
+  for (const provider of crossProviderOrder(llm, parentProvider, prefs)) {
+    const hit = await pickModel(llm, provider, { signal, prefs })
     if (hit !== undefined) return hit
   }
   return undefined
 }
 
 /** vision：zai-vision 优先（仅当已注册），其后任何 provider 中第一个声明 image 输入的模型。 */
-async function resolveVisionRoute(llm, signal) {
+async function resolveVisionRoute(llm, signal, prefs) {
   const registered = registeredProviders(llm)
   const order = registered.includes('zai-vision')
     ? ['zai-vision', ...registered.filter((p) => p !== 'zai-vision')]
     : registered
   for (const provider of order) {
-    const hit = await pickModel(llm, provider, { wantImage: true, signal })
+    const hit = await pickModel(llm, provider, { wantImage: true, signal, prefs })
     if (hit !== undefined) return hit
   }
   return undefined
@@ -238,9 +258,12 @@ function thinkerFailText() {
 
 module.exports = {
   name: 'kix-route',
-  apply(ctx) {
+  apply(ctx, config) {
     // 成功解析按 agent 缓存（稳定优先）；失败不缓存——中途注册的 provider 下一请求即生效。
     const routes = new WeakMap()
+    // 2026-08-17：偏好表可经插件 config 覆盖（mergePreferences 浅合并默认表；
+    // 不传 config = 行为零变化）。模型线升级只改 preset config，不动解析逻辑。
+    const prefs = mergePreferences(config)
 
     ctx.on('agent/request', async (payload, next) => {
       const resolved = await next()
@@ -266,8 +289,8 @@ module.exports = {
       let hit = cached.hit
       if (hit === undefined) {
         try {
-          if (tier === 'cross') hit = await resolveCrossRoute(llm, resolved.provider, payload.signal)
-          else if (tier === 'vision') hit = await resolveVisionRoute(llm, payload.signal)
+          if (tier === 'cross') hit = await resolveCrossRoute(llm, resolved.provider, payload.signal, prefs)
+          else if (tier === 'vision') hit = await resolveVisionRoute(llm, payload.signal, prefs)
           else hit = await resolveThinkerRoute(llm, payload.signal)
         } catch (e) {
           // 2026-08-16（审查修复，错误分类塌缩）：probe 错误 = 目录/服务暂不可达，
@@ -334,6 +357,7 @@ module.exports.__internals = {
   resolveCrossRoute,
   resolveVisionRoute,
   resolveThinkerRoute,
+  mergePreferences,
   sentinelTierOf,
   decideTierAction,
   crossFailText,

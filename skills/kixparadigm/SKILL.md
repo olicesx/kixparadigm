@@ -106,20 +106,38 @@ kixParadigm 革新了**怎么思考**（自由推理 + 并发验证），但**�
 
 详见 [`kixpower-review.prompt.md`](../../../AppData/Roaming/Code/User/prompts/kixpower-review.prompt.md)（位于 VS Code 用户 prompts 目录，即 `VSCODE_USER_PROMPTS_FOLDER`）§评论格式规范 / §发布纪律 / §证据门禁 / §反方辩护测试 / §review-of-review。
 
-## VS Code 机制对齐（2026-08-01 实证）
+## VS Code 机制对齐（2026-08-16 审计修正）
 
-> 本范式运行在 VS Code Copilot 上，机制对齐决定设计是否真实生效。以下为已实证的机制事实（详见 [`../kixpower/hooks/`](../kixpower/hooks/) 与官方 agent-customization 文档）。
+> 本范式运行在 VS Code Copilot 上，机制对齐决定设计是否真实生效。以下机制事实经 2026-08-16 审计（对照本机 copilot-agent 运行时会话日志 + [GitHub 官方 hooks-reference](https://docs.github.com/en/copilot/reference/hooks-reference) + awesome-copilot 参考实现）修正，详见 [`kix-vscode-mechanism-audit.md`](../../kix-vscode-mechanism-audit.md)。
 
-### Hook 字段名（生死项 — 已修复）
+### Hook 载荷双格式（生死项 — 2026-08-16 修正）
 
-- VS Code hook 输入顶层字段 **snake_case**：`tool_name` / `tool_input` / `hook_event_name` / `cwd`
-- `tool_input` **内部**属性 camelCase（VS Code 工具参数）：`tool_input.filePath` / `tool_input.command`
-- PowerShell `ConvertFrom-Json` **下划线敏感**：`$hookInput.toolName` 读不到 `tool_name` → 静默放行。**修 hook 必须用 cmd 重定向喂官方 schema 实测 deny/allow 双向**
+- hook 输入**有两种格式，由配置的事件名大小写决定**：camelCase 事件名（`preToolUse`）→ 字段 camelCase（`toolName`/`toolArgs`）；PascalCase 事件名（`PreToolUse`）→ 字段 snake_case（`tool_name`/`tool_input`）
+- **本机 copilot-agent 运行时（1.0.70+）实测**：preToolUse 载荷是 `toolCalls:[{id,name,args}]` **数组**（args 为 JSON 字符串）；postToolUse 是 `toolName`/`toolArgs`（toolArgs 为 JSON 字符串）。**按 `tool_name`/`tool_input` 写的 ps1 hook 在此载荷下恒空 → 静默放行（实测 `git push --force origin main` exit 0 通过）**
+- PascalCase `PreToolUse` 下 `tool_name` 报 **Claude 工具名**（`Bash`/`Read`/`Write`/`Edit`/`Grep`/`Glob`/`WebFetch`/`WebSearch`/`AskUserQuestion`/`TodoWrite`/`Agent`）
+- **修 hook 必须用 cmd 重定向喂官方 schema（或真实载荷）实测 deny/allow 双向**；ps1 兼容三形态解析见 audit §5 P0
+
+### 工具名表（2026-08-16 修正 — 旧扩展名已失效）
+
+- 官方工具名：`ask_user` / `bash` / `create` / `edit` / `glob` / `grep` / `powershell` / `task` / `view` / `web_fetch`（+ `web_search`、`update_todo`、`read_powershell` 实测出现）
+- **旧扩展名 `run_in_terminal` / `create_and_run_task` / `replace_string_in_file` / `apply_patch` / `insert_edit_into_file` / `edit_notebook_file` / `create_file` / `create_directory` / `delete_file` / `vscode_renameSymbol` 在 copilot-agent 1.0.70+ 已不存在** —— 按旧名写分类的门禁全部匹配不上
+- GitHub MCP 工具在真实运行时命名为 **`GitHub-*`**（如 `GitHub-create_or_update_file`、`GitHub-add_issue_comment`、`GitHub-push_files`），不是 `mcp_github_*`（ps1）也不是 `mcp__github__*`（DSH 自命名）
+- 脚本内工具分类必须**同时认运行时名 + Claude 名 + 旧名**
 
 ### Agent hooks 需显式启用
 
 - agent frontmatter 的 `hooks:` 字段需 `chat.useCustomAgentHooks: true` 才运行；settings.json 已加
-- 用户环境 autoApprove 全开 → hooks 与 `vscode_askQuestions` 是仅剩两道闸
+- 用户环境 autoApprove 全开 → hooks 与 `ask_user` 是仅剩两道闸；**CLI 侧另有 `permissionRequest` 事件可在权限服务前程序化 allow/deny 短路（kix 未接，audit §5 P1）**
+
+### Hook 事件表（2026-08-16 修正 — 官方 camelCase 名）
+
+- 官方 14 事件：`sessionStart`/`sessionEnd`/`userPromptSubmitted`/`userPromptTransformed`/`preToolUse`/`postToolUse`/`postToolUseFailure`/`errorOccurred`/`agentStop`/`subagentStart`/`subagentStop`/`preCompact`/`permissionRequest`（CLI only）/`notification`（CLI only）
+- kix 旧文档的 Claude 风格名（`SessionStart`/`UserPromptSubmit`/`PreToolUse`/`Stop`…）已过时；**交接/校验类门禁应挂 `subagentStop` + `matcher(agentName)`**，而非在 PreToolUse 里解析 runSubagent 参数
+
+### 退出码（2026-08-16 修正 — preToolUse 语境下与旧认知相反）
+
+- `0` 成功（stdout 解析为输出 JSON）；`2` 默认警告，**但 preToolUse/permissionRequest 下 2 = deny（即使 stdout 报 allow 也拒）**；其他非零默认 fail-open，**但 preToolUse fail-closed（非零即 deny "hook errored"）**；**超时一律 fail-open**
+- **ps1 崩溃路径绝不能 exit 0**（静默放行）；异常 catch → 输出 deny + `exit 2`
 
 ### Skill 渐进式披露（三级）
 
@@ -132,6 +150,7 @@ kixParadigm 革新了**怎么思考**（自由推理 + 并发验证），但**�
 - agent body 每次被选/被调都进上下文 = **常驻成本** → body 长度是负债，定期瘦身
 - 官方支持 multi-perspective review（同 agent 多 prompt 视角）→ 三通道官方背书
 - 子 agent 独立上下文窗口，只返回摘要 = 官方上下文隔离
+- subagent 事件：**内置 general-purpose agent 不发 subagentStart/subagentStop**；explore/task 等 YAML agents 与自定义 agents 发——kixpower 团队 agent 会发，交接门禁可挂 `subagentStop`
 
 ### 上下文管理
 

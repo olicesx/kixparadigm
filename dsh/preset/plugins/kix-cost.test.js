@@ -127,6 +127,37 @@ async function main() {
   check('llm 缺失 → 保留首选路由', r.provider === 'zai-coding-cn' && r.model === 'glm-4.7')
   services.llm = llm
 
+  // 8b. 2026-08-17 修复回归（外部审查 5.6 发现 + 源码复核确认）：lite 回退后
+  // 同一子代理的第二轮请求必须保持回退路由。旧实现只缓存 'fallback' 标签，
+  // 第二轮跳过探测块 → config=resolved 回到不可用的 zai/glm-4.7 → 请求失败。
+  const liteMultiAgent = { options: { provider: 'zai-coding-cn', model: 'glm-4.7', maxTokens: 8192, subagentDepth: 1 } }
+  const badLlm2 = {
+    listProviders: () => [{ provider: 'deepseek-official' }], // 无 zai → 首选路由不可用
+    resolveModelInfo: async (p, m) => {
+      if (p === 'deepseek-official' && m === 'deepseek-v4-flash') return {}
+      throw new Error('unknown model')
+    },
+  }
+  services.llm = badLlm2
+  services.agentDefaultModel = { currentSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-v4-flash' }) }
+  const seedRoute = { provider: 'zai-coding-cn', model: 'glm-4.7', maxTokens: 8192 }
+  r = await dispatch({ agent: liteMultiAgent, signal: new AbortController().signal }, seedRoute)
+  check('lite 多轮①首轮回退 → deepseek-official', r.provider === 'deepseek-official' && r.model === 'deepseek-v4-flash')
+  // 关键断言：第二轮（同 agent、同 seed 首选路由）必须仍应用回退路由
+  r = await dispatch({ agent: liteMultiAgent, signal: new AbortController().signal }, seedRoute)
+  check('lite 多轮②第二轮保持回退路由（旧 bug：回到不可用 zai/glm-4.7）', r.provider === 'deepseek-official' && r.model === 'deepseek-v4-flash')
+  r = await dispatch({ agent: liteMultiAgent, signal: new AbortController().signal }, seedRoute)
+  check('lite 多轮③第三轮保持回退路由', r.provider === 'deepseek-official' && r.model === 'deepseek-v4-flash')
+  // 首选路由可用场景的多轮：缓存 {ok:true} → 第二轮不改写
+  const liteOkMulti = { options: { provider: 'zai-coding-cn', model: 'glm-4.7', maxTokens: 8192, subagentDepth: 1 } }
+  services.llm = llm
+  const okSeed = { provider: 'zai-coding-cn', model: 'glm-4.7', maxTokens: 8192 }
+  r = await dispatch({ agent: liteOkMulti, signal: new AbortController().signal }, okSeed)
+  const r2 = await dispatch({ agent: liteOkMulti, signal: new AbortController().signal }, okSeed)
+  check('lite 可用多轮 → 两轮均保留首选路由', r.provider === 'zai-coding-cn' && r2.provider === 'zai-coding-cn')
+  services.agentDefaultModel = defaults
+  services.llm = llm
+
   // 9. probeRoute 纯函数
   check('probeRoute: 可用路由 → true', await probeRoute(llm, 'zai-coding-cn', 'glm-4.7', undefined) === true)
   check('probeRoute: 未知模型 → false', await probeRoute(llm, 'zai-coding-cn', 'glm-9.9', undefined) === false)

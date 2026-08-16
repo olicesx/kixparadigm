@@ -174,6 +174,44 @@ ok('fallback query 过滤按成员名（组级统计不变）', (() => {
   const fb = r.find((g) => g.id === 'other')
   return fb !== undefined && fb.toolCount === 2
 })())
+
+// ── 3c. matchedToolMeta（2026-08-17，外部审查 5.6：search 结果带参数名）────
+section('search 带工具元数据（参数名披露）')
+const metaSchemas = [
+  { name: 'mcp__github__get_issue', description: 'Get issue', parameters: { properties: { owner: {}, repo: {}, issue_number: {} } } },
+  { name: 'mcp__github__get_pull_request', description: 'Get PR', parameters: { properties: { owner: {}, pull_number: {} } } },
+  { name: 'mcp__github__create_issue', description: 'Create issue', parameters: { properties: { owner: {}, title: {} } } },
+  { name: 'mcp__playwright__browser_click', description: 'Click', parameters: { properties: { target: {} } } },
+]
+ok('query 命中 → matchedTools 带 name/description/参数名', (() => {
+  const r = I.searchCapabilities(metaSchemas, 'issue')
+  const gh = r.find((g) => g.id === 'github')
+  return gh !== undefined && Array.isArray(gh.matchedTools)
+    && gh.matchedTools.some((m) => m.name === 'mcp__github__get_issue'
+      && m.parameters.includes('owner') && m.parameters.includes('issue_number')
+      && typeof m.description === 'string')
+})())
+ok('query 命中 PR → matchedTools 含 pull_number 参数', (() => {
+  const r = I.searchCapabilities(metaSchemas, 'pull_request')
+  const gh = r.find((g) => g.id === 'github')
+  return gh !== undefined && gh.matchedTools.some((m) => m.name === 'mcp__github__get_pull_request'
+    && m.parameters.includes('pull_number'))
+})())
+ok('空 query（目录浏览模式）不投影 matchedTools（token 成本控制）', (() => {
+  const r = I.searchCapabilities(metaSchemas, '')
+  return r.every((g) => g.matchedTools === undefined)
+})())
+ok('matchedTools 每组上限 5', (() => {
+  const many = Array.from({ length: 8 }, (_, i) => ({ name: `mcp__github__tool_${i}_issue`, description: 'd', parameters: { properties: { x: {} } } }))
+  const r = I.searchCapabilities(many, 'issue')
+  const gh = r.find((g) => g.id === 'github')
+  return gh !== undefined && gh.matchedTools.length === 5
+})())
+ok('query 无命中 → 组不带 matchedTools（不返回空数组）', (() => {
+  const r = I.searchCapabilities(metaSchemas, 'zzz_no_match')
+  const gh = r.find((g) => g.id === 'github')
+  return gh === undefined || gh.matchedTools === undefined
+})())
 ok('新命名空间工具仍可被 call 代理（执行面动态,无需注册）', (async () => {
   mockSchemas = longTailSchemas.map((s) => ({ ...s, parameters: { properties: { a: {} } } }))
   executeCalls = []

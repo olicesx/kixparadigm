@@ -20,3 +20,7 @@ tools/log-audit/*.json
 # 系统杂项
 .DS_Store
 Thumbs.db
+
+# 本地 Node 运行时 tarball（WSL 自举用，31MB 二进制，不入库）
+node-v*.tar.xz
+node-v*.tar.gz
