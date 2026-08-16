@@ -230,18 +230,27 @@ agent.cordis.yml（preset）
 （这正是渐进披露语义：能力在，schema 不常驻）。MCP 工具 schema 大且低频 → 全部按需；
 cordis_*/goal/ralph/workflow 重型编排 → 按需（kix 主路径是 subagent 三通道）。
 
-**scope 工具精简决策（2026-08-15 二次实测修正 + 三次按需激活）**：restrict 只裁剪全局
-工具，preset scope 注册的工具（workflow/goal/ralph/job_*/subagent-control）自动可见、
-裁不掉；scope 工具也无法经 capability_call 代理（全局视图查不到 scope-local 名）。
-方案：**默认 disabled + 插件按需激活**（kix-focus 的 `kix_tool_activate`，运行时
-`ctx.plugin` 挂载对应包——`createRequire(process.argv[1])` 解析 dsh 依赖，部署内可移植；
-激活后下一轮直呼，`kix_tool_deactivate` 卸载，会话结束自动清理）——语义对齐 skill 的
-按需发现，避免「全禁 = 能力消失」与「常驻 = 每轮占 schema」两极：
-- **默认 disabled + 可激活**：tool-workflow / tool-ralph / tool-goal（低频重型；主 agent
-  每轮不接收其大 schema；需要时零重启激活，实测 workflow 7 路并行可用）
-- **保留挂载 + 语义常驻**：tool-jobs / tool-subagent-control（后台任务回收与三通道
-  观察者管理是范式日常路径）；exit_plan_mode（plan mode）
-- kix-focus 目录对编排组标注「默认未挂载，kix_tool_activate 按需激活」
+**scope 工具精简决策（2026-08-15 二次实测修正 + 三次按需激活；2026-08-17 用户决策
+A+B 修订）**：restrict 只裁剪全局工具，preset scope 注册的工具（workflow/goal/ralph/
+job_*/subagent-control）自动可见、裁不掉；scope 工具也无法经 capability_call 代理
+（全局视图查不到 scope-local 名）。方案演进：
+- 2026-08-16 渐进面（方案 A）：**默认 disabled + 插件按需激活**（`kix_tool_activate`
+  运行时 `ctx.plugin` 挂载对应包——`createRequire(process.argv[1])` 解析 dsh 依赖，
+  部署内可移植；激活后下一轮直呼，`kix_tool_deactivate` 卸载，会话结束自动清理）。
+  实测教训：tool-jobs 默认 disabled 时 `run_in_background` 连启动都报
+  "background jobs unavailable: no job controller serves this agent"——persona 与
+  组成矛盾。
+- **2026-08-17（现状；用户拍板原则：简单机械、不影响思考的工具常驻，有认知负担的
+  工具机制化自动激活）**：
+  - **常驻**：tool-jobs（job_* 纯机械控制面：启动/回收/停止已跑任务，无决策负担）+
+    tool-subagent-control + exit_plan_mode；
+  - **首次使用自动激活**：subagent 细分档位（lite/thinker/vision/fork/reviewer/qa/dev）
+    与 goal——`kix_capability_call { tool: subagent_qa, arguments: {...} }` 代理调用
+    未挂载的可激活工具时自动 `ctx.plugin` 挂载并继续执行，激活由**机制**兜底、模型
+    无需记住先激活；下一轮起可直呼；`kix_tool_activate` 保留为显式预激活；
+  - **仍 disabled（动态激活不可用，取消 disabled 重启）**：tool-workflow（isolate
+    realm 依赖；dsh 版已挂载直用）、tool-ralph（en 版）。
+- kix-focus 目录对细分档位组标注「首次使用自动激活」。
 
 **端到端验证（✅ 已完成，2026-08-15 真实运行实测，重启后新会话）**：
 

@@ -264,7 +264,11 @@ async function softCase(label, name, args) {
   assert.strictEqual(I.repoRootFromText('git -C C:\\work\\repo status'), 'C:\\work\\repo')
   assert.strictEqual(I.repoRootFromText('git -C "C:/work/repo" commit -am x'), 'C:/work/repo')
   assert.strictEqual(I.repoRootFromText('git status'), undefined)
-  passed += 3
+  // v10：cd <repo> && git commit（无 -C）也能解析仓库根（WSL2 E2E 边界修复）
+  assert.strictEqual(I.repoRootFromText('cd /root/kix-guards-e2e && git add a.txt && git commit -m x'), '/root/kix-guards-e2e')
+  assert.strictEqual(I.repoRootFromText('cd "C:/work/repo" && git commit -m x'), 'C:/work/repo')
+  assert.strictEqual(I.repoRootFromText('echo cd /tmp && git status'), undefined, 'git 前的 echo cd 不是目录切换')
+  passed += 6
 
   // isDestructiveSql 语句级
   assert.ok(I.isDestructiveSql('UPDATE users SET a=1'))

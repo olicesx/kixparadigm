@@ -76,12 +76,13 @@
 
       ## 编曲模型
       - 主模型=编曲者，按任务属性组合（solo/观察者/dev/qa/reviewer），非固定 producer→dev→qa 流水线。决策说出来 + kix_discipline_spec mode 留痕。分派 prompt Tri-Block+契约行 ≤5K，大上下文写文件。
-      - 重路径成员（kix_tool_activate 激活）：dev=Nova/Sage/Milo 三合一（按 plan、target_rules 内写、不替 QA 签署）；qa=Ivy（不写业务源码、证据门禁、signoff 工件）；reviewer=只读反方辩护三层。轻路径观察者用无名视角 prompt；规划读 producer.agent.md；orchestrator 不设，协调留主线程。
+      - 交接元数据：进入 Sprint 编排（dev/qa/reviewer 等子代理分派）时，分派 prompt 契约行必须带 `current_sprint: N`（N 读工作区 docs/.kixpower-current-sprint）——kix-orchestration 的交接门禁（marker 一致性/plan+progress 存在/QA 完成度）只对该元数据行生效；无 sprint 的观察者/轻路径分派不带。
+      - 重路径成员（kix_capability_call 首次调用即自动挂载，或 kix_tool_activate 预激活）：dev=Nova/Sage/Milo 三合一（按 plan、target_rules 内写、不替 QA 签署）；qa=Ivy（不写业务源码、证据门禁、signoff 工件）；reviewer=只读反方辩护三层。轻路径观察者用无名视角 prompt；规划读 producer.agent.md；orchestrator 不设，协调留主线程。
       - 中途组合错位→重组合一次并说出来。
       - 四条地板：① 自己/dev 的 claim 必须独立观察者验证 ② 协调留主线程 ③ 视角来自 prompt，人名只是契约句柄 ④ 门禁与组合无关——发布/评论/合并/破坏默认不做；用户明确指示（如「评论到PR」）即已决策，直接执行不再逐次提问；团队产出回主线程三通道验证。全流程信号→建议 /kixpower-*，等确认。
 
       ## 成本纪律
-      - 分档：lite（机械只读 8K，按需激活）→ subagent（常规 64K，默认）→ subagent_cross（跨厂商 64K）→ subagent_thinker（128K，高风险）。
+      - 分档：lite（机械只读 8K，首次使用自动激活）→ subagent（常规 64K，默认）→ subagent_cross（跨厂商 64K）→ subagent_thinker（128K，高风险）。
       - prompt 标 [EFFORT]+[BUDGET]；观察者默认1，分歧/高风险2，并发≤3。
       - 禁轮询空转：spawn 后前台等或后台先做别的；job_output/list_agents 取结果即走；独立工作做完仍缺结果→简短状态后结束回合（结算/报告无条件唤醒新回合）。sleep 只用于测试/退避/等锁，不用于等子代理。
       - 子代理结果单通道：默认最终消息=完整报告，勿再 report 全文；确需中继才 report 一句话。结构化回流优先 outputSchema；结论复用查 progress.md/memories。
@@ -89,7 +90,7 @@
       ## DSH 适配
       - 分派：subagent 注入 agents/*.agent.md 角色 body + Tri-Block；需继承上下文用 subagent_fork。跨厂商→subagent_cross；识图→subagent_vision（图片路径+问题）；📷 [图片自动识别] 是 vision-bridge 产物。
       - 门禁已挂载：kix-guards（危险 git/SQL/控制平面/未知执行工具）、kix-discipline、kix-orchestration；/kixpower-* 零 token。
-      - 工具面：kix-focus 常驻文件/执行、ask_user_question/todo_write/skill、subagent/subagent_cross、子代理控制、发现入口。未挂载 lite/thinker/vision/fork/reviewer/qa/dev、jobs、goal → kix_tool_activate 激活，用完 deactivate；web_search 与 MCP 经 kix_capability_call；workflow/ralph 取消 disabled 重启。
+      - 工具面：kix-focus 常驻文件/执行、ask_user_question/todo_write/skill、subagent/subagent_cross、子代理控制、后台任务（jobs 常驻）、发现入口。lite/thinker/vision/fork/reviewer/qa/dev、goal 默认未挂载，**首次使用自动激活**——kix_capability_call { tool: subagent_qa, arguments: {...} } 即自动挂载并执行、下一轮起可直呼；也可 kix_tool_activate 预激活，kix_tool_deactivate 卸载。web_search 与 MCP 经 kix_capability_call；workflow 取消 disabled 重启。
       - 原生优先：复杂编排 workflow；长目标 goal；先规划 plan mode；长任务 run_in_background+job_output；验证/观察保持 native（证据可回放）；deny 立即中止。
 
       ## 资源
@@ -133,16 +134,19 @@
 # Only the model-facing controls. The task REGISTRY stays on the host plane:
 # its producers sit outside any realm this file could put it in — `tool-bash`
 # above resolves it with `ctx.get`, and an entry-local realm here is invisible
-# to every sibling row, so `run_in_background` would answer "background jobs
-# unavailable" while these controls sat in the catalog. The registry is keyed by
-# owning agent anyway, so one host instance serves every session. What a preset
-# chooses is whether its agent can collect and stop background work at all.
-# 2026-08-16 渐进面（方案 A）：后台任务控制默认 disabled，经
-# kix_tool_activate { tool: jobs } 按需激活（inject jobs 宿主服务，动态挂载
-# 可行）；长任务仍可 run_in_background 启动，回收需先激活。
+# to every sibling row. The registry is keyed by owning agent anyway, so one
+# host instance serves every session. What a preset chooses is whether its
+# agent can collect and stop background work at all.
+# 2026-08-16 曾默认 disabled（渐进面方案 A），实测教训：disabled 时后台任务
+# 连启动都失败——`run_in_background` 直接报 "background jobs unavailable: no
+# job controller serves this agent (load @deepseek-ai/dsh-tool-jobs in its
+# composition)"，persona 教的「长任务 run_in_background+job_output」与组成
+# 互相矛盾。2026-08-17 决策（用户原则：简单机械、不影响思考的工具常驻）：
+# job_* 是纯机械控制面（启动/回收/停止已跑任务，不引入决策负担）→ 常驻启用。
+# workflow/goal 与 subagent 细分档位仍默认 disabled，首次使用由 kix-focus
+# 自动激活（kix_capability_call 代理即挂载，无需模型记住先激活）。
 - id: tool-jobs
   name: '@deepseek-ai/dsh-tool-jobs'
-  disabled: true
 
 # ── skills ──────────────────────────────────────────────────────────────────
 
@@ -172,8 +176,9 @@
 # registry is keyed by session anyway, so one host instance serves every
 # session. What a preset chooses is whether its agent can call the goal tool.
 # 2026-08-15 精简决策：goal 低频重型 → 默认 disabled（主 agent 工具面只留
-# 范式必需；restrict 裁不到 scope 工具）。需要长目标续跑时经 kix_tool_activate
-# 按需激活（kix-focus 运行时挂载），无需重启。
+# 范式必需；restrict 裁不到 scope 工具）。2026-08-17 起首次使用自动激活：
+# kix_capability_call { tool: create_goal } 即挂载并执行（或 kix_tool_activate
+# { tool: goal } 显式预激活），无需重启。
 - id: tool-goal
   name: '@deepseek-ai/dsh-tool-goal'
   disabled: true
@@ -278,8 +283,10 @@
     # 机械读码/格式检查/简单检索 → `subagent_lite`（精简组合）：
     #   persona 字段把 17k token 的 kix 常驻人格替换为 ~60 token 的机械人格
     #   （per-child persona shadowing）；toolFilter 把 82 个工具（17.2k token）
-    #   裁剪到 read/grep/glob/pwsh 四个（1.6k token）——每步固定开销从
-    #   ~34.3k 降到 ~5.9k（实测数据，↓83%）。
+    #   裁剪到 read/grep/glob + 平台 shell 四个（1.6k token）——每步固定开销从
+    #   ~34.3k 降到 ~5.9k（实测数据，↓83%）。2026-08-17 WSL2 E2E 修复：原
+    #   硬编码 pwsh（Windows 工具）在 Linux 部署 tools.restrict() 报 unknown
+    #   global tool 致 lite 档不可用 → 改平台条件化（!!js process.platform）。
     #   模型档（首选 zai-coding-cn/glm-4.7）：**自动选型**——本 preset 会分发到
     #   不同环境，`plugins/kix-cost.js` 在子代理首次请求时探测首选路由是否可用；
     #   不可用（无该 provider/模型）→ 自动回退环境默认路由（deepseek high）。
@@ -290,9 +297,11 @@
     # 需 max 深度思考的同族任务 → `subagent_thinker`（deepseek max，128K 帽，
     #   由 plugins/kix-cost.js 按预算帽判别注入 max）。
     # vision 由模型配置 4096 封顶。子代理思考强度由 plugins/kix-cost.js 统一注入。
-    # 2026-08-16 渐进面（方案 A）：lite/thinker/vision/fork 细分档位默认
-    # disabled，经 kix_tool_activate 按需激活（inject 宿主服务，动态挂载可行，
-    # 与 goal 同机制）；subagent/subagent_cross 常驻（三通道核心）。
+    # 2026-08-16 渐进面（方案 A）细分档位默认 disabled；2026-08-17 决策
+    # （用户原则：有认知负担的工具用机制化自动激活）→ 首次使用自动激活：
+    # kix_capability_call { tool: subagent_lite, arguments: {...} } 即挂载并
+    # 执行（inject 宿主服务，动态挂载可行，与 goal 同机制），下一轮可直呼；
+    # 也可 kix_tool_activate 显式预激活。subagent/subagent_cross 常驻（三通道核心）。
     - id: tool-subagent-lite
       name: '@deepseek-ai/dsh-tool-subagent'
       disabled: true
@@ -306,7 +315,7 @@
           what the task asks. No extra analysis, no suggestions, no speculation.
           Return concise factual results with file:line evidence when relevant.
         toolFilter:
-          allow: [ read, grep, glob, pwsh ]
+          allow: [ read, grep, glob, !!js "process.platform === 'win32' ? 'pwsh' : 'bash'" ]
         agentOptions:
           provider: zai-coding-cn
           model: glm-4.7
@@ -320,7 +329,7 @@
     # kix-cost 同源的 decideEffort，按预算帽 128K → max；kix-cost 本体对哨兵
     # child 只守卫跳过、不注入——两插件任意 waterfall 顺序结果一致）。用于需要同族深度思考的高难任务；
     # 跨厂商正交验证用 `subagent_cross`（自动取反厂商）。2026-08-16 渐进面：
-    # thinker 默认 disabled，经 kix_tool_activate 按需激活。
+    # thinker 默认 disabled，首次使用自动激活（kix_capability_call 挂载）。
     - id: tool-subagent-thinker
       name: '@deepseek-ai/dsh-tool-subagent'
       disabled: true
@@ -364,7 +373,7 @@
     # provider 兜底）；门禁读 waterfall 后的真实路由（requestHeader 配置）
     # → 改写后放行。边界（v5.9.1）：全目录无 image 模型 → 启动即报错（附
     # 配置建议），不做无视觉能力的降级（省掉 spawn→read_image 被弹回的空跑）。
-    # 2026-08-16 渐进面：vision 默认 disabled，经 kix_tool_activate 按需激活。
+    # 2026-08-16 渐进面：vision 默认 disabled，首次使用自动激活（kix_capability_call 挂载）。
     - id: tool-subagent-vision
       name: '@deepseek-ai/dsh-tool-subagent'
       disabled: true
@@ -378,7 +387,7 @@
           # 显式钉值同时防止 kix-cost 把无 maxTokens 的 child 误判为 lite 档
           maxTokens: 4096
 
-    # 2026-08-16 渐进面：fork 默认 disabled，经 kix_tool_activate 按需激活。
+    # 2026-08-16 渐进面：fork 默认 disabled，首次使用自动激活（kix_capability_call 挂载）。
     - id: tool-subagent-fork
       name: '@deepseek-ai/dsh-tool-subagent'
       disabled: true
@@ -394,8 +403,9 @@
     # kixpower-reviewer 角色的机制化落点（此前仅 agents/ 模板 + review prompt
     # 按需加载）：只读 + 反方辩护三层（2026-08-17 三问显式分层）+ 结构化
     # rebuttal 输出。「结论发布前」的对抗性检查通道（对照：kix-guards 管操作
-    # 前、kix-discipline 管编辑前）。默认 disabled（渐进面），经
-    # kix_tool_activate { tool: subagent_reviewer } 按需激活；核心语义来自
+    # 前、kix-discipline 管编辑前）。默认 disabled（渐进面），首次使用自动
+    # 激活（kix_capability_call { tool: subagent_reviewer, arguments: {...} }
+    # 即挂载并执行）或 kix_tool_activate 显式预激活；核心语义来自
     # agents/kixpower-reviewer.agent.md（保持单一权威，此处为可注入的精简
     # persona 快照）。
     - id: tool-subagent-reviewer
@@ -441,7 +451,8 @@
     # 契约快照与 agents/kixpower-{qa,dev}.agent.md 保持单一权威关系（同
     # reviewer 先例）；组合留痕走 kix_discipline_spec 的 mode 字段（成员组合
     # + 一句理由）；四条不变量地板见 persona「编曲模型」节。默认 disabled
-    #（渐进面），kix_tool_activate 按需激活。
+    #（渐进面），首次使用自动激活（kix_capability_call 挂载）或 kix_tool_activate
+    # 显式预激活。
     - id: tool-subagent-qa
       name: '@deepseek-ai/dsh-tool-subagent'
       disabled: true
@@ -522,8 +533,9 @@
         maxDepth: provider-managed
 
     # 2026-08-15 精简决策：workflow/goal 低频重型 → 默认 disabled。
-    # goal 经 kix_tool_activate 按需激活（2026-08-16 实测：激活 → 下一轮
-    # 直呼 → deactivate 卸载，闭环可用）。
+    # goal 首次使用自动激活（kix_capability_call { tool: create_goal } 挂载
+    # 并执行；或 kix_tool_activate { tool: goal } 预激活——2026-08-16 实测
+    # 激活 → 下一轮直呼 → deactivate 卸载，闭环可用）。
     # 2026-08-16 启用 workflow（自发使用测试）：workflow 依赖 workflowEngine
     # （本 isolate realm 内提供），动态挂载在 realm 外解析不到 → 激活会
     # 诚实报错；唯一启用路径 = 取消 disabled 重启（临时启用待实测自发使用，
@@ -663,9 +675,9 @@
 #     机械多步），kix 红线「验证/观察用 native 直呼（证据可回放）」不变；
 #     capability_call 亦可被 run_code SDK 子分派调用（子分派过门禁）。
 # 关闭裁剪（仅保留 search/call）：config: { enableRestrict: false }。
-# 单元测试：node plugins/kix-focus.test.js（73 断言，含枚举同步回归防线 +
+# 单元测试：node plugins/kix-focus.test.js（83 断言，含枚举同步回归防线 +
 #   symlink 部署跨平台解析：候选根链 argv[1]→realpath→插件文件，2026-08-17
-#   WSL2 E2E 发现修复）。
+#   WSL2 E2E 发现修复；2026-08-17 jobs 常驻化 + 首次使用自动激活用例）。
 - id: kix-focus
   name: ./plugins/kix-focus.js
 
