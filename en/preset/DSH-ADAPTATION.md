@@ -50,6 +50,22 @@ Background (continuable) children have two return channels. Mechanism facts from
 - **Dual-channel redundancy (field-tested pitfall)**: a child that "`report`s the full text AND puts it in the final message again" costs the parent both injections + two wake turns (dsh-subagent README: *"A child that both reports and settles costs the parent both"*). Paradigm convention (in persona): **single-channel delivery** — the final message is the report; don't `report` the same text.
 - **Sleep-wait anti-pattern (field-tested pitfall)**: 8× `sleep 45~240s` pinning the turn while waiting = pure wasted latency. Correct shape: independent work exhausted → short status → end the turn and wait for the wake. kix-orchestration v4 one-shot reminds on "bare sleep + description mentioning subagent" (0% false positives: backoff/lock-wait sleeps don't match; v4.1 is platform-agnostic — both command shapes always tested on any tool's `command`).
 
+### §3.2 Arranger model & member menu (2026-08-17, four-round convergence)
+
+The DSH landing of the CEO "pick members" power: **the main model is the arranger; members are activatable tiers**. The fixed producer→dev→qa pipeline is a kixpower sprint-workflow convention (heavy path), not a paradigm invariant — S7 (CEO-direct) / S8/S9 (dev-only) already validated free composition; this section makes it explicit (rules are liabilities: removing a fixed rule nobody followed is debt repayment).
+
+| Member tier | Name handle | Contract (distilled from agents/*.agent.md — the file stays the single source of truth) | Activation |
+|---|---|---|---|
+| `subagent_dev` | Nova/Sage/Milo three-in-one | code per plan, write inside target_rules, no scope creep, never sign for QA; run deterministic gates per task | `kix_tool_activate { tool: subagent_dev }` |
+| `subagent_qa` | Ivy | never business source code, evidence gate, signoff artifacts (PASS/CONDITIONAL/FAIL/REVERIFY_REQUIRED evidence-bound) | `kix_tool_activate { tool: subagent_qa }` |
+| `subagent_reviewer` | unnamed | read-only + three-layer devil's advocate (L1 rebuttal rehearsal / L2 depth probe / L3 language-model stress) + rebuttal output | `kix_tool_activate { tool: subagent_reviewer }` |
+
+**Three deliberate non-rows**: no producer row (S7 proved CEO self-planning usually suffices; for Remy-grade planning the main thread reads `agents/kixpower-producer.agent.md` once); no orchestrator row (coordination stays in the main thread — the DSH main agent has the full orchestration toolset; materializing a coordinator subagent = hiring someone to coordinate yourself); dev as one three-in-one tier (Nova/Sage/Milo switching already lives in one agent body).
+
+**Four floor invariants** (free composition never erodes; see the persona Arranger Model section): ① observation independence (phase duality) — you compose hands, eyes never self-attest; ② coordination stays in the main thread; ③ perspectives come from prompts, not personification — names are contract handles, light-path observers keep unnamed prompts (two-layer menu); ④ the gate floor is composition-independent (human confirmation before publish/merge/destructive, kix-guards/kix-discipline unchanged, team output is still claims).
+
+**Drift antidotes (no new gates)**: say the composition out loud (who + why) + persist it in the `mode` field of `kix_discipline_spec` (members + one-line reason, added 2026-08-17, optional) + observe the composition distribution under rules-are-liabilities (over-composition and default-solo both get harvested). Mid-flight mis-composition → re-route once and say it.
+
 ## §4 Settings.yaml (host plane — the preset cannot install it)
 
 `~/.dsh/settings.yaml` must contain, under `llm-pi-ai.providers`:

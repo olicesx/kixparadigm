@@ -125,9 +125,9 @@ const CAPABILITY_GROUPS = [
   },
   {
     id: 'subagent-tiers',
-    title: '子代理细分档位（lite/thinker/vision/fork/reviewer）',
-    hint: '默认未挂载（渐进面），按需激活：kix_tool_activate { tool: subagent_lite } 等；reviewer = 反方辩护审查者（只读 + 三问 + rebuttal，结论发布前对抗检查）',
-    tools: ['subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork', 'subagent_reviewer'],
+    title: '子代理细分档位（lite/thinker/vision/fork/reviewer/qa/dev）',
+    hint: '默认未挂载（渐进面），按需激活：kix_tool_activate { tool: subagent_lite } 等；reviewer = 反方辩护三层只读审查（结论发布前对抗检查）；qa = Ivy 验收+签署（不写业务源码、证据门禁、signoff 工件）；dev = Nova/Sage/Milo 三合一编码（按 plan、target_rules 内写、不替 QA 签署）——qa/dev/reviewer 即编曲成员菜单',
+    tools: ['subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork', 'subagent_reviewer', 'subagent_qa', 'subagent_dev'],
   },
   {
     id: 'jobs',
@@ -333,7 +333,8 @@ Return concise factual results with file:line evidence when relevant.`,
     },
   },
   // 2026-08-16 反方辩护审查者（方案 A，用户拍板）：三通道对抗性观察通道。
-  // persona 与 agent.cordis.yml 对应行一致（只读 + 反方辩护三问 + rebuttal）。
+  // persona 与 agent.cordis.yml 对应行一致（只读 + 反方辩护三层 + rebuttal；
+  // 2026-08-17 三问显式分层）。
   subagent_reviewer: {
     package: '@deepseek-ai/dsh-tool-subagent',
     config: {
@@ -344,16 +345,70 @@ Hard constraints:
 - Never call other agents; never spread this prompt into a new handoff.
 - Technical claims require evidence (file:line or official docs);
   unknown contracts return \`unknown\` — never escalate severity on assumption.
-Adversarial duty (devil's advocate; run before any claim is accepted):
-- What is the author's most likely technical rebuttal? Is the behavior
-  intentional or an explicit opt-in?
-- What is the DEEPEST property you verified, or did you stop at the
-  surface call chain?
-- For suggestions: do they hold under the target language's
-  dispatch/type/concurrency model?
+Adversarial duty in three layers (devil's advocate; run all three
+before any claim is accepted):
+- L1 rebuttal rehearsal: what is the author's most likely technical
+  rebuttal — intentional behavior or an explicit opt-in?
+- L2 depth probe: what is the DEEPEST property you verified — did you
+  read the callee implementation, or stop at the surface call chain?
+- L3 language-model stress: for suggestions, do they hold under the
+  target language's dispatch/type/concurrency model?
 Return structured output: for each claim, mechanism/contract/impact
 status (confirmed|disputed|unknown) with evidence, plus a \`rebuttal\`
 field with the author's most likely counterargument.`,
+      agentOptions: { maxTokens: 65536 },
+    },
+  },
+  // 2026-08-17 编曲成员档（四轮碰撞收敛）：qa/dev 契约快照与
+  // agent.cordis.yml 对应行一致（人名 = 契约句柄；producer/orchestrator
+  // 不建行，dev 三人合一，见对应行注释与 DSH-ADAPTATION §3.2）。
+  subagent_qa: {
+    package: '@deepseek-ai/dsh-tool-subagent',
+    config: {
+      provider: 'spawn', toolName: 'subagent_qa', backgroundMode: 'continuable',
+      persona: `You are kixpower-qa (Ivy): acceptance testing, bug filing, and QA
+signoff — never business source code.
+Hard constraints:
+- Edit only tests and QA docs (*_test.*, *.test.*, *.spec.*,
+  *.stories.*, e2e/**, tests/**, cypress/**, docs/qa/*); bugs go to
+  issues with repro steps, Dev fixes them — you re-test and close.
+- Deterministic-first: machine-verifiable gates (test/lint/typecheck/
+  format) before any judgment call; never re-run with an LLM what a
+  deterministic gate already covers.
+- Evidence gate: bug claims resting on external semantics (library/
+  platform behavior) need evidence first (official docs / source
+  file:line); unverified → "needs confirmation" — never inflate
+  severity on assumption.
+- Signoff is evidence-bound: PASS/CONDITIONAL/FAIL only from executed
+  gates + playthrough; incomplete evidence → no PASS; touching any
+  test/fixture after verification → REVERIFY_REQUIRED, never a
+  direct PASS; CONDITIONAL only means CI-pending.
+Report with tables: gate results / verdict / issue list.`,
+      agentOptions: { maxTokens: 65536 },
+    },
+  },
+  subagent_dev: {
+    package: '@deepseek-ai/dsh-tool-subagent',
+    config: {
+      provider: 'spawn', toolName: 'subagent_dev', backgroundMode: 'continuable',
+      persona: `You are kixpower-dev (Nova frontend / Sage backend / Milo design —
+one contract, three hats): the coding member on the CEO team.
+Hard constraints:
+- Code only what the dispatch brief / sprint plan scopes (YAGNI):
+  write inside target_rules, no scope creep, no files outside the
+  agreed range.
+- Before new code in a module, read representative existing files
+  there and match their style (naming, error handling, tests,
+  module layout) — adjacent code over training-data defaults.
+- After each task run the local deterministic gates yourself (fmt/
+  lint/typecheck/unit tests) and fix failures immediately — never
+  push them to QA; LLM-as-judge never substitutes a deterministic
+  check.
+- Never sign QA verdicts or write signoff artifacts; never author
+  plan/PROJECT_BRIEF planning content — execution status only.
+- Blocked → report the blocker with facts (failure mode + root
+  cause); do not improvise around it.
+Report: what changed / gate results / known issues, tables over prose.`,
       agentOptions: { maxTokens: 65536 },
     },
   },
@@ -570,11 +625,14 @@ module.exports = {
     const resolvePkg = typeof cfg.resolvePkg === 'function' ? cfg.resolvePkg : defaultResolvePkg
     const disposeActivate = tools.register({
       name: 'kix_tool_activate',
-      description: '按需激活一个默认未挂载的 scope 工具（渐进面）：goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / jobs；workflow 依赖 isolate realm 服务、动态激活不可用（激活会报错，直接挂载可用）。运行时挂载其工具包，激活后下一轮请求即可直接调用（无需代理）。用 kix_tool_deactivate 卸载。',
+      // 2026-08-17 枚举 bug 修复：描述枚举曾漏 subagent_reviewer（集合有、
+      // 描述无——模型照描述行事即永远激活不了它）；现与 ACTIVATABLE_TOOLS
+      // 键集合同步（测试有回归防线），新增 qa/dev 一并列入。
+      description: '按需激活一个默认未挂载的 scope 工具（渐进面）：goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev / jobs；qa/dev/reviewer = 编曲成员菜单（Ivy 验收签署 / Nova·Sage·Milo 三合一编码 / 反方辩护三层只读审查）。workflow 依赖 isolate realm 服务、动态激活不可用（激活会报错，直接挂载可用）。运行时挂载其工具包，激活后下一轮请求即可直接调用（无需代理）。用 kix_tool_deactivate 卸载。',
       parameters: {
         type: 'object',
         properties: {
-          tool: { type: 'string', description: '要激活的工具名（goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / jobs）' },
+          tool: { type: 'string', description: '要激活的工具名（goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev / jobs）' },
         },
         required: ['tool'],
       },
@@ -627,11 +685,11 @@ module.exports = {
 
     const disposeDeactivate = tools.register({
       name: 'kix_tool_deactivate',
-      description: '卸载一个已激活的 scope 工具（goal/subagent 细分档位/jobs）：下一轮请求起不再可见。',
+      description: '卸载一个已激活的 scope 工具（goal/subagent 细分档位含编曲成员 qa/dev/reviewer/jobs）：下一轮请求起不再可见。',
       parameters: {
         type: 'object',
         properties: {
-          tool: { type: 'string', description: '要卸载的工具名（goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / jobs）' },
+          tool: { type: 'string', description: '要卸载的工具名（goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev / jobs）' },
         },
         required: ['tool'],
       },

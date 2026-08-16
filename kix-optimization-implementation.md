@@ -5,6 +5,33 @@
 
 ---
 
+## 〇、v7：编曲模型落地（2026-08-17 第七轮，四轮碰撞收敛，v1.2.9）
+
+> 依据：本仓库外的四轮架构讨论收敛（名册实测 → 符合性分析 → 不变量碰撞 → 落地形态）。
+> 结论：**符合范式且是范式自己的演化方向**——CEO 本有编曲权（persona「复杂任务自主分派」），固定 producer→dev→qa 从来不是不变量（S7/S8/S9 已实践自由组合）；本轮把已验证实践显式化。
+
+**五项交付**：
+
+| # | 交付 | 落点 |
+|---|---|---|
+| 1 | persona 路由节改写为**编曲模型**（含重路由一行 + 四条不变量地板：观察独立性/协调主线程/视角来自 prompt/门禁不变） | `agent.cordis.yml` persona「流程路由信号」+「编曲模型」节（替换「CEO 团队编排」） |
+| 2 | **qa/dev/reviewer 三个 activatable 档**：人名=契约句柄（Ivy：不写业务源码+证据门禁+signoff 工件；Nova/Sage/Milo 三合一：按 plan 编码+target_rules 内写+不替 QA 签署）；producer 不建行（S7 已证，需要时主线程读 .md）；orchestrator 不建行（协调留主线程） | `agent.cordis.yml` delegation group 三行（照抄 lite/reviewer 先例：spawn 行 persona 字段）+ kix-focus `ACTIVATABLE_TOOLS`/目录组 |
+| 3 | reviewer **反方辩护三层**（三问显式分层：L1 反驳预演 / L2 深度下钻 / L3 语言模型压测） | reviewer 行 persona（agent.cordis.yml + kix-focus.js 双副本同步） |
+| 4 | **spec mode 字段**（编曲留痕：成员组合+一句理由，可选不进必填集；空值渲染占位、回读映射 undefined 防假值） | `plugins/kix-discipline.js`（工具 schema/renderSpec/parseSpec）|
+| 5 | **枚举 bug 修复**：`kix_tool_activate`/`kix_tool_deactivate` 描述与参数枚举曾漏 `subagent_reviewer`（集合有、描述无——模型照描述行事永远激活不了它）；修为全枚举 + 回归断言（描述必须覆盖 ACTIVATABLE_TOOLS 全键；workflow 仅激活侧枚举——realm 限制永不入 activated） | `plugins/kix-focus.js` + 测试 |
+
+**附带修复**：`parseSpec` 标题按字面构造 RegExp 未转义——mode 节标题「成员组合 + 一句理由」的 ASCII `+` 改变匹配语义致 grab 空转（潜在 bug 类：任何含元字符的节标题都会静默失效）；`escapeRe` 按字面转义，既有标题无元字符行为不变。`kix-orchestration SUBAGENT_TOOLS` 补 `subagent_qa/dev`（集合本意=全部 subagent 行，reviewer 前例）。
+
+**明确不做**（碰撞共识）：① 不加新门禁——漂移解药用范式自己的三件套（组合决策说出来 + mode 留痕 + 规则是负债回收纪律观测分布）；② 观察位不做角色化（轻路径无名视角 prompt，双层菜单）；③ orchestrator 不蒸馏（636 行时代残留，不建行不蒸馏）。
+
+**验证**：zh `npm test` 全绿（kix-discipline 68 / kix-focus 69 / kix-orchestration 67，全套 450+）；en 副本同步后 68/69/67；en/zh 插件文件字节一致（沿用 v5 语言中立复制约定）。挂载校验与安装目录同步见「改动文件清单」。
+
+**下一轮观测**（规则是负债回收面）：① mode 字段实际使用率与组合分布（过度组合/默认独奏双向漂移）；② 编曲成员档激活后的真实分派质量（契约是否守住，对照 agents/*.agent.md 单一权威）；③ `/kixpower-*` 注入链实地证据（v6 遗留，档位激活≠流程跑通）。
+
+**改动文件**：`dsh/preset/agent.cordis.yml`、`dsh/preset/plugins/{kix-discipline,kix-focus,kix-orchestration}.js` + 三 `.test.js`、`dsh/preset/DSH-ADAPTATION.md`（新增 §3.2）、`dsh/preset/DSH-FUSION-MATRIX.md`（行 11 判定更新为已机制化）、en 侧同构七文件 + `en/preset/DSH-ADAPTATION.md`；安装目录 `~/.dsh/.agent-presets/{kixparadigm,kixparadigm-en}` 同步。
+
+---
+
 ## 〇、v6：WSL2 实测驱动补强（2026-08-17 第六轮，v1.2.5）
 
 > 依据：v1.2.3 在 WSL2 的 dae 审查实测（session-92459753，106 步 / 3 子代理 / 思考 39.1k）。

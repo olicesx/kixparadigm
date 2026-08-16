@@ -28,7 +28,8 @@
 //     要求继续；每会话一次）。启发式 ask（非 deny）——0% 误报纪律只约束
 //     阻断层，ask 的误报成本 = 一次可忽略的确认问题。
 //   - kix_discipline_spec 工具：模型记录需求三检契约（goal/xy/assumptions/path/
-//     acceptance 五字段，对应 kix 三检①XY ②前提 ③路径 + 目标 + 验收），写入
+//     acceptance 五字段，对应 kix 三检①XY ②前提 ③路径 + 目标 + 验收；可选
+//     mode 字段 = 编曲留痕：成员组合 + 一句理由，2026-08-17），写入
 //     工作区 kix-discipline/spec.md + 会话状态（spec 契约跨会话可查）。
 //   - /kix-discipline 命令：status / report / on|off（durable 开关）。
 //
@@ -139,6 +140,9 @@ function renderSpec(spec) {
     '## 验收标准（可验证的完成定义）',
     s.acceptance || '（未填写）',
     '',
+    '## 执行模式（编曲留痕：成员组合 + 一句理由）',
+    s.mode && s.mode.trim().length > 0 ? s.mode : '（未记录——solo 或未触发组合）',
+    '',
   ].join('\n')
 }
 
@@ -151,17 +155,25 @@ function specComplete(spec) {
 }
 
 // 从 markdown 反向解析 spec（读已有文件时用；宽松：缺字段返回 undefined）
+// 2026-08-17（mode 字段引入暴露）：标题按字面构造 RegExp，ASCII 元字符
+//（如「成员组合 + 一句理由」的 +）会改变匹配语义 → grab 空转返回
+// undefined。escapeRe 按字面转义；既有标题无元字符，行为不变。
 function parseSpec(text) {
   if (!text) return undefined
   const m = /^# kix-discipline spec/m.test(text)
   if (!m) return undefined
+  const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const grab = (title) => {
-    const re = new RegExp(`## ${title}[\\s\\S]*?\\n([\\s\\S]*?)(?=\\n## |\\n\\n- 记录时间|$)`)
+    const re = new RegExp(`## ${escapeRe(title)}[\\s\\S]*?\\n([\\s\\S]*?)(?=\\n## |\\n\\n- 记录时间|$)`)
     const hit = re.exec(text)
     if (!hit) return undefined
     const v = hit[1].trim()
     return v.length > 0 ? v : undefined
   }
+  // mode 为空时 renderSpec 写占位文案（spec.md 留可见槽位）；回读时把占位
+  // 映射回 undefined，防止「未记录」假值混进契约（2026-08-17）。
+  const MODE_PLACEHOLDER = '（未记录——solo 或未触发组合）'
+  const modeVal = grab('执行模式（编曲留痕：成员组合 + 一句理由）')
   return {
     recordedAt: undefined,
     goal: grab('Goal（要解决的根本问题）'),
@@ -169,6 +181,7 @@ function parseSpec(text) {
     assumptions: grab('前提假设（需求三检②：前提可验证吗？）'),
     path: grab('更优路径（需求三检③：有更高维度解法吗？）'),
     acceptance: grab('验收标准（可验证的完成定义）'),
+    mode: modeVal === MODE_PLACEHOLDER ? undefined : modeVal,
   }
 }
 
@@ -320,7 +333,7 @@ module.exports = {
     // ── 模型工具：记录需求三检契约 ────────────────────────────────────────
     const disposeSpecTool = tools.register({
       name: 'kix_discipline_spec',
-      description: '记录当前任务的需求三检契约（kix 需求三检：XY Problem / 前提假设 / 更优路径），写入工作区 kix-discipline/spec.md。需求三检后、开始实现编辑前调用；契约可跨会话复用。',
+      description: '记录当前任务的需求三检契约（kix 需求三检：XY Problem / 前提假设 / 更优路径），写入工作区 kix-discipline/spec.md。需求三检后、开始实现编辑前调用；契约可跨会话复用。mode 字段（可选）= 编曲留痕：成员组合 + 一句理由，如 "dev+qa：跨模块改动需独立验收" / "solo：字面明确单文件修复"。',
       parameters: {
         // tools.register 原样投影 parameters：必须含顶层 type: 'object'
         type: 'object',
@@ -330,6 +343,7 @@ module.exports = {
           assumptions: { type: 'string', description: '前提假设（需求三检②）：需求成立的前提可验证吗' },
           path: { type: 'string', description: '更优路径（需求三检③）：选定的方案与理由' },
           acceptance: { type: 'string', description: '验收标准：可验证的完成定义（测试/gate 判据）' },
+          mode: { type: 'string', description: '执行模式（编曲留痕，可选）：成员组合 + 一句理由——本单用了谁（solo/观察者/dev/qa/reviewer 组合）、为什么。命中路由信号组队时随契约一并记录' },
         },
         required: ['goal', 'xy', 'assumptions', 'path', 'acceptance'],
       },
@@ -346,6 +360,8 @@ module.exports = {
           assumptions: String((args && args.assumptions) || '').trim(),
           path: String((args && args.path) || '').trim(),
           acceptance: String((args && args.acceptance) || '').trim(),
+          // mode 可选（编曲留痕）：空 = solo/未组合，不进完整性判定的必填集
+          mode: String((args && args.mode) || '').trim(),
         }
         const complete = specComplete(spec)
         if (!complete) {

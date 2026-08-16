@@ -122,6 +122,21 @@ const parsed = I.parseSpec(md)
 ok('parseSpec 回读 goal', parsed && parsed.goal === 'g')
 ok('parseSpec 回读 acceptance', parsed && parsed.acceptance === 'c')
 ok('parseSpec 非本契约 → undefined', I.parseSpec('# other\ncontent') === undefined)
+// 2026-08-17 mode 字段（编曲留痕：成员组合 + 一句理由）
+ok('renderSpec 含 mode 编曲留痕段', I.renderSpec({ ...fullSpec, mode: 'dev+qa：跨模块改动需独立验收' }).includes('## 执行模式（编曲留痕'))
+ok('renderSpec 无 mode → 占位可见（spec.md 留槽位）', (() => {
+  const m = I.renderSpec(fullSpec)
+  return m.includes('执行模式') && m.includes('（未记录')
+})())
+ok('parseSpec 回读 mode', (() => {
+  const p = I.parseSpec(I.renderSpec({ ...fullSpec, mode: 'solo：字面明确单文件修复' }))
+  return p && p.mode === 'solo：字面明确单文件修复'
+})())
+ok('parseSpec 占位不假值（未记录 ≠ mode 值）', (() => {
+  const p = I.parseSpec(I.renderSpec(fullSpec))
+  return p && p.mode === undefined
+})())
+ok('specComplete 不要求 mode（可选项，五字段为准）', I.specComplete(fullSpec))
 
 // ── 2. makeState：spec 文件持久 ────────────────────────────────────────────
 section('makeState spec 文件')
