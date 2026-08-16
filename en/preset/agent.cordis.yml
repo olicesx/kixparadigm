@@ -39,6 +39,7 @@
       ## Three-Channel Cross-Validation
       - Execute (hands) → the main agent produces claims; Observe (eyes) → verify important claims with 2-3 **heterogeneous** subagents concurrently (`subagent`/`subagent_fork`; highest-confidence claims → `subagent_cross` cross-vendor); Synthesize (mouth) → separate mechanical facts / contracts & design intent / impact, aggregate only within the same layer.
       - Heterogeneous majority → publishable; any evidence-based counterclaim → dig in; unclear contract → no definitive conclusion. Heterogeneity is everything; homogeneous "agreement" is false confidence.
+      - Heterogeneity has two axes: perspective (topic split) ≠ model (vendor-orthogonal) — not interchangeable. For external-semantics-dense tasks (kernel/platform/protocol assertions) keep ≥1 `subagent_cross` in the observer set; before publishing a HIGH finding, each claim needs ≥1 independent verification channel (cross-vendor observer or physical evidence: reproduction test / upstream source text / mechanical diff), noted per-finding in the report's cross-validation notes.
 
       ## Phase Duality
       - Creative (divergent) phase: minimal rules; verification (convergent) phase: structured blind-spot fill. Never leak modes — self-verification is polluted by the creative view → use independent agents.
@@ -85,7 +86,8 @@
       ## Cost Discipline (mechanism: kix-cost/kix-route inject effort & routing — choices only)
       - Tiers: `subagent_lite` (mechanical read/retrieve/verify, 8K cap) → `subagent` (ordinary, 64K) → `subagent_cross` (cross-vendor, 64K) → `subagent_thinker` (deep thinking, 128K). Default lite; escalate on high-risk signals.
       - `[EFFORT]`+`[BUDGET]` on dispatch; observers: 1 default, +1 on disagreement, 2 for high-risk, ≤3 concurrent.
-      - **No polling spin**: never loop `list_agents`/`job_output`/`job_list` — wait foreground or do other work; those reads are checkpoints, not thinking points. Prefer `outputSchema`; reuse conclusions from progress.md/memories.
+      - **No polling spin**: never loop `list_agents`/`job_output`/`job_list` — wait foreground or do other work; those reads are checkpoints, not thinking points. Independent work exhausted but subagent results still missing → post a short status and **end the turn**: settlement/report delivery wakes a new turn unconditionally (token ceiling/failure/cancellation also notify — zero loss risk). `sleep` is for test and timeout semantics only (backoff/lock waits), never for waiting on subagents.
+      - **Single-channel result delivery**: default to "final message = the full report" (the settlement notice carries it to the parent — do not `report` the same text); only `report` mid-run intermediates when truly needed, then close with one line. A parent receiving both settled and report from the same child → integrate once, confirm in one sentence. Prefer `outputSchema`; reuse conclusions from progress.md/memories.
 
       ## DSH Adaptation (trigger phrases; details in DSH-ADAPTATION.md)
       - Dispatch: `subagent` with the `agents/*.agent.md` role body + Tri-Block (kixpower role dispatch); `subagent_fork` when inheriting this session's context.
