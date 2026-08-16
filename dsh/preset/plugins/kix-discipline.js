@@ -23,6 +23,10 @@
 //     → 记录 green；识别实现 edit → 记录 red 证据缺失。
 //   - agent/turn-stopping serial：回合结束时，本回合有实现 edit 且无测试运行
 //     → 注入 green 提醒（remindOnce，durable 于会话日志）。
+//   - agent/turn-stopping serial（v2，2026-08-16 用户反馈）：模型终稿把直接
+//     请求判为「不处理 / 在别处处理 / 系统信息不足」→ 弹问让用户裁决（接受 /
+//     要求继续；每会话一次）。启发式 ask（非 deny）——0% 误报纪律只约束
+//     阻断层，ask 的误报成本 = 一次可忽略的确认问题。
 //   - kix_discipline_spec 工具：模型记录需求三检契约（goal/xy/assumptions/path/
 //     acceptance 五字段，对应 kix 三检①XY ②前提 ③路径 + 目标 + 验收），写入
 //     工作区 kix-discipline/spec.md + 会话状态（spec 契约跨会话可查）。
@@ -65,6 +69,37 @@ const TEST_FILE_PATTERNS = [
   /\.(test|spec)\.[a-z0-9]+$/i,
   /\.(test|spec)\.(py|rs|go|java|rb)$/i,
 ]
+
+// ── v2：回合结束「拒绝/转交」弹问（2026-08-16 用户反馈）────────────────────
+// 模型把直接请求判为「不处理 / 在别处处理 / 系统信息不足」时，回合结束弹问
+// 让用户裁决。启发式 ask（非 deny）：误报成本 = 一次可忽略的确认问题，且每
+// 会话只弹一次；readSurface 不可用/失败静默跳过（可选项）。
+const DEFLECTION_MARKERS = [
+  /不处理|不在(?:本次|我的)?(?:范围|职责)|在别(?:的)?地方处理|另开(?:会话|任务|议题)|转交(?:给)?(?:其他|别人)|超出(?:我的|本会话)?(?:范围|职责)/,
+  /系统信息不足|信息不足/,
+  /\bwon'?t\s+(?:handle|fix|do|process)|not\s+(?:in|within)\s+(?:my\s+|the\s+)?(?:scope|responsibility|purview)|handled\s+elsewhere|out\s+of\s+scope|defer(?:red)?\s+(?:to|elsewhere)\b|insufficient\s+(?:system\s+)?information/i,
+]
+function isDeflection(text) {
+  return DEFLECTION_MARKERS.some((re) => re.test(String(text || '')))
+}
+const DEFLECTION_ASK_TEXT = 'kix-discipline: 本回合模型答复将任务判定为「不处理 / 在别处处理 / 信息不足」。若接受请回复「接受」；否则请说明要求，模型将据此继续处理。'
+// 从会话表面（SessionSurfaceSnapshot.events，model-history 序）取最近一条
+// assistant 消息文本（只取 text 块；形状不符/无文本返回 undefined）。
+function lastAssistantText(surface) {
+  if (!surface || !Array.isArray(surface.events)) return undefined
+  for (let i = surface.events.length - 1; i >= 0; i--) {
+    const ev = surface.events[i]
+    if (ev && ev.type === 'assistant/message' && ev.data && ev.data.message) {
+      const content = ev.data.message.content
+      if (Array.isArray(content)) {
+        const text = content.filter((b) => b && b.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n')
+        if (text) return text
+      }
+      return undefined
+    }
+  }
+  return undefined
+}
 
 // ── 纯判定函数（模块级：单元测试经 __internals 直接验证）─────────────────
 
@@ -403,8 +438,8 @@ module.exports = {
       return next()
     })
 
-    // ── turn-stopping：回合结束的 green 提醒（有实现 edit 无测试运行）─────
-    ctx.on('agent/turn-stopping', (payload) => {
+    // ── turn-stopping：回合结束 green 提醒 + 拒绝/转交弹问（v2）──────────
+    ctx.on('agent/turn-stopping', async (payload) => {
       const agent = payload && payload.agent
       if (!agent) return
       const st = stateFor(agent)
@@ -414,11 +449,32 @@ module.exports = {
       const hadTests = st.turnTests > 0
       st.turnEdits = 0
       st.turnTests = 0
-      if (!hadEdits || hadTests) return
-      if (st.remindOnce && st.greenReminded) return
-      st.greenReminded = true
-      const reason = 'kix-discipline: 本回合有实现编辑，但测试未通过或未运行（turnTests 只计成功结果——被拦/失败的测试不构成 green 证据）。交付前验证三问：① 测试镜像真实链路吗 ② 证据维度对吗 ③ 关键 claim 独立验证过吗。运行相关测试后再声称完成（kix 提交前必跑 lint/test）。'
-      agent.steer(makeUserMessage(reason))
+      // green gate：有实现 edit 无测试运行 → 提醒（原逻辑）
+      if (hadEdits && !hadTests) {
+        if (!(st.remindOnce && st.greenReminded)) {
+          st.greenReminded = true
+          const reason = 'kix-discipline: 本回合有实现编辑，但测试未通过或未运行（turnTests 只计成功结果——被拦/失败的测试不构成 green 证据）。交付前验证三问：① 测试镜像真实链路吗 ② 证据维度对吗 ③ 关键 claim 独立验证过吗。运行相关测试后再声称完成（kix 提交前必跑 lint/test）。'
+          agent.steer(makeUserMessage(reason))
+        }
+      }
+      // v2（用户反馈）：模型终稿把直接请求判为「不处理/在别处处理/信息不足」
+      // → 弹问让用户裁决（每会话一次；本回合做过实现编辑不算拒绝）。
+      // 启发式 ask（非 deny）：误报成本 = 一次可忽略的确认问题；readSurface
+      // 缺失/失败静默跳过（可选项，不阻断）。
+      if (!st.deflectionAsked && !hadEdits) {
+        const sessionQuery = ctx.get('sessionQuery')
+        const sessionId = agent && agent.session && agent.session.id
+        if (sessionQuery && sessionId) {
+          try {
+            const surface = await sessionQuery.readSurface(sessionId)
+            const text = lastAssistantText(surface)
+            if (text && isDeflection(text)) {
+              st.deflectionAsked = true
+              agent.steer(makeUserMessage(DEFLECTION_ASK_TEXT))
+            }
+          } catch { /* 表面读取失败静默：弹问是可选项 */ }
+        }
+      }
     })
 
     // ── /kix-discipline 命令 ──────────────────────────────────────────────
@@ -465,6 +521,10 @@ module.exports.__internals = {
   renderSpec,
   parseSpec,
   makeState,
+  isDeflection,
+  lastAssistantText,
+  DEFLECTION_ASK_TEXT,
+  DEFLECTION_MARKERS,
   TEST_COMMAND_PATTERNS,
   TEST_FILE_PATTERNS,
   SPEC_FILENAME,

@@ -147,6 +147,40 @@ ok('组内 exampleTools 截断 3 个', (() => {
   return gh.exampleTools.length === 3
 })())
 
+// ── 3b. 长尾 fallback 组（2026-08-17 决策：发现面补兜底，不建动态分组）───
+section('fallback 长尾兜底')
+const longTailSchemas = [
+  ...sampleSchemas,
+  { name: 'mcp__linear__get_issue', description: 'Linear issue' }, // 新命名空间 MCP（未归类前缀）
+  { name: 'custom_global_tool', description: 'Custom global' },   // 非 MCP 全局工具（未归类）
+]
+ok('未覆盖按需工具自动归入 fallback 组', (() => {
+  const r = I.searchCapabilities(longTailSchemas, '')
+  const fb = r.find((g) => g.id === 'other')
+  return fb !== undefined
+    && fb.toolCount === 2
+    && fb.exampleTools.includes('mcp__linear__get_issue')
+    && fb.exampleTools.includes('custom_global_tool')
+})())
+ok('已覆盖工具与常驻工具不进 fallback', (() => {
+  const r = I.searchCapabilities(longTailSchemas, '')
+  const fb = r.find((g) => g.id === 'other')
+  return fb.exampleTools.every((n) =>
+    !n.startsWith('mcp__github__') && !n.startsWith('mcp__playwright__')
+    && n !== 'workflow' && n !== 'create_goal' && n !== 'job_output')
+})())
+ok('fallback query 过滤按成员名（组级统计不变）', (() => {
+  const r = I.searchCapabilities(longTailSchemas, 'linear')
+  const fb = r.find((g) => g.id === 'other')
+  return fb !== undefined && fb.toolCount === 2
+})())
+ok('新命名空间工具仍可被 call 代理（执行面动态,无需注册）', (async () => {
+  mockSchemas = longTailSchemas.map((s) => ({ ...s, parameters: { properties: { a: {} } } }))
+  executeCalls = []
+  const r = await callTool.execute({ tool: 'mcp__linear__get_issue', arguments: {} })
+  return r.ok === true && r.tool === 'mcp__linear__get_issue' && executeCalls.length === 1
+})())
+
 // ── 4. guidanceText ────────────────────────────────────────────────────────
 section('guidanceText')
 ok('引导文本含工具名', I.guidanceText('mcp__github__x').includes('mcp__github__x'))

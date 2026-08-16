@@ -1,4 +1,4 @@
-// kix-guards — kixparadigm 机械门禁的 DSH 原生实现（v5，2026-08-15）
+// kix-guards — kixparadigm 机械门禁的 DSH 原生实现（v6，2026-08-16）
 //
 // 移植自 kixpower 的 blast-radius-check.ps1 / block-source-edit.ps1 核心门禁，
 // 以 DSH `tools/pre-execute` 监听器形态自动拦截（等价 Copilot PreToolUse hook）。
@@ -31,6 +31,19 @@
 //   控制平面 / 破坏性 SQL / 未知执行工具 / commit budget）不变。
 //   降级（fail-safe）：无 userQuestions 服务 / exec 无 agent / 提问被中止或
 //   抛错（子代理 DELEGATED_CALLER、无 provider 等）→ 自动拒绝（deny）。
+// v6（2026-08-16，用户实测反馈驱动）：
+//   - 堵「gh CLI 绕门禁」：模型常经 pwsh 调 gh（GitHub CLI）绕过 MCP GitHub
+//     ask 门禁（实测反馈：批量开 PR）。新增终端 2d 门禁：gh 写操作（pr
+//     create/merge/close/reopen/ready/review、issue create/close/edit、
+//     repo create/fork/transfer、release create/delete、branch -d/-D、
+//     secret/variable set、workflow run、api -X POST/PATCH/PUT/DELETE 等）
+//     → 聊天内 ask（与 MCP GitHub mutation 同档）；破坏性（gh repo delete /
+//     gh api -X DELETE / gh release delete）→ deny。只读 gh（view/list/auth/
+//     api GET）放行。0 误报：gh 是 GitHub 专用 CLI，子命令枚举精确。
+//   - 堵「反复重复」：会话内同一操作（终端命令规范化文本 / edit 路径 /
+//     GitHub 工具名+参数）已被 deny 或用户拒绝后再次出现 → 直接 deny 附
+//     原拒绝原因 +「禁止重复尝试」，不再反复提问。memo 存插件闭包（每
+//     agent scope 一份 = 每会话独立），只记录拒绝（用户放行的不记录）。
 //
 // 挂载方式：preset agent.cordis.yml 中一行：
 //   - id: kix-guards
@@ -115,6 +128,81 @@ function gitSubcommands(text) {
 }
 function hasGitSubcommand(text, sub) {
   return gitSubcommands(text).has(sub)
+}
+
+// ── v6：gh CLI（GitHub CLI）写保护 ─────────────────────────────────────────
+// 模型常经 pwsh 调 gh 绕过 MCP GitHub 门禁（实测反馈：gh pr create 批量开 PR）。
+// gh 是 GitHub 专用 CLI：实体+动作枚举精确——只读（view/list/auth/api GET）
+// 放行，写操作 ask（与 MCP GitHub mutation 同档），破坏性 deny。
+const GH_MUTATION_ACTIONS = new Map([
+  ['pr', new Set(['create', 'merge', 'close', 'reopen', 'ready', 'review', 'edit', 'delete', 'comment'])],
+  ['issue', new Set(['create', 'close', 'reopen', 'edit', 'delete', 'comment', 'pin', 'unpin', 'lock', 'unlock', 'transfer'])],
+  ['repo', new Set(['create', 'fork', 'transfer', 'rename', 'edit', 'archive', 'unarchive', 'delete'])],
+  ['release', new Set(['create', 'edit', 'delete'])],
+  ['branch', new Set(['-d', '-D', 'delete'])],
+  ['run', new Set(['rerun', 'cancel', 'delete'])],
+  ['secret', new Set(['set', 'delete'])],
+  ['variable', new Set(['set', 'delete'])],
+  ['gist', new Set(['create', 'edit', 'delete'])],
+  ['workflow', new Set(['run', 'enable', 'disable'])],
+])
+// gh api 显式写方法（-X/--method POST|PATCH|PUT|DELETE；GET 及无方法放行）
+const GH_API_WRITE_METHOD = /\bgh\b[^;&|]*\bapi\b[^;&|]*\s(?:-X|--method)\s+["']?(?:POST|PATCH|PUT|DELETE)\b/i
+// 破坏性（删除远程数据）：repo delete / release delete / api DELETE
+const GH_DESTRUCTIVE = /(?:\bgh\b[^;&|]*\b(?:repo\s+delete|release\s+delete)\b)|(?:\bgh\b[^;&|]*\bapi\b[^;&|]*\s(?:-X|--method)\s+["']?DELETE\b)/i
+
+// 解析 gh 的（实体, 动作）：跳过旗标及其值（-R o/r、--repo o/r、--repo=v、
+// --title "x" 等；长旗标内联值含 "=" 直接跳过）
+function ghEntityAction(text) {
+  const re = /\bgh\b/g
+  let m
+  while ((m = re.exec(text))) {
+    const rest = text.slice(m.index + m[0].length)
+    const tokens = rest.split(/\s+/).filter(Boolean)
+    for (let i = 0; i < tokens.length; i++) {
+      const t = tokens[i]
+      if (t.startsWith('-')) {
+        if (t.startsWith('--') && t.includes('=')) continue // --flag=value
+        if (i + 1 < tokens.length && !tokens[i + 1].startsWith('-')) i++ // 旗标带值
+        continue
+      }
+      const entity = t.replace(/^["']|["']$/g, '').toLowerCase()
+      let action = undefined
+      if (i + 1 < tokens.length && !tokens[i + 1].startsWith('-')) {
+        action = tokens[i + 1].replace(/^["']|["']$/g, '').toLowerCase()
+      }
+      return { entity, action }
+    }
+  }
+  return undefined
+}
+
+function isGhDestructive(text) {
+  return GH_DESTRUCTIVE.test(String(text || ''))
+}
+
+function isGhMutation(text) {
+  const t = String(text || '')
+  if (!/\bgh\b/.test(t)) return false
+  if (isGhDestructive(t)) return false // 破坏性走 deny 档（调用方先判）
+  if (GH_API_WRITE_METHOD.test(t)) return true
+  const hit = ghEntityAction(t)
+  if (!hit || !hit.action) return false
+  const actions = GH_MUTATION_ACTIONS.get(hit.entity)
+  return actions !== undefined && actions.has(hit.action)
+}
+
+// ── v6：重复尝试记忆（会话内同操作已被拒 → 直接 deny，不再反复提问）──────
+function normalizeMemo(text) {
+  return String(text || '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+function stableArgs(args) {
+  if (!args || typeof args !== 'object') return ''
+  return Object.keys(args)
+    .filter((k) => args[k] !== undefined)
+    .sort()
+    .map((k) => `${k}=${typeof args[k] === 'object' ? JSON.stringify(args[k]) : String(args[k])}`)
+    .join('&')
 }
 
 // ps1 检查 3：force push 完整检测（--force / -f / push +refs 语法 / --mirror）。
@@ -220,6 +308,8 @@ module.exports = {
   apply(ctx) {
     const DENY = (reason) => ({ kind: 'deny', reason })
     const ASK = (reason) => ({ kind: 'ask', reason })
+    // v6：会话内重复尝试记忆（key → 原拒绝原因；只记录拒绝，用户放行不记）
+    const denyMemo = new Map()
 
     // ── 工具分类 ──────────────────────────────────────────────────────────
     const TERMINAL_TOOLS = new Set(['pwsh', 'bash'])
@@ -435,16 +525,36 @@ module.exports = {
       const text = commandText(args)
       const tool = (name || '').toLowerCase()
 
+      // v6：重复尝试记忆——同操作已被拒（硬 deny / 用户拒绝）→ 直接 deny，
+      // 附原拒绝原因 + 禁止重复尝试，不再反复提问（堵「反复重复」反馈）。
+      const pathArg = args && typeof (args.file_path ?? args.path) === 'string' ? (args.file_path ?? args.path) : undefined
+      let memoKey = null
+      if (TERMINAL_TOOLS.has(tool) && text) memoKey = 'term::' + normalizeMemo(text)
+      else if (EDIT_TOOLS.has(tool) && pathArg) memoKey = 'edit::' + normalizeMemo(pathArg)
+      else if (name && /^mcp__github__/.test(name)) memoKey = 'ghub::' + name + '::' + stableArgs(args)
+      if (memoKey && denyMemo.has(memoKey)) {
+        return DENY(`BLAST RADIUS: 该操作此前已被拒绝（${denyMemo.get(memoKey)}）。禁止重复尝试；如确需执行，请向用户说明原因并等待其明确指示。`)
+      }
+      const deny = (reason) => {
+        if (memoKey) denyMemo.set(memoKey, reason)
+        return DENY(reason)
+      }
+      const resolveAskRecord = async (execArg, decision) => {
+        const resolved = await resolveAsk(execArg, decision)
+        if (resolved && resolved.kind === 'deny' && memoKey) denyMemo.set(memoKey, resolved.reason)
+        return resolved
+      }
+
       // 1. 未知代码执行工具（无副作用的脚本类）→ deny
       if (/exec|run|eval|shell|snippet|python|node|jupyter|pylance|debug|repl|kernel|interpreter/.test(tool) && !KNOWN_SAFE_TOOLS.has(tool)) {
-        return DENY(`BLAST RADIUS: 未登记的工具 ${name} 无法验证副作用，拒绝执行。`)
+        return deny(`BLAST RADIUS: 未登记的工具 ${name} 无法验证副作用，拒绝执行。`)
       }
 
       // 1b. run_code 代码体受限能力检查（P0 修复 2026-08-15；v3 补 fs 直写）
       if (tool === 'run_code' && args && typeof args.code === 'string') {
         const code = args.code
         if (/import\s*\(\s*["']node:|require\s*\(\s*["']node:|child_process|fetch\s*\(|WebSocket\s*\(|process\.|\b(?:require|import)\s*\(\s*["']fs["']\)|writeFileSync\s*\(/.test(code)) {
-          return DENY('BLAST RADIUS: run_code 代码体包含受限能力（node: 动态 import / child_process / fetch / WebSocket / process 访问 / fs 直写）已拦截。run_code 是通用 Node 运行时，这些能力可绕过工具门禁；需要此类能力时请改用 native 工具（pwsh 等）经门禁执行。')
+          return deny('BLAST RADIUS: run_code 代码体包含受限能力（node: 动态 import / child_process / fetch / WebSocket / process 访问 / fs 直写）已拦截。run_code 是通用 Node 运行时，这些能力可绕过工具门禁；需要此类能力时请改用 native 工具（pwsh 等）经门禁执行。')
         }
       }
 
@@ -453,23 +563,23 @@ module.exports = {
         // 2a. 破坏性 SQL —— v3 起仅限数据库客户端上下文（ps1 检查 2 终端部分；
         //     grep/echo 等裸文本不再误拦）
         if (isTerminalDestructiveSql(text)) {
-          return DENY('BLAST RADIUS: 终端数据库客户端中的破坏性 SQL（DELETE/UPDATE without WHERE / DROP/TRUNCATE/ALTER）已拦截。请改用结构化工具或先在事务/只读副本中验证。')
+          return deny('BLAST RADIUS: 终端数据库客户端中的破坏性 SQL（DELETE/UPDATE without WHERE / DROP/TRUNCATE/ALTER）已拦截。请改用结构化工具或先在事务/只读副本中验证。')
         }
         // 2b. git 写保护（v3：解析式子命令门 + 顺序对齐 ps1：force → local ask →
         //     push main → push ask → budget/分支；v5：ask 级门禁改为聊天内提问）
         if (isGitWrite(text)) {
           if (isForcePush(text)) {
-            return DENY('BLAST RADIUS: git push --force 会重写远端历史。需用户明确确认；优先使用 --force-with-lease 或 git revert。')
+            return deny('BLAST RADIUS: git push --force 会重写远端历史。需用户明确确认；优先使用 --force-with-lease 或 git revert。')
           }
           if (isLocalDestructiveAsk(text)) {
-            const decision = await resolveAsk(exec, ASK('BLAST RADIUS: 检测到会丢失本地工作的 Git 操作（reset --hard / clean -f / branch -D / stash drop|clear / checkout -- / restore）。请确认目标仓库、分支和待丢弃内容。'))
+            const decision = await resolveAskRecord(exec, ASK('BLAST RADIUS: 检测到会丢失本地工作的 Git 操作（reset --hard / clean -f / branch -D / stash drop|clear / checkout -- / restore）。请确认目标仓库、分支和待丢弃内容。'))
             if (decision) return decision
           }
           if (pushTargetsProtectedRef(text)) {
-            return DENY('BLAST RADIUS: 禁止直接 push 到 main/master。请推送 feature 分支并通过 PR 合并。')
+            return deny('BLAST RADIUS: 禁止直接 push 到 main/master。请推送 feature 分支并通过 PR 合并。')
           }
           if (hasGitSubcommand(text, 'push')) {
-            const decision = await resolveAsk(exec, ASK('BLAST RADIUS: git push 会写入共享远端。确认远端、源分支和目标分支后再继续。'))
+            const decision = await resolveAskRecord(exec, ASK('BLAST RADIUS: git push 会写入共享远端。确认远端、源分支和目标分支后再继续。'))
             if (decision) return decision
           }
           if (hasGitSubcommand(text, 'commit')) {
@@ -479,7 +589,15 @@ module.exports = {
         }
         // 2c. 控制平面保护
         if (targetsControlPlane(text)) {
-          return DENY('CONTROL PLANE: 禁止通过命令改写用户级 Agent/Skill/Prompt/Hook/设置。')
+          return deny('CONTROL PLANE: 禁止通过命令改写用户级 Agent/Skill/Prompt/Hook/设置。')
+        }
+        // 2d. gh CLI（GitHub CLI）写保护（v6：堵「经 pwsh 调 gh 绕过 MCP GitHub 门禁」）
+        if (isGhDestructive(text)) {
+          return deny('BLAST RADIUS: gh 破坏性操作（repo delete / api DELETE / release delete）会删除远程数据，禁止执行。')
+        }
+        if (isGhMutation(text)) {
+          const decision = await resolveAskRecord(exec, ASK('BLAST RADIUS: gh 写操作会写入共享 GitHub（与 MCP GitHub 门禁同档）。确认目标仓库、分支与内容后再继续。'))
+          if (decision) return decision
         }
       }
 
@@ -487,7 +605,7 @@ module.exports = {
       if (EDIT_TOOLS.has(tool) && args) {
         const path = args.file_path || args.path || ''
         if (typeof path === 'string' && targetsControlPlane(path)) {
-          return DENY('CONTROL PLANE: 禁止编辑用户级 Agent/Skill/Prompt/Hook/设置文件。')
+          return deny('CONTROL PLANE: 禁止编辑用户级 Agent/Skill/Prompt/Hook/设置文件。')
         }
       }
 
@@ -495,7 +613,7 @@ module.exports = {
       if (SQL_TOOLS.has(tool)) {
         const sql = args && (args.sql || args.query || args.statement)
         if (typeof sql === 'string' && isDestructiveSql(sql)) {
-          return DENY('BLAST RADIUS: 破坏性 SQL（DELETE/UPDATE without WHERE / DROP/TRUNCATE/ALTER）已拦截。')
+          return deny('BLAST RADIUS: 破坏性 SQL（DELETE/UPDATE without WHERE / DROP/TRUNCATE/ALTER）已拦截。')
         }
       }
 
@@ -503,7 +621,7 @@ module.exports = {
       if (name && /^mcp__github__/.test(name)) {
         const decision = checkGitHubWrite(name, args)
         if (decision) {
-          const resolved = await resolveAsk(exec, decision)
+          const resolved = await resolveAskRecord(exec, decision)
           if (resolved) return resolved
         }
       }
@@ -532,6 +650,11 @@ module.exports.__internals = {
   repoRootFromText,
   resolveCommitBudget,
   activeSprintDir,
+  ghEntityAction,
+  isGhMutation,
+  isGhDestructive,
+  normalizeMemo,
+  stableArgs,
   COMMIT_HARD_CAP,
   COMMIT_BUDGET_DEFAULT,
 }

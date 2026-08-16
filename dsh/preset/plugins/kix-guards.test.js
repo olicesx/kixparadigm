@@ -1,4 +1,4 @@
-// kix-guards 回归测试（v5，2026-08-15 聊天内提问改造后）
+// kix-guards 回归测试（v6，2026-08-16：gh CLI 写保护 + 重复尝试记忆）
 //
 // 单元级验证：加载 kix-guards.js，mock DSH pre-execute 派发
 // （模拟 dsh-tools createExecution 的输出结构：{ name, arguments, ... }），
@@ -288,6 +288,60 @@ async function askCase(label, name, args) {
   assert.ok(!I.targetsControlPlane('C:/work/project/.credentials.yaml'), '项目凭据模板不拦')
   assert.ok(!I.targetsControlPlane('C:/Users/other/.dsh/settings.yaml'), '其他用户 home 不拦')
   passed += 7
+
+  // ══ 8. v6：gh CLI 写保护 + 重复尝试记忆 ═════════════════════════════════
+  // 8a. gh CLI 纯判定（__internals）
+  assert.ok(I.isGhMutation('gh pr create --title x'), 'gh pr create → mutation')
+  assert.ok(I.isGhMutation('gh -R o/r pr merge 3'), 'gh -R 前置不绕过')
+  assert.ok(I.isGhMutation('gh --repo o/r issue close 3'), 'gh --repo 前置不绕过')
+  assert.ok(I.isGhMutation('gh api -X POST repos/o/r/issues'), 'gh api POST → mutation')
+  assert.ok(I.isGhMutation('gh secret set TOKEN'), 'gh secret set → mutation')
+  assert.ok(!I.isGhMutation('gh pr view 3'), 'gh pr view → 放行')
+  assert.ok(!I.isGhMutation('gh issue list'), 'gh issue list → 放行')
+  assert.ok(!I.isGhMutation('gh auth status'), 'gh auth status → 放行')
+  assert.ok(!I.isGhMutation('gh api repos/o/r/pulls/3'), 'gh api GET → 放行')
+  assert.ok(!I.isGhMutation('git push origin feature'), '非 gh 不判')
+  assert.ok(I.isGhDestructive('gh repo delete o/r'), 'gh repo delete → 破坏性')
+  assert.ok(I.isGhDestructive('gh api -X DELETE repos/o/r'), 'gh api DELETE → 破坏性')
+  assert.ok(!I.isGhDestructive('gh pr create --title x'), 'gh pr create 非破坏性')
+  assert.deepStrictEqual(I.ghEntityAction('gh pr create --title x'), { entity: 'pr', action: 'create' })
+  assert.deepStrictEqual(I.ghEntityAction('gh --repo o/r pr merge'), { entity: 'pr', action: 'merge' })
+  passed += 15
+
+  // 8b. gh 门禁派发（v6：写操作 ask 聊天提问 / 破坏性 deny / 只读放行）
+  await askCase('pwsh: gh pr create --title v6-gh', 'pwsh', { command: 'gh pr create --title v6-gh' })
+  await askCase('pwsh: gh pr merge 12', 'pwsh', { command: 'gh pr merge 12' })
+  await askCase('pwsh: gh issue close 7', 'pwsh', { command: 'gh issue close 7' })
+  check('pwsh: gh repo delete o/r → deny', await dispatch('pwsh', { command: 'gh repo delete o/r' }), true)
+  check('pwsh: gh api -X DELETE repos/o/r → deny', await dispatch('pwsh', { command: 'gh api -X DELETE repos/o/r' }), true)
+  check('pwsh: gh pr view 3 → allow', await dispatch('pwsh', { command: 'gh pr view 3' }), false)
+  check('pwsh: gh issue list → allow', await dispatch('pwsh', { command: 'gh issue list' }), false)
+  check('pwsh: gh api repos/o/r → allow', await dispatch('pwsh', { command: 'gh api repos/o/r' }), false)
+
+  // 8c. 重复尝试记忆：同操作（终端命令归一 / edit 路径 / GitHub 工具+参数）
+  // 已被拒 → 直接 deny 且不再提问；用户放行的操作不记录。
+  let askCalls = 0
+  userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['允许执行'] }] } } }
+  check('v6: git push 首次（用户允许）→ allow 且不记录', await dispatch('pwsh', { command: 'git push origin v6-repeat' }), false)
+  userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['拒绝'] }] } } }
+  check('v6: gh pr create（用户拒绝）→ deny + 记录', await dispatch('pwsh', { command: 'gh pr create --title v6-repeat' }), true)
+  userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['允许执行'] }] } } }
+  const v6Repeat = await dispatch('pwsh', { command: 'gh   pr    create --title v6-repeat' })
+  check('v6: 同操作重复（空白归一）→ deny 不再提问', v6Repeat, true)
+  assert.strictEqual(askCalls, 2, 'v6: 重复时未再次调用 userQuestions（askCalls=2）')
+  passed += 1
+  check('v6: 不同命令不受 memo 影响 → allow', await dispatch('pwsh', { command: 'git status' }), false)
+  // edit 路径重复（用全新路径保证「首次」语义）
+  const v6Cp = 'C:\\Users\\v6\\.dsh\\.agent-presets\\kixparadigm\\agent.cordis.yml'
+  check('v6: edit 控制平面首次 → deny + 记录', await dispatch('edit', { file_path: v6Cp }), true)
+  check('v6: edit 同路径重复 → deny（memo）', await dispatch('edit', { file_path: v6Cp }), true)
+  // GitHub 工具同参重复（不同参数不算重复）
+  userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['拒绝'] }] } } }
+  await dispatch('mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 99 })
+  userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['允许执行'] }] } } }
+  check('v6: GitHub 工具同参重复 → deny（memo）', await dispatch('mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 99 }), true)
+  userQuestionsMock = { ask: async () => { askCalls++; return { answers: [{ id: 'kix-guards-confirm', selected: ['允许执行'] }] } } }
+  check('v6: GitHub 工具异参（pull_number 不同）不受 memo 影响 → ask 放行', await dispatch('mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 100 }), false)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
