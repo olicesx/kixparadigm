@@ -98,9 +98,14 @@ kix is layered in two, and this repository ships both layers plus the ecosystem 
 | **Cognition layer (how to think)** | `kixparadigm` | Resident cognition paradigm: Three-Channel Cross-Validation, Phase Duality, Rules Are Liabilities, Triple Requirement Check (no sycophancy), Pre-Code Decision Chain, AI Blind-Spot Map. Active in every session |
 | **Execution layer (how to execute)** | `kixpower` | Multi-agent orchestration: Producer plans → Dev implements → QA verifies; sprints, DAG topology, 4-level loop, verifiable gates |
 | **Ecosystem skills** | `handoff` / `write-a-skill` / `improve-codebase-architecture` and 17 more | Session handoff, skill authoring, architecture improvement, TDD/teaching/diagnosis methodology |
-| **Mechanical guards** | `kix-guards` plugin | Commit budget, feature branch, force push, dangerous SQL, control-plane file protection, human confirmation points (142 assertions; v4 fixes GitHub read-only tool false positives) |
-| **Cost discipline** | `kix-cost` plugin | Subagent reasoning-effort normalization (thinker→max, other deepseek→high) + lite-tier preferred-route probing with automatic fallback (24 assertions, v5.8) |
+| **Mechanical guards** | `kix-guards` plugin | Commit budget, feature branch, force push, dangerous SQL, control-plane file protection, human confirmation points (199 assertions; v5 in-chat questions + v4 GitHub read-only false-positive fix; v6 gh CLI write protection + repeated-attempt auto-deny) |
+| **Discipline mechanism** | `kix-discipline` plugin | Triple-check contract gate + verification gate: spec contract checked before implementation edits, end-of-turn no-test reminder, `kix_discipline_spec` contract tool, `/kix-discipline` command (63 assertions, 2026-08-16 pluginization P0; v2 reject/handoff ask) |
+| **Orchestration handoff gate** | `kix-orchestration` plugin | Pre-dispatch checks (sprint marker / plan+progress / blocker / QA completeness); v2 QA return-side consistency (subagent/end); v3 producer_closeout evidence chain; v4 sleep-waiting-for-subagent one-shot reminder (**v4.1 platform-agnostic**: dual command shapes always tested, no tool-name gating; WSL2-verified positive+negative, 67 assertions) |
+| **Minimal + progressive disclosure** | `kix-focus` plugin | Three tiers: tools.restrict trims the per-turn tool surface from 85 (~108KB schema) to ~18 resident core; `kix_capability_search` on-demand catalog (v4 param-name metadata + long-tail fallback groups) + `kix_capability_call` proxied execution (full guard pipeline); PTC/Code Mode interop (66 assertions, 2026-08-16 P4) |
+| **Cost discipline** | `kix-cost` plugin | Subagent reasoning-effort normalization (thinker→max, other deepseek→high) + lite-tier preferred-route probing with automatic fallback (28 assertions, v5.8; multi-round fallback-route cache fix 2026-08-17) |
+| **Routing layer** | `kix-route` plugin | Sentinel model names (`kix-route:cross/vision/thinker`) → runtime route resolution: cross-vendor inversion / vision model / deep-thinking tier; configurable preference tables (`modelPreference`/`crossProviderOrder` via plugin config, 2026-08-17) (67 assertions, v5.9.1) |
 | **Native commands** | `kix-commands` plugin | `/kixpower-*` five commands registered as DSH native commands (zero-token trigger, inject flows from `prompts/`) |
+| **Stalled detection** | `kix-stalled` plugin (optional) | `/kixst-check` command + `kix_stalled_check` tool: read-only detection of stalled sprints (candidate, commented-out mount = opt-in, enable via `scripts/install-kix-stalled.ps1`) |
 | **Vision compensation** | `dsh-vision-bridge` plugin | When the main model has no vision, pasted/dropped images are auto-converted to text descriptions before submit (GLM-4.6V, server HTTP + client dock) |
 
 **In one sentence**: kixparadigm gives the AI the freedom of "how to think" plus blind-spot compensation; kixpower gives "how to execute" structured team orchestration; the guard and vision plugins make DSH a complete host for kix.
@@ -149,7 +154,7 @@ kixparadigm/
 ## 🧪 Development & verification
 
 ```bash
-npm test                                  # full plugin regression: guards 199 + discipline 63 + orchestration 48 + focus 66 + cost 28 + route 67 assertions
+npm test                                  # full plugin regression: guards 199 + discipline 63 + orchestration 67 + focus 66 + cost 28 + route 67 assertions
 node scripts/verify-guards.js             # compare installed preset vs bundle guards
 node scripts/verify-vision-bridge-resolution.cjs  # vision-bridge load-chain full path
 pwsh -File .\scripts\sync-dsh-preset.ps1 -DryRun   # preview preset diffs
