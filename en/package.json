@@ -1,6 +1,6 @@
 {
   "name": "kixparadigm-en",
-  "version": "1.2.14",
+  "version": "1.2.15",
   "description": "kixparadigm-en — English edition of the kix paradigm preset for DeepSeek Harness: resident cognition layer (EN) + kixpower multi-agent orchestration, one-command import (preset + vision-bridge + guard plugins)",
   "license": "MIT",
   "author": "kix (olicesx)",
