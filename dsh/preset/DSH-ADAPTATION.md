@@ -77,7 +77,7 @@ autoApprove 全开 → 对应 DSH 权限预设（本部署 `danger-full-access`�
 **一致性守护写时拦截（kix-consistency，2026-08-17 新增 P5；v1.2.15 泛化）**：CI 脚本只在测试期校验、改 preset 文件不实时拦截 drift，本插件把「唯一事实源」从自觉变机械（见 `PLUGINIZATION-ROADMAP.md` P5）：
 - `scripts/check-dsh-consistency.cjs` 拆核为 `plugins/consistency-lib.cjs` 纯函数核心——**CI 脚本与插件共用单一事实源**（root 参数化、返回 `{failures, notes}`、无 console 副作用），防「CI 一套、运行时一套」双源漂移
 - **边界自感知（v1.2.15）**：preset 根 = 同时含 `agent.cordis.yml` + `preset.yml` 的目录（深度 ≤2 扫描，跳过 `.*`/node_modules）；任意仓库 ≥2 个 preset 根才引导，单 preset / 普通项目零开销——不按仓库名/指纹硬编码，自定义布局（`pkgs/zh`+`pkgs/en`）同样被发现
-- **通用层：身份组 + parity hint**：各根同名 `plugins/*.{js,cjs}` 字节一致（该相同的数份必须相同，N ≥ 2 一次比完）；其余根内路径（skills/agents/instructions/prompts 等翻译关系，机械校验必误报——zh/en 结构本就不镜像）只发 **parity hint**：不断言失败，把「其它根对应份是否需要同步/翻译」交给模型判断——没描述到的形态靠提醒感知，每会话一次限噪。**VS Code 导入源（根 `plugins/`）不是 preset 根，天然出组**——本仓边界 = DSH 双份 preset，不涉及 VS Code 版本
+- **通用层：身份组 + parity hint + shell 通道**：各根同名 `plugins/*.{js,cjs}` 字节一致（该相同的数份必须相同，N ≥ 2 一次比完）；**shell 写入（pwsh/bash 命令提及 preset 根路径）**——pre 登记命令中的根内路径，post-execute（磁盘已变）复验身份组，漂移注入提醒；其余根内路径（skills/agents/instructions/prompts 等翻译关系，机械校验必误报——zh/en 结构本就不镜像）只发 **parity hint**：不断言失败，把「其它根对应份是否需要同步/翻译」交给模型判断——没描述到的形态靠提醒感知，每会话一次限噪，block/ask 对 hint 无效（无失败可拦）。**VS Code 导入源（根 `plugins/`）不是 preset 根，天然出组**——本仓边界 = DSH 双份 preset，不涉及 VS Code 版本
 - **契约层自声明**：persona 预算 / memories 计数 / README 表述 / 版本对 / vision-bridge 对只对自带 `scripts/check-dsh-consistency.cjs` 的仓库开（仓库携带契约入口 = 自声明），外仓不硬套本仓常量；`presetRoots` 配置可显式声明身份组根
 - 失败 → `remind`（默认，只做启发引导）/ `ask` / `block`（可配）；remindOnce 每会话每类别一次，挂起提醒按 callId 记账（并发多类别写入互不丢提醒）
 - 触发面：仅「源仓库指纹」工作区（dsh/preset + en/preset + scripts 入口齐全）——其余工作区零开销放行；remindOnce 每会话每类别一次，挂起提醒按 callId 记账（并发多类别写入互不丢提醒）
