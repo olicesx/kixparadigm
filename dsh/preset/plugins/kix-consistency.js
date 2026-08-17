@@ -177,16 +177,18 @@ function buildParityHint(relPath, home, presetRoots) {
 }
 
 // 从 shell 命令文本提取 preset 根内路径（启发：正斜杠/反斜杠均认，截到引号/空白）。
+// 字符类 '-' 必须放末位——夹在 '.' 与 '/' 之间会被解析为范围 .-/，连字符
+// 被排除（WSL2 实弹实锤：shell-live.js 截成 shell，漂移提醒降级成 hint）。
 // 误提取的代价 = 一次 post 检查（文件不存在 → checkPluginPair 报 missing，仍是有效提醒）。
 function extractShellTargets(cmd, presetRoots) {
   const out = []
   const seen = new Set()
   for (const root of presetRoots) {
     const esc = root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\//g, '[/\\\\]')
-    const re = new RegExp(esc + '[/\\\\]([A-Za-z0-9_.\-/\\\\]+)', 'g')
+    const re = new RegExp(esc + '[/\\\\]([A-Za-z0-9_./\\\\-]+)', 'g')
     let m
     while ((m = re.exec(String(cmd || '')))) {
-      const rel = m[1].replace(/\\/g, '/').replace(/[^A-Za-z0-9_.\-/]+.*$/, '')
+      const rel = m[1].replace(/\\/g, '/').replace(/[^A-Za-z0-9_./-]+.*$/, '')
       if (!rel || rel.length === 0) continue
       const key = root + '/' + rel
       if (seen.has(key)) continue
