@@ -460,6 +460,9 @@ function makePostExec(callId) {
   section('__internals: extractShellTargets')
   const ext1 = I.extractShellTargets('cp a dsh/preset/plugins/x.js && cat dsh/preset/skills/y.md', KIX)
   await ok('正斜杠命令提取 2 目标', ext1.length === 2 && ext1[0].rel === 'plugins/x.js' && ext1[1].rel === 'skills/y.md')
+  await ok('连字符文件名完整提取（live 实弹回归：shell-live.js 曾截成 shell）',
+    I.extractShellTargets('cp a dsh/preset/plugins/shell-live.js', KIX)[0].rel === 'plugins/shell-live.js')
+  await ok('连字符 + 相对段混合', I.extractShellTargets('cp pkgs/zh/plugins/my-plugin.test.js b', ['pkgs/zh'])[0].rel === 'plugins/my-plugin.test.js')
   const ext2 = I.extractShellTargets('Copy-Item x dsh\\preset\\plugins\\x.ps1', KIX)
   await ok('反斜杠命令提取（rel 归一正斜杠）', ext2.length === 1 && ext2[0].rel === 'plugins/x.ps1')
   await ok('无关命令 → 空', I.extractShellTargets('npm install && npm test', KIX).length === 0)
