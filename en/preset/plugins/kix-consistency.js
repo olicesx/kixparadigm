@@ -11,7 +11,8 @@
 // 触发面（限制越少越好，边界自感知）：扫描工作区「DSH preset 根」（同时含
 // agent.cordis.yml + preset.yml 的目录，深度 ≤2）。发现 ≥2 个 preset 根才引导——
 // 该相同的数份必须相同（各根下同名 plugins/*.{js,cjs} 字节一致，语言中立代码）。
-// 单 preset / 普通仓库 / VS Code 导入源（根 plugins/ 等，不是 preset 根）零开销放行。
+// 单 preset / 普通仓库零开销放行（边界 = preset 根；边界外路径天然不触发，
+// 无需任何逐路径豁免规则）。
 // kix 全量契约（persona 预算 / memories 计数 / README 表述 / 版本对 / vision-bridge）
 // 由仓库自带 scripts/check-dsh-consistency.cjs **自声明**触发——仓库自己携带契约
 // 入口才算契约仓，不是按仓库名硬编码（防外仓误伤 = 防过拟合）。
@@ -185,33 +186,12 @@ module.exports = {
     const cfg = config || {}
     const intensity = cfg.intensity || 'remind'
 
-    function sessionCwd(agent) {
-      try {
-        const cwd = agent && agent.session && agent.session.header && agent.session.header.cwd
-        return typeof cwd === 'string' && cwd.length > 0 ? cwd : undefined
-      } catch {
-        return undefined
-      }
-    }
-
-    // sandboxPolicy.workspaceRoot 是部署回退（常为 process.cwd()），不是会话工作区。
-    // DSH 官方口径：会话不可变 cwd 才是 workspace-write 边界；resolve({session}) 才给出逐调用根。
-    // 误用回退值 → isRepoRoot(/root) 失败 → 整插件在任何非启动目录工作区静默失效（WSL2 E2E 实锤）。
+    // 会话工作区根：lib.resolveWorkspaceRoot（与 kix-guards 共用的单一实现）。
+    // sandboxPolicy.workspaceRoot 是部署回退（常为 process.cwd()），不是会话工作区——
+    // 误用回退值 → isRepoRoot(/root) 失败 → 整插件在任何非启动目录工作区静默失效
+    // （WSL2 E2E 实锤）。
     function resolveWorkspaceRoot(agent) {
-      const cwd = sessionCwd(agent)
-      if (cwd) return cwd
-      const sandboxPolicy = ctx.get('sandboxPolicy')
-      if (sandboxPolicy === undefined) return undefined
-      if (typeof sandboxPolicy.resolve === 'function') {
-        try {
-          const session = agent && agent.session
-          const resolved = sandboxPolicy.resolve(session ? { session } : {})
-          if (resolved && typeof resolved.workspaceRoot === 'string' && resolved.workspaceRoot.length > 0) {
-            return resolved.workspaceRoot
-          }
-        } catch { /* fall through */ }
-      }
-      return sandboxPolicy.workspaceRoot || undefined
+      return lib.resolveWorkspaceRoot(agent, ctx.get('sandboxPolicy'))
     }
 
     const states = new Map()

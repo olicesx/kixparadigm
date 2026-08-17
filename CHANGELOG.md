@@ -3,12 +3,12 @@
 ## v1.2.15（待发版）kix-consistency 泛化：自感知边界 + N 份身份组
 
 - **该相同的数份必须相同（N ≥ 2）**：`checkIdenticalSet` 一次比 N 份（缺一份 / 任一份与锚点字节不同都失败）；身份组不再写死 zh/en 一对——按自感知 preset 根展开，加语言 / 加 preset 自然进组
-- **边界自感知**：preset 根 = 同时含 `agent.cordis.yml` + `preset.yml` 的目录（DSH 布局双标记压假阳性），深度 ≤2 扫描（跳过 `.*` / node_modules）。任意仓库发现 ≥2 个 preset 根才引导；单 preset / 普通项目零开销放行——触发不再按 kixparadigm 指纹硬编码，自定义布局（如 `pkgs/zh` + `pkgs/en`）同样被发现
-- **VS Code 导入源出组**：根 `plugins/`（Copilot 参考副本）不是 preset 根，不再要求与 DSH 侧同步（CI 与写时都不再比）——本仓边界 = DSH 双份 preset 本身，不涉及 VS Code 版本
+- **边界即 preset 根**：preset 根 = 同时含 `agent.cordis.yml` + `preset.yml` 的目录（DSH 布局双标记压假阳性），深度 ≤2 扫描（跳过 `.*` / node_modules）。任意仓库发现 ≥2 个 preset 根才引导；单 preset / 普通项目零开销放行——触发不再按 kixparadigm 指纹硬编码，自定义布局（如 `pkgs/zh` + `pkgs/en`）同样被发现。**非 preset 根路径天然出组（CI 与写时都不比）——边界是自感知推论，不设任何逐路径豁免规则**
 - **契约层自声明**：persona 预算 / memories 计数 / README 表述 / 版本对 / vision-bridge 对只对自带 `scripts/check-dsh-consistency.cjs` 的仓库开（仓库自己携带契约入口 = 自声明适用 kix 全量契约），外仓不硬套本仓常量——防过拟合；`presetRoots` 配置可显式声明身份组根覆盖扫描
+- **kix-guards v13 源豁免自感知**：`targetsControlPlane` 的源仓库豁免从硬编码 `dsh/preset|en/preset` 正则改为谓词注入——目标落在**会话工作区发现的 preset 根**（与 kix-consistency 同一 `discoverPresetRoots` 实现）之下即源文件；外仓 preset 工作区写自己的 preset 文件不再被误判控制平面。纯字符串上下文无法证明「源」，bare `agent.cordis.yml` 仍提醒；安装面检查先行不变。`resolveWorkspaceRoot` 提取到 consistency-lib（guards/consistency 共用，消灭双源）。单测 kix-guards **239 → 245**
 - **parity hint（未描述形态靠提醒感知）**：根内非 plugins 路径（skills/agents/instructions/prompts/memories（无契约时）/persona（无契约时）等）写时发一次启发提醒——不断言失败，只把「其它根对应份是否需要同步/翻译」交给模型判断（翻译关系机械校验必误报，zh/en 结构本就不镜像）；remindOnce 每会话一次限噪；block/ask 强度不作用于 hint（无失败可拦）
 - **shell 写入通道**：pwsh/bash 命令提及 preset 根内路径（cp/Set-Content/重定向/sed -i 等）——pre 登记命令中的根内路径（写前磁盘未变，检查无意义），post-execute（磁盘已变）复验身份组，漂移注入提醒，非 plugins 目标走 parity hint；此前 shell 写完全绕过（实证：漂移与 skills 双 SILENT）；提取启发式认正/反斜杠，cap 8 目标限噪
-- 单测：kix-consistency **54 → 107**（外仓自定义布局 / VS Code 导入源边界 / 单根零开销 / 契约分层 / N 份漂移与缺失 / parity hint 与 remindOnce / edit 工具 / pwsh+bash shell 通道与无假阳性 / block+ask 强度免疫 / N=3 根点名 / 双 agent 独立 / 深路径与扩展名形态 / 类别隔离 / 提取器单测）；WSL2 安装副本外仓夹具实测（kix-foreign-multi / single / plain / vscode）
+- 单测：kix-consistency **54 → 107**（外仓自定义布局 / 边界外路径 / 单根零开销 / 契约分层 / N 份漂移与缺失 / parity hint 与 remindOnce / edit 工具 / pwsh+bash shell 通道与无假阳性 / block+ask 强度免疫 / N=3 根点名 / 双 agent 独立 / 深路径与扩展名形态 / 类别隔离 / 提取器单测）；WSL2 安装副本外仓夹具实测（kix-foreign-multi / single / plain / vscode）
 
 ## v1.2.14（2026-08-17）插件化续：P5 两项机制化
 

@@ -602,6 +602,13 @@
 # v9: publish/comment/ordinary-push confirmation gates are soft constraints
 # (no questions); hard deny remains for irreversible destruction only.
 # Unit tests: 210 assertions.
+# v13 (v1.2.15): self-sensed source exemption — a target under a preset root
+# discovered in the session workspace (agent.cordis.yml + preset.yml double
+# marker, same implementation as kix-consistency) is a source file; the
+# hardcoded dsh/preset|en/preset regex is gone (foreign preset workspaces
+# are no longer miscategorized as control plane). The install-plane check
+# (~/.dsh / .agent-presets) still fires first and keeps reminding.
+# Unit tests: 245 assertions.
 # 相对路径插件由 loader 以 baseUrl 解析（name 以 "." 开头 → new URL(name, baseUrl)）。
 - id: kix-guards
   name: ./plugins/kix-guards.js
@@ -650,8 +657,9 @@
 # identity sets at post-execute; other in-root paths (skills/agents/prompts
 # — translation relations) get a parity hint only — no failure asserted,
 # whether other roots' counterparts need syncing is left to model judgment
-# (undescribed forms sensed via the reminder). The VS Code import source
-# (root plugins/) is not a preset root and stays out.
+# (undescribed forms sensed via the reminder). The boundary is the preset
+# roots themselves: non-preset-root paths are naturally out (a self-sensing
+# corollary — no per-path exemptions).
 # The full kix contract (persona budget / memories count / README phrases /
 # version pair / vision-bridge / single-file syntax) is self-declared by the
 # repo carrying the scripts entry; foreign repos are never forced onto it.

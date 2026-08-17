@@ -78,9 +78,9 @@ function checkPersonaBudget({ root, rel, maxChars, maxEstTokens }) {
 // 该相同的数份必须相同（kix 哲学：不是写死的 zh/en 一对）。
 // 边界自感知：preset 根 = 同时含 agent.cordis.yml + preset.yml 的目录（DSH preset
 // 布局双标记，压假阳性），深度 ≤2 扫描（跳过 .* / node_modules）。
-// 本仓自感知结果 = dsh/preset + en/preset；根 plugins/ 是 VS Code 导入源，不是
-// preset 根，天然不进身份组。其它仓库：≥2 个 preset 根才引导；单 preset /
-// 普通项目零开销放行——规则是负债，只做启发引导。
+// 边界即 preset 根本身：非 preset 根路径天然出组，无需任何逐路径豁免规则。
+// 其它仓库：≥2 个 preset 根才引导；单 preset / 普通项目零开销放行——规则是负债，
+// 只做启发引导。
 const PRESET_MARKERS = ['agent.cordis.yml', 'preset.yml']
 
 function isPresetRootDir(root, rel) {
@@ -114,6 +114,30 @@ function discoverPresetRoots(root, extraRoots) {
 
 function isMultiPresetWorkspace(root) {
   return discoverPresetRoots(root).length >= 2
+}
+
+// 会话工作区根解析（kix-consistency / kix-guards 共用，防双源）：
+// 会话 header.cwd（DSH 官方口径：不可变 cwd 才是 workspace-write 边界）→
+// sandboxPolicy.resolve({session})（逐调用根）→ sandboxPolicy.workspaceRoot
+// （部署回退，常为 process.cwd()——误当会话工作区会让整套自感知静默失效，
+// WSL2 E2E 实锤）。全部拿不到 → null。
+function resolveWorkspaceRoot(agent, sandboxPolicy) {
+  try {
+    const cwd = agent && agent.session && agent.session.header && agent.session.header.cwd
+    if (typeof cwd === 'string' && cwd.length > 0) return cwd
+  } catch { /* fall through */ }
+  if (sandboxPolicy === undefined || sandboxPolicy === null) return null
+  if (typeof sandboxPolicy.resolve === 'function') {
+    try {
+      const session = agent && agent.session
+      const resolved = sandboxPolicy.resolve(session ? { session } : {})
+      if (resolved && typeof resolved.workspaceRoot === 'string' && resolved.workspaceRoot.length > 0) {
+        return resolved.workspaceRoot
+      }
+    } catch { /* fall through */ }
+  }
+  const fallback = sandboxPolicy.workspaceRoot
+  return typeof fallback === 'string' && fallback.length > 0 ? fallback : null
 }
 
 // paths ≥ 2；任一缺失 / 任一份与锚点（第一份）字节不同 → failure。
@@ -380,6 +404,7 @@ module.exports = {
   PRESET_MARKERS,
   discoverPresetRoots,
   isMultiPresetWorkspace,
+  resolveWorkspaceRoot,
   presetRootOf,
   identityPathsFor,
   pluginIdentityPaths,

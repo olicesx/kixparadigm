@@ -171,7 +171,7 @@ function makePostExec(callId) {
   await ok('README.en.md → readme', I.classifyWrite('README.en.md', KIX, true) === 'readme')
   await ok('package.json → package', I.classifyWrite('package.json', KIX, true) === 'package')
   await ok('vision-bridge → vision', I.classifyWrite('dsh/vision-bridge/index.js', KIX, true) === 'vision')
-  await ok('VS Code 导入源（根 plugins/）→ null（边界外）', I.classifyWrite('plugins/kix-guards.js', KIX, true) === null)
+  await ok('根 plugins/（非 preset 根）→ null（边界外）', I.classifyWrite('plugins/kix-guards.js', KIX, true) === null)
   await ok('普通源码 → null', I.classifyWrite('src/main.js', KIX, true) === null)
   await ok('windows 反斜杠路径 → plugins', I.classifyWrite('dsh\\preset\\plugins\\kix-x.js', KIX, true) === 'plugins')
   await ok('空 → null', I.classifyWrite('', KIX, true) === null)
@@ -179,7 +179,7 @@ function makePostExec(callId) {
   section('__internals: pickChecks')
   const srcChecks = I.pickChecks(repo, 'dsh/preset/plugins/kix-x.js')
   await ok('写插件源码 → pair + 语法 2 检查', srcChecks.length === 2)
-  await ok('写 VS Code 导入源（根 plugins/）→ 0 检查（边界外）', I.pickChecks(repo, 'plugins/kix-guards.js').length === 0)
+  await ok('写根 plugins/（非 preset 根）→ 0 检查（边界外）', I.pickChecks(repo, 'plugins/kix-guards.js').length === 0)
   const testChecks = I.pickChecks(repo, 'dsh/preset/plugins/kix-x.test.js')
   await ok('写插件测试 → 仅 pair 1 检查', testChecks.length === 1)
   const personaChecks = I.pickChecks(repo, 'dsh/preset/agent.cordis.yml')
@@ -293,7 +293,7 @@ function makePostExec(callId) {
   await ok('pickChecks README.md → 1 检查', I.pickChecks(repo, 'README.md').length === 1)
   await ok('pickChecks package.json → 1 检查', I.pickChecks(repo, 'package.json').length === 1)
   await ok('pickChecks vision-bridge → 2 检查', I.pickChecks(repo, 'dsh/vision-bridge/index.js').length === 2)
-  await ok('VS Code 导入源 classify → null', I.classifyWrite('plugins/kix-guards.test.js', KIX, true) === null)
+  await ok('根 plugins/ classify → null（非 preset 根）', I.classifyWrite('plugins/kix-guards.test.js', KIX, true) === null)
 
   section('pre/post: 并发多类别写（Map 挂起不互相覆盖）')
   const repo3 = makeRepoRoot()
@@ -371,7 +371,7 @@ function makePostExec(callId) {
   await ok('会话 cwd 路径下的提醒带非空 id',
     typeof sessPost.additionalContexts[0].id === 'string' && sessPost.additionalContexts[0].id.length > 0)
 
-  section('pre-execute: 外仓实测（自感知双根，无契约脚本，VS Code 导入源在根）')
+  section('pre-execute: 外仓实测（自感知双根，无契约脚本，根 plugins/ 在边界外）')
   const repoF = mkdtemp('kix-cons-test-fwe2e-')
   for (const r of ['pkgs/zh', 'pkgs/en']) {
     fs.mkdirSync(path.join(repoF, r + '/plugins'), { recursive: true })
@@ -402,7 +402,7 @@ function makePostExec(callId) {
   const f3 = { name: 'write', callId: 'fw-3', arguments: { file_path: 'plugins/kix-guards.js' }, agent: fAgent }
   await preExecute[0](f3, () => 'NEXT')
   const f3Post = await postExecute[0]({ name: 'write', callId: 'fw-3', agent: fAgent }, {}, () => 'NEXT')
-  await ok('VS Code 导入源写入 → 零开销放行（边界 = DSH preset 根）', f3Post === 'NEXT')
+  await ok('根 plugins/ 写入 → 零开销放行（边界 = preset 根）', f3Post === 'NEXT')
 
   // ── 任务形态覆盖：edit 工具（非 write 的变更通道）───────────────────────
   section('任务形态：edit 工具')

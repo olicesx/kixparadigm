@@ -111,7 +111,7 @@ async function runShell(name, wsRoot, cmd, tool) {
   await check('S2 外仓 persona 写入（无契约脚本）→ parity hint（由你判断）', r1[1] !== null && r1[1].includes('由你判断'))
   await check('S2b 未描述形态（skills）→ hint 已给过，remindOnce 静默', r1[2] === null)
   const r3 = await run('vscode', '/root/kix-foreign-vscode', ['plugins/g.js', 'pkgs/zh/plugins/g.js'])
-  await check('S3 VS Code 导入源（根 plugins/）写入 → 零开销放行（边界 = DSH preset 根）', r3[0] === null)
+  await check('S3 根 plugins/（非 preset 根）写入 → 零开销放行（边界 = preset 根）', r3[0] === null)
   await check('S3b 同仓 preset 根内一致写入 → 不误报', r3[1] === null)
   const r4 = await run('single', '/root/kix-foreign-single', ['preset/plugins/s.js'])
   await check('S4 单 preset 根 → 零开销（≥2 才引导）', r4[0] === null)
@@ -128,6 +128,28 @@ async function runShell(name, wsRoot, cmd, tool) {
   await check('S10 shell 未提及 preset 根路径 → 零开销', s10 === null)
   const s11 = await runShell('bashdrift', '/root/kix-foreign-multi', 'sed -i s/a/b/ pkgs/zh/plugins/m.js', 'bash')
   await check('S11 bash 通道同样覆盖（漂移提醒）', s11 !== null && s11.includes('身份组漂移'))
+  // S12：kix-guards v13 源豁免自感知（安装副本插件，跨仓库）
+  {
+    const guards = require('/root/.dsh/.agent-presets/kixparadigm/plugins/kix-guards.js')
+    const gl = {}
+    const gctx = {
+      logger: { info() {}, warn() {}, error() {} },
+      get() { return undefined },
+      on(ev, cb) { (gl[ev] ||= []).push(cb) },
+    }
+    guards.apply(gctx, {})
+    const foreignAgent = { id: 'g12', session: { header: { cwd: '/root/kix-foreign-multi' } } }
+    const fe = { name: 'write', callId: 'g12-1', arguments: { file_path: 'pkgs/zh/agent.cordis.yml' }, agent: foreignAgent }
+    const fpre = await gl['tools/pre-execute'][0](fe, () => ({ kind: 'allow' }))
+    const fpost = await gl['tools/post-execute'][0](fe, { kind: 'success' }, () => ({ kind: 'accept' }))
+    const fclean = fpre && fpre.kind !== 'deny' && !(fpost && fpost.additionalContexts)
+    await check('S12 外仓 preset 写（guards v13 自感知）→ allow 且无控制平面 remind', fclean === true)
+    const ie = { name: 'write', callId: 'g12-2', arguments: { file_path: '/root/.dsh/.agent-presets/kixparadigm/agent.cordis.yml' }, agent: foreignAgent }
+    const ipre = await gl['tools/pre-execute'][0](ie, () => ({ kind: 'allow' }))
+    const ipost = await gl['tools/post-execute'][0](ie, { kind: 'success' }, () => ({ kind: 'accept' }))
+    const iwarn = ipre && ipre.kind !== 'deny' && !!(ipost && ipost.additionalContexts)
+    await check('S12b 安装副本写（guards）→ 仍注入控制平面 remind', iwarn === true)
+  }
   if (fs.existsSync('/root/kix-p5-e2e/scripts/check-dsh-consistency.cjs')) {
     const r7 = await run('kixreg', '/root/kix-p5-e2e', ['dsh/preset/plugins/regress.js', 'README.md'])
     await check('S6 kix 仓回归 → remind en 缺失份', r7[0] !== null && r7[0].includes('en/preset/plugins/regress.js missing'))
@@ -161,6 +183,7 @@ echo '== 4) report =='
   echo '- S4 单 preset 根 → 零开销；S5 普通仓库 → 零开销'
   echo '- S7 单标记目录（仅 agent.cordis.yml）→ 不算 preset 根'
   echo '- S8/S9/S10/S11 shell 通道（pwsh 漂移/hint、无关零开销、bash 覆盖）'
+  echo '- S12/S12b kix-guards v13 外仓源豁免自感知 + 安装副本仍提醒'
   echo '- S6 kix 仓回归（kix-p5-e2e, 契约自声明）→ remind + README 契约层'
   echo
   echo '```'
