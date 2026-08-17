@@ -143,7 +143,7 @@ async function runShell(name, wsRoot, cmd, tool) {
     const fpre = await gl['tools/pre-execute'][0](fe, () => ({ kind: 'allow' }))
     const fpost = await gl['tools/post-execute'][0](fe, { kind: 'success' }, () => ({ kind: 'accept' }))
     const fclean = fpre && fpre.kind !== 'deny' && !(fpost && fpost.additionalContexts)
-    await check('S12 外仓 preset 写（guards v13 自感知）→ allow 且无控制平面 remind', fclean === true)
+    await check('S12 外仓 preset 写（guards v13 控制平面=安装面）→ allow 且无控制平面 remind', fclean === true)
     const ie = { name: 'write', callId: 'g12-2', arguments: { file_path: '/root/.dsh/.agent-presets/kixparadigm/agent.cordis.yml' }, agent: foreignAgent }
     const ipre = await gl['tools/pre-execute'][0](ie, () => ({ kind: 'allow' }))
     const ipost = await gl['tools/post-execute'][0](ie, { kind: 'success' }, () => ({ kind: 'accept' }))
@@ -183,7 +183,7 @@ echo '== 4) report =='
   echo '- S4 单 preset 根 → 零开销；S5 普通仓库 → 零开销'
   echo '- S7 单标记目录（仅 agent.cordis.yml）→ 不算 preset 根'
   echo '- S8/S9/S10/S11 shell 通道（pwsh 漂移/hint、无关零开销、bash 覆盖）'
-  echo '- S12/S12b kix-guards v13 外仓源豁免自感知 + 安装副本仍提醒'
+  echo '- S12/S12b kix-guards v13 外仓 preset 写无控制平面 remind（安装面唯一定义）+ 安装副本仍提醒'
   echo '- S6 kix 仓回归（kix-p5-e2e, 契约自声明）→ remind + README 契约层'
   echo
   echo '```'

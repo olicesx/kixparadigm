@@ -602,13 +602,16 @@
 # v9: publish/comment/ordinary-push confirmation gates are soft constraints
 # (no questions); hard deny remains for irreversible destruction only.
 # Unit tests: 210 assertions.
-# v13 (v1.2.15): self-sensed source exemption — a target under a preset root
-# discovered in the session workspace (agent.cordis.yml + preset.yml double
-# marker, same implementation as kix-consistency) is a source file; the
-# hardcoded dsh/preset|en/preset regex is gone (foreign preset workspaces
-# are no longer miscategorized as control plane). The install-plane check
-# (~/.dsh / .agent-presets) still fires first and keeps reminding.
-# Unit tests: 245 assertions.
+# v13 (v1.2.15, less is more): the control plane IS the install plane —
+# one definition, nothing else. The v3 bare agent.cordis.yml fallback is
+# deleted: it false-positived on source repos (both the v11 and v13
+# exemption patches existed to fix it), and source-vs-install is the
+# domain of "N copies that must be identical" — source/foreign preset
+# writes belong to kix-consistency (identity sets + parity hint); guards
+# keeps only the install plane. No exemptions, no predicates, no
+# per-path rules. Honest boundary: relative-path writes with cwd inside
+# the install dir do not remind — that is explicit self-iteration
+# (allowed by v12 decision). Unit tests: 243 assertions.
 # 相对路径插件由 loader 以 baseUrl 解析（name 以 "." 开头 → new URL(name, baseUrl)）。
 - id: kix-guards
   name: ./plugins/kix-guards.js
