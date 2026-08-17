@@ -104,6 +104,7 @@ const { join } = require('node:path')
 const { randomUUID } = require('node:crypto')
 const { execFile } = require('node:child_process')
 const { promisify } = require('node:util')
+const lib = require('./consistency-lib.cjs')
 
 const execFileP = promisify(execFile)
 
@@ -410,12 +411,13 @@ function isLocalDestructiveAsk(text) {
 // v3：用户级控制平面路径判定（修复项目级 settings.yaml 误伤）：
 //   限定 home 下的 .dsh 根、.agent-presets（全局唯一目录名）、安装副本
 //   agent.cordis.yml（preset 专属）。
-// v11：源仓库事实源 dsh/preset/ 与 en/preset/ 下的同名文件不是用户级安装
-//   副本——bare `agent.cordis.yml` 子串会把维护者对自己仓库的编辑当成
-//   CONTROL PLANE 误伤。安装副本仍走 .agent-presets / ~/.dsh 命中。
-function isSourceRepoPresetPath(low) {
-  return /(?:^|\/)(?:dsh|en)\/preset(?:\/|$)/.test(low)
-}
+// v13（替代 v11 硬编码 dsh/preset|en/preset 正则）：源仓库豁免自感知——
+//   isSourceTarget 谓词由调用方注入，基于「会话工作区发现的 preset 根」
+//   （agent.cordis.yml + preset.yml 双标记，深度 ≤2，consistency-lib 同一实现）。
+//   外仓 preset 工作区写自己的 preset 文件同样豁免，不再按本仓布局硬编码。
+//   纯字符串上下文无法证明「源」：bare agent.cordis.yml 仍按控制平面提醒。
+//   安装面检查先行：~/.dsh / .agent-presets 下的安装副本即便同样带双标记
+//   也继续命中（安装副本 vs 源由路径所在面区分，不由标记区分）。
 function isInstallControlPlanePath(low) {
   const home = (process.env.USERPROFILE || process.env.HOME || '').toLowerCase().replace(/\\/g, '/')
   return (
@@ -427,11 +429,11 @@ function isInstallControlPlanePath(low) {
     low.includes('%userprofile%/.dsh')
   )
 }
-function targetsControlPlane(text) {
+function targetsControlPlane(text, isSourceTarget) {
   const low = String(text || '').toLowerCase().replace(/\\/g, '/')
-  // 安装面先于源路径豁免：挡住 dsh/preset/../../.dsh/.agent-presets 这类绕过。
+  // 安装面先于源豁免：挡住 dsh/preset/../../.dsh/.agent-presets 这类绕过。
   if (isInstallControlPlanePath(low)) return true
-  if (isSourceRepoPresetPath(low)) return false
+  if (isSourceTarget && isSourceTarget(low)) return false
   return low.includes('agent.cordis.yml')
 }
 
@@ -483,42 +485,42 @@ function lastNonFlagArg(args) {
   }
   return undefined
 }
-function redirectTargetsControlPlane(text) {
+function redirectTargetsControlPlane(text, isSourceTarget) {
   const re = /(?:[12]?>>?|&>)\s*(?:"([^"]*)"|'([^']*)'|([^\s;&|]+))/g
   let m
   while ((m = re.exec(text))) {
     const target = m[1] || m[2] || m[3]
-    if (target && targetsControlPlane(target)) return true
+    if (target && targetsControlPlane(target, isSourceTarget)) return true
   }
   return false
 }
-function isTerminalControlPlaneWrite(text) {
+function isTerminalControlPlaneWrite(text, isSourceTarget) {
   const t = String(text || '')
-  if (redirectTargetsControlPlane(t)) return true
+  if (redirectTargetsControlPlane(t, isSourceTarget)) return true
   const parts = splitShellSegments(t)
   for (const part of parts) {
     const tokens = shellTokens(part.text)
     const cmd = leadingCommand(tokens)
     if (!cmd) continue
     if (CONTROL_PLANE_MODIFY_ANY.has(cmd.name)) {
-      if (cmd.args.some((a) => targetsControlPlane(a))) return true
+      if (cmd.args.some((a) => targetsControlPlane(a, isSourceTarget))) return true
       continue
     }
     if (cmd.name === 'wget' || cmd.name === 'curl' || cmd.name === 'iwr' || cmd.name === 'invoke-webrequest') {
       const out = downloadOutputTarget(cmd.args)
-      if (out && targetsControlPlane(out)) return true
+      if (out && targetsControlPlane(out, isSourceTarget)) return true
       continue
     }
     if (CONTROL_PLANE_DEST_LAST.has(cmd.name)) {
       const dest = lastNonFlagArg(cmd.args)
-      if (dest && targetsControlPlane(dest)) return true
+      if (dest && targetsControlPlane(dest, isSourceTarget)) return true
       if ((cmd.name === 'mv' || cmd.name === 'move' || cmd.name === 'move-item' || cmd.name === 'mi') &&
-        cmd.args.some((a) => targetsControlPlane(a))) return true
+        cmd.args.some((a) => targetsControlPlane(a, isSourceTarget))) return true
       continue
     }
     if (cmd.name === 'git' && /^clone$/i.test(cmd.args[0] || '')) {
       const dest = lastNonFlagArg(cmd.args.slice(1))
-      if (dest && targetsControlPlane(dest)) return true
+      if (dest && targetsControlPlane(dest, isSourceTarget)) return true
     }
   }
   return false
@@ -653,6 +655,24 @@ module.exports = {
       if (controlPlaneReminded) return
       const callId = exec && exec.callId
       if (callId) pendingControlPlane.set(callId, CONTROL_PLANE_REMIND)
+    }
+
+    // v13：源豁免谓词——目标命中「会话工作区自感知的 preset 根」前缀即源文件。
+    // 根来自 consistency-lib discoverPresetRoots（与 kix-consistency 同一实现，
+    // 单一事实源）；按根缓存，每会话工作区只扫一次。
+    const presetRootsCache = new Map()
+    function sourceExemptFor(exec) {
+      const root = lib.resolveWorkspaceRoot(exec && exec.agent, ctx.get('sandboxPolicy'))
+      if (!root) return null
+      let roots = presetRootsCache.get(root)
+      if (roots === undefined) {
+        try { roots = lib.discoverPresetRoots(root) } catch { roots = [] }
+        presetRootsCache.set(root, roots)
+      }
+      if (!roots || roots.length === 0) return null
+      // low 已被 targetsControlPlane 归一（小写 + 反斜杠→正斜杠），前缀匹配即可。
+      const patterns = roots.map((r) => new RegExp('(?:^|/)' + escapeRegex(r) + '(?:/|$)'))
+      return (low) => patterns.some((re) => re.test(low))
     }
 
     // ── 工具分类 ──────────────────────────────────────────────────────────
@@ -900,8 +920,8 @@ module.exports = {
             if (decision) return decision
           }
         }
-        // 2c. 控制平面保护（v8：只拦明确写意图；v12：硬 deny → remind）
-        if (isTerminalControlPlaneWrite(text)) {
+        // 2c. 控制平面保护（v8：只拦明确写意图；v12：硬 deny → remind；v13：源豁免自感知）
+        if (isTerminalControlPlaneWrite(text, sourceExemptFor(exec))) {
           queueControlPlaneRemind(exec)
         }
         // 2d. gh CLI（GitHub CLI）写保护（v6：堵「经 pwsh 调 gh 绕过 MCP GitHub 门禁」）
@@ -911,10 +931,10 @@ module.exports = {
         // v9：gh 普通写操作仅软约束，不提问；gh 破坏性删除仍 deny。
       }
 
-      // 3. 编辑工具控制平面保护（v12：硬 deny → remind，自迭代可写安装副本）
+      // 3. 编辑工具控制平面保护（v12：硬 deny → remind，自迭代可写安装副本；v13：源豁免自感知）
       if (EDIT_TOOLS.has(tool) && args) {
         const path = args.file_path || args.path || ''
-        if (typeof path === 'string' && targetsControlPlane(path)) {
+        if (typeof path === 'string' && targetsControlPlane(path, sourceExemptFor(exec))) {
           queueControlPlaneRemind(exec)
         }
       }

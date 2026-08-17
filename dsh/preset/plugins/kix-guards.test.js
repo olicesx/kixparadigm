@@ -15,6 +15,7 @@
 const path = require('node:path')
 const assert = require('node:assert')
 const os = require('node:os')
+const fs = require('node:fs')
 
 // ── mock ctx（cordis 插件 apply(ctx) 需要的表面）──────────────────────────
 const listeners = {}
@@ -66,6 +67,32 @@ async function dispatchRemind(name, args) {
 function dispatchIn(cwd, name, args) {
   const exec = { name, arguments: args, token: 't', callId: 'c', agent: { id: 'test-agent', session: { header: { cwd } } } }
   return preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+}
+// 带会话 cwd 的 remind 派发（v13 源豁免自感知验证需要）
+async function dispatchRemindIn(cwd, name, args) {
+  const exec = { name, arguments: args, token: 't', callId: nextCallId(), agent: { id: 'test-agent', session: { header: { cwd } } } }
+  const pre = await preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+  const post = await postExecute[0](exec, { kind: 'success' }, () => Promise.resolve({ kind: 'accept' }))
+  return { pre, post }
+}
+
+// v13 夹具：自感知 preset 根（双标记目录）。kixLayout = 本仓布局；
+// foreignLayout = 外仓自定义布局（v13 修复的过拟合场景）。
+function makePresetRepoFixture(subdirs) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kix-guards-v13-'))
+  for (const d of subdirs) {
+    fs.mkdirSync(path.join(root, d), { recursive: true })
+    fs.writeFileSync(path.join(root, d, 'agent.cordis.yml'), 'text: |-\n  x\n', 'utf8')
+    fs.writeFileSync(path.join(root, d, 'preset.yml'), 'id: x\n', 'utf8')
+  }
+  return root
+}
+const kixLayoutRoot = makePresetRepoFixture(['dsh/preset', 'en/preset'])
+const foreignLayoutRoot = makePresetRepoFixture(['pkgs/zh', 'pkgs/en'])
+// 源豁免谓词（模拟运行时 sourceExemptFor 的纯逻辑：根前缀命中即源）
+function predOf(roots) {
+  const patterns = roots.map((r) => new RegExp('(?:^|/)' + r.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:/|$)'))
+  return (low) => patterns.some((re) => re.test(low))
 }
 
 let passed = 0
@@ -318,26 +345,42 @@ async function softCase(label, name, args) {
   assert.ok(!I.targetsControlPlane('C:/Users/other/.dsh/settings.yaml'), '其他用户 home 不拦')
   passed += 7
 
-  // v11：源仓库事实源豁免（bare agent.cordis.yml 不再误伤维护者）
-  assert.ok(!I.targetsControlPlane('dsh/preset/agent.cordis.yml'), '相对 zh 源路径不拦')
-  assert.ok(!I.targetsControlPlane('en/preset/agent.cordis.yml'), '相对 en 源路径不拦')
-  assert.ok(!I.targetsControlPlane('C:/work/kixparadigm/dsh/preset/agent.cordis.yml'), '绝对 zh 源路径不拦')
-  assert.ok(!I.targetsControlPlane('C:\\work\\kixparadigm\\en\\preset\\agent.cordis.yml'), 'Windows 反斜杠 en 源路径不拦')
-  assert.ok(!I.targetsControlPlane('./dsh/preset/agent.cordis.yml'), './ 前缀源路径不拦')
-  assert.ok(I.targetsControlPlane('C:/Users/x/.dsh/.agent-presets/kixparadigm/agent.cordis.yml'), '安装副本仍拦')
-  assert.ok(I.targetsControlPlane('agent.cordis.yml'), '裸文件名仍拦（无法证明是源仓库）')
-  assert.ok(I.targetsControlPlane('dsh/preset/../../.dsh/.agent-presets/kixparadigm/agent.cordis.yml'), '源路径+.. 不能绕过安装面')
-  passed += 8
-  check('write: 源仓库 zh agent.cordis.yml → allow（v11 事实源豁免）', await dispatch('write', { file_path: 'dsh/preset/agent.cordis.yml' }), false)
-  check('edit: 源仓库 en agent.cordis.yml → allow（v11 事实源豁免）', await dispatch('edit', { file_path: 'C:/work/kixparadigm/en/preset/agent.cordis.yml' }), false)
+  // v13：源豁免自感知（谓词注入；纯字符串上下文无法证明「源」）
+  const kixPred = predOf(['dsh/preset', 'en/preset'])
+  const foreignPred = predOf(['pkgs/zh', 'pkgs/en'])
+  assert.ok(I.targetsControlPlane('dsh/preset/agent.cordis.yml'), '无谓词：纯字符串无法证明源 → 仍按控制平面')
+  assert.ok(!I.targetsControlPlane('dsh/preset/agent.cordis.yml', kixPred), '相对 zh 源路径不拦')
+  assert.ok(!I.targetsControlPlane('en/preset/agent.cordis.yml', kixPred), '相对 en 源路径不拦')
+  assert.ok(!I.targetsControlPlane('C:/work/kixparadigm/dsh/preset/agent.cordis.yml', kixPred), '绝对 zh 源路径不拦')
+  assert.ok(!I.targetsControlPlane('C:\\work\\kixparadigm\\en\\preset\\agent.cordis.yml', kixPred), 'Windows 反斜杠 en 源路径不拦')
+  assert.ok(!I.targetsControlPlane('./dsh/preset/agent.cordis.yml', kixPred), './ 前缀源路径不拦')
+  assert.ok(!I.targetsControlPlane('pkgs/zh/agent.cordis.yml', foreignPred), '外仓自定义布局源路径不拦（v13：不再硬编码本仓布局）')
+  assert.ok(I.targetsControlPlane('pkgs/zh/agent.cordis.yml', kixPred), '外仓路径不在本仓谓词根内 → 仍按控制平面（谓词按工作区隔离）')
+  assert.ok(I.targetsControlPlane('C:/Users/x/.dsh/.agent-presets/kixparadigm/agent.cordis.yml', kixPred), '安装副本仍拦（安装面先于源豁免）')
+  assert.ok(I.targetsControlPlane('agent.cordis.yml', kixPred), '裸文件名仍拦（无法证明是源仓库）')
+  assert.ok(I.targetsControlPlane('dsh/preset/../../.dsh/.agent-presets/kixparadigm/agent.cordis.yml', kixPred), '源路径+.. 不能绕过安装面')
+  passed += 11
+  check('write: 源仓库 zh agent.cordis.yml → allow（v13 自感知豁免）', await dispatchIn(kixLayoutRoot, 'write', { file_path: 'dsh/preset/agent.cordis.yml' }), false)
+  check('edit: 源仓库 en agent.cordis.yml → allow（v13 自感知豁免）', await dispatchIn(kixLayoutRoot, 'edit', { file_path: 'C:/work/kixparadigm/en/preset/agent.cordis.yml' }), false)
+  check('write: 外仓自定义布局 agent.cordis.yml → allow（v13：外仓源同样豁免）', await dispatchIn(foreignLayoutRoot, 'write', { file_path: 'pkgs/zh/agent.cordis.yml' }), false)
   check('write: 安装副本 agent.cordis.yml → allow（v12 软门禁）', await dispatch('write', { file_path: 'C:\\Users\\x\\.dsh\\.agent-presets\\kixparadigm\\agent.cordis.yml' }), false)
-  check('pwsh: rm 源仓库 agent.cordis.yml → allow（终端写意图也豁免源路径）', await dispatch('pwsh', { command: 'rm dsh/preset/agent.cordis.yml' }), false)
+  check('pwsh: rm 源仓库 agent.cordis.yml → allow（终端写意图也豁免源路径）', await dispatchIn(kixLayoutRoot, 'pwsh', { command: 'rm dsh/preset/agent.cordis.yml' }), false)
+  check('pwsh: rm 外仓自定义布局 agent.cordis.yml → allow（v13 终端链路自感知）', await dispatchIn(foreignLayoutRoot, 'pwsh', { command: 'rm pkgs/zh/agent.cordis.yml' }), false)
   check('pwsh: rm 安装副本 agent.cordis.yml → allow（v12 软门禁）', await dispatch('pwsh', { command: `rm ${HOME}/.dsh/.agent-presets/kixparadigm/agent.cordis.yml` }), false)
 
   // v12：安装面写 → 放行 + 注入一次提醒；源路径不提醒；remindOnce
+  // 顺序纪律：源写入断言必须在首次安装面 remind 之前——controlPlaneReminded
+  // 是会话级单标志，先消耗会让源断言恒真（无区分度）。
   {
+    const src = await dispatchRemindIn(kixLayoutRoot, 'write', { file_path: 'dsh/preset/agent.cordis.yml' })
+    const srcForeign = await dispatchRemindIn(foreignLayoutRoot, 'write', { file_path: 'pkgs/zh/agent.cordis.yml' })
+    const srcClean = !src.post || !src.post.additionalContexts
+    if (srcClean) { passed++ } else { failed++ }
+    console.log(`${srcClean ? 'PASS' : 'FAIL'}  v12: 源仓库写不注入控制平面 remind`)
+    const srcForeignClean = !srcForeign.post || !srcForeign.post.additionalContexts
+    if (srcForeignClean) { passed++ } else { failed++ }
+    console.log(`${srcForeignClean ? 'PASS' : 'FAIL'}  v13: 外仓自定义布局源写不注入控制平面 remind（不再硬编码本仓布局）`)
     const first = await dispatchRemind('write', { file_path: `${HOME}/.dsh/.agent-presets/kixparadigm/agent.cordis.yml` })
-    const src = await dispatchRemind('write', { file_path: 'dsh/preset/agent.cordis.yml' })
     const second = await dispatchRemind('edit', { file_path: `${HOME}/.dsh/settings.yaml` })
     const term = await dispatchRemind('pwsh', { command: `rm ${HOME}/.dsh/agent.cordis.yml` })
     check('v12: 安装副本 write pre → allow', first.pre, false)
@@ -345,9 +388,6 @@ async function softCase(label, name, args) {
     const okInject = Array.isArray(injected) && injected.length === 1 && injected[0].id && String(injected[0].content[0].text).includes('控制平面')
     if (okInject) { passed++ } else { failed++ }
     console.log(`${okInject ? 'PASS' : 'FAIL'}  v12: 首次安装面写注入带 id 的 remind`)
-    const srcClean = !src.post || !src.post.additionalContexts
-    if (srcClean) { passed++ } else { failed++ }
-    console.log(`${srcClean ? 'PASS' : 'FAIL'}  v12: 源仓库写不注入控制平面 remind`)
     const once = !second.post || !second.post.additionalContexts
     if (once) { passed++ } else { failed++ }
     console.log(`${once ? 'PASS' : 'FAIL'}  v12: 同会话第二次安装面写不再注入（remindOnce）`)

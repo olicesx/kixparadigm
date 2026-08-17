@@ -576,6 +576,11 @@
 # 可配置（githubToolPrefix，默认 mcp__github__）。
 # v9：发布/评论/普通 push 等确认类门禁降为软约束，不再提问；硬 deny 仅保留
 # 不可逆破坏性操作。单元测试 210 断言。
+# v13（v1.2.15）：源仓库豁免自感知——目标落在会话工作区发现的 preset 根
+# （agent.cordis.yml + preset.yml 双标记，与 kix-consistency 同一实现）之下即
+# 源文件，不再硬编码本仓 dsh/preset|en/preset 正则（外仓 preset 工作区不再
+# 被误判控制平面）。安装面（~/.dsh / .agent-presets）检查先行仍提醒。
+# 单元测试 245 断言。
 # 相对路径插件由 loader 以 baseUrl 解析（name 以 "." 开头 → new URL(name, baseUrl)）。
 - id: kix-guards
   name: ./plugins/kix-guards.js
@@ -621,8 +626,8 @@
 # （pwsh/bash 命令提及 preset 根路径）post-execute 复验身份组；其余根内路径
 # （skills/agents/prompts 等翻译关系）只发 parity hint——不断言失败，把
 # 「其它根对应份是否同步」交给模型判断（没说到的形态靠提醒感知）。
-# VS Code 导入源
-# （根 plugins/）不是 preset 根，天然出组。kix 全量契约（persona 预算 /
+# 边界即 preset 根：非 preset 根路径天然出组（自感知推论，无逐路径豁免）。
+# kix 全量契约（persona 预算 /
 # memories 计数 / README 表述 / 版本对 / vision-bridge / 单文件语法）由仓库
 # 自带 scripts 入口自声明触发，外仓不硬套。强度默认 remind（只做启发引导）；
 # ask/block 需显式配置。remindOnce：每会话每类别一次。
