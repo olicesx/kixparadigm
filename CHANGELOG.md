@@ -6,7 +6,8 @@
 - **边界自感知**：preset 根 = 同时含 `agent.cordis.yml` + `preset.yml` 的目录（DSH 布局双标记压假阳性），深度 ≤2 扫描（跳过 `.*` / node_modules）。任意仓库发现 ≥2 个 preset 根才引导；单 preset / 普通项目零开销放行——触发不再按 kixparadigm 指纹硬编码，自定义布局（如 `pkgs/zh` + `pkgs/en`）同样被发现
 - **VS Code 导入源出组**：根 `plugins/`（Copilot 参考副本）不是 preset 根，不再要求与 DSH 侧同步（CI 与写时都不再比）——本仓边界 = DSH 双份 preset 本身，不涉及 VS Code 版本
 - **契约层自声明**：persona 预算 / memories 计数 / README 表述 / 版本对 / vision-bridge 对只对自带 `scripts/check-dsh-consistency.cjs` 的仓库开（仓库自己携带契约入口 = 自声明适用 kix 全量契约），外仓不硬套本仓常量——防过拟合；`presetRoots` 配置可显式声明身份组根覆盖扫描
-- 单测：kix-consistency **54 → 80**（外仓自定义布局 / VS Code 导入源边界 / 单根零开销 / 契约分层 / N 份漂移与缺失）；WSL2 安装副本外仓夹具实测（kix-foreign-multi / single / plain / vscode）
+- **parity hint（未描述形态靠提醒感知）**：根内非 plugins 路径（skills/agents/instructions/prompts/memories（无契约时）/persona（无契约时）等）写时发一次启发提醒——不断言失败，只把「其它根对应份是否需要同步/翻译」交给模型判断（翻译关系机械校验必误报，zh/en 结构本就不镜像）；remindOnce 每会话一次限噪；block/ask 强度不作用于 hint（无失败可拦）
+- 单测：kix-consistency **54 → 84**（外仓自定义布局 / VS Code 导入源边界 / 单根零开销 / 契约分层 / N 份漂移与缺失 / parity hint 与 remindOnce）；WSL2 安装副本外仓夹具实测（kix-foreign-multi / single / plain / vscode）
 
 ## v1.2.14（2026-08-17）插件化续：P5 两项机制化
 

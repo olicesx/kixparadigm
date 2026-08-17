@@ -17,7 +17,7 @@
 // 入口才算契约仓，不是按仓库名硬编码（防外仓误伤 = 防过拟合）。
 //
 // 强度：默认 remind（只做启发引导）；ask/block 需 agent.cordis.yml 显式配置。remindOnce：
-// 每会话每类别一次（persona/plugins/memories/readme/package/vision/misc）。
+// 每会话每类别一次（persona/plugins/memories/readme/package/vision/misc/parity-hint）。
 //
 // 挂载：agent.cordis.yml 一行：
 //   - id: kix-consistency
@@ -63,8 +63,11 @@ function toRepoRel(root, filePath) {
 }
 
 // 写入路径 → 提醒类别（remindOnce 粒度；边界外返回 null，零开销放行）
-// 通用层（任意 ≥2 preset 根工作区）：仅 plugins/*.{js,cjs}——语言中立代码的身份组，
-// 与 lib.pluginNames() 的 CI 动态清单同口径（consistency-lib.cjs 共享库同样受守护）。
+// 通用层（任意 ≥2 preset 根工作区）：
+//   - plugins/*.{js,cjs} → 'plugins'：机械身份组（字节一致，与 CI 动态清单同口径）
+//   - 其余根内路径 → 'parity'：**启发 hint**（不断言失败）——skills/agents/prompts 等
+//     是翻译关系不是字节关系，机械校验必误报（zh/en 结构本就不镜像）；提醒把
+//     「其它根对应份是否需要同步」这个维度交给模型判断，正是「没说到的形态靠提醒感知」
 // 契约层（自带 scripts/check-dsh-consistency.cjs）：persona / memories / README /
 // package / vision——本仓自声明契约，外仓不套用。
 function classifyWrite(rel, presetRoots, withContract) {
@@ -74,10 +77,11 @@ function classifyWrite(rel, presetRoots, withContract) {
   if (home) {
     const suffix = p.slice(home.length + 1)
     if (/^plugins\/[^/]+\.(?:js|cjs)$/.test(suffix)) return 'plugins'
-    if (!withContract) return null
-    if (suffix === 'agent.cordis.yml') return 'persona'
-    if (/^memories\//.test(suffix)) return 'memories'
-    return null
+    if (withContract) {
+      if (suffix === 'agent.cordis.yml') return 'persona'
+      if (/^memories\//.test(suffix)) return 'memories'
+    }
+    return 'parity'
   }
   if (withContract) {
     if (p === 'README.md' || p === 'README.en.md') return 'readme'
@@ -251,6 +255,20 @@ module.exports = {
       const relPath = toRepoRel(st.workspaceRoot, rawPath)
       const category = classifyWrite(relPath, st.presetRoots, st.contract)
       if (!category) return next()
+
+      // parity = 启发 hint（无机械检查）：不断言失败，只把「其它根对应份」这个
+      // 维度提给模型——翻译/结构同步是模型判断，不是门禁。remindOnce 限噪。
+      if (category === 'parity') {
+        if (st.reminded.has('parity')) return next()
+        const home = lib.presetRootOf(relPath, st.presetRoots) || ''
+        const suffix = relPath.slice(home.length + 1)
+        const others = st.presetRoots.filter((r) => r !== home)
+        const reason = 'kix-consistency hint: 写入 ' + relPath + '（preset 根 ' + home + '）。' +
+          '该类文件无机械一致性检查（字节校验只覆盖各根 plugins）；' +
+          '其余根（' + others.join(', ') + '）的对应份「' + suffix + '」是否需要同步/翻译由你判断。'
+        st.pendingRemind.set(exec.callId, { category: 'parity', reason })
+        return next()
+      }
 
       const checks = pickChecks(st.workspaceRoot, relPath, st.presetRoots, st.contract)
       if (checks.length === 0) return next()

@@ -158,11 +158,14 @@ function makePostExec(callId) {
   const KIX = ['dsh/preset', 'en/preset']
   await ok('zh agent.cordis.yml → persona（契约层）', I.classifyWrite('dsh/preset/agent.cordis.yml', KIX, true) === 'persona')
   await ok('en agent.cordis.yml → persona（契约层）', I.classifyWrite('en/preset/agent.cordis.yml', KIX, true) === 'persona')
-  await ok('无契约时 persona → null（外仓不硬套预算）', I.classifyWrite('dsh/preset/agent.cordis.yml', KIX, false) === null)
+  await ok('无契约时 persona → parity hint（不硬套预算，给注意力不给结论）', I.classifyWrite('dsh/preset/agent.cordis.yml', KIX, false) === 'parity')
   await ok('zh 插件源码 → plugins（通用层）', I.classifyWrite('dsh/preset/plugins/kix-x.js', KIX, false) === 'plugins')
   await ok('en 插件测试 → plugins（通用层）', I.classifyWrite('en/preset/plugins/kix-x.test.js', KIX, false) === 'plugins')
   await ok('memories → memories（契约层）', I.classifyWrite('dsh/preset/memories/ai-agent-practices.md', KIX, true) === 'memories')
-  await ok('无契约时 memories → null', I.classifyWrite('dsh/preset/memories/x.md', KIX, false) === null)
+  await ok('无契约时 memories → parity hint', I.classifyWrite('dsh/preset/memories/x.md', KIX, false) === 'parity')
+  await ok('skills → parity hint（翻译关系不字节校验，启发感知）', I.classifyWrite('dsh/preset/skills/kixpower/foo.md', KIX, true) === 'parity')
+  await ok('agents → parity hint', I.classifyWrite('en/preset/agents/orchestrator.agent.md', KIX, false) === 'parity')
+  await ok('外仓任意根内路径 → parity hint', I.classifyWrite('pkgs/zh/docs/readme-zh.md', ['pkgs/zh', 'pkgs/en'], false) === 'parity')
   await ok('README.md → readme（契约层）', I.classifyWrite('README.md', KIX, true) === 'readme')
   await ok('无契约时 README → null（外仓不硬套短语）', I.classifyWrite('README.md', KIX, false) === null)
   await ok('README.en.md → readme', I.classifyWrite('README.en.md', KIX, true) === 'readme')
@@ -389,7 +392,13 @@ function makePostExec(callId) {
   const f2 = { name: 'write', callId: 'fw-2', arguments: { file_path: 'pkgs/zh/agent.cordis.yml' }, agent: fAgent }
   await preExecute[0](f2, () => 'NEXT')
   const f2Post = await postExecute[0]({ name: 'write', callId: 'fw-2', agent: fAgent }, {}, () => 'NEXT')
-  await ok('外仓 persona 写入 → 零开销放行（无契约不硬套预算）', f2Post === 'NEXT')
+  await ok('外仓 persona 写入 → parity hint（无契约不硬套预算，启发感知）',
+    !!(f2Post && f2Post.additionalContexts && f2Post.additionalContexts.length === 1 &&
+      f2Post.additionalContexts[0].content[0].text.includes('由你判断')))
+  const f2b = { name: 'write', callId: 'fw-2b', arguments: { file_path: 'pkgs/zh/skills/new-skill.md' }, agent: fAgent }
+  await preExecute[0](f2b, () => 'NEXT')
+  const f2bPost = await postExecute[0]({ name: 'write', callId: 'fw-2b', agent: fAgent }, {}, () => 'NEXT')
+  await ok('外仓未描述形态（skills）写入 → hint 已给过，remindOnce 静默', f2bPost === 'NEXT')
   const f3 = { name: 'write', callId: 'fw-3', arguments: { file_path: 'plugins/kix-guards.js' }, agent: fAgent }
   await preExecute[0](f3, () => 'NEXT')
   const f3Post = await postExecute[0]({ name: 'write', callId: 'fw-3', agent: fAgent }, {}, () => 'NEXT')
