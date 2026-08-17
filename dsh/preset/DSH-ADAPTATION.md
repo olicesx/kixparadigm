@@ -45,7 +45,7 @@
 | `chat.useCustomAgentHooks` | 无开关——监听器按 scope 挂载即生效（scope-filtered：agent-scoped 监听器只收到该 agent 的调用） | 天然支持"不同角色不同 hook"（producer 禁写源码、QA 禁写业务代码…） |
 
 **hooks/*.ps1 的现状（2026-08-16 更新）**：9 个 Copilot hooks 中，
-- ✅ **blast-radius-check.ps1** → `plugins/kix-guards.js`（pre-execute，5 大门禁/210 断言；v8 自审修复 + v9：发布/评论/普通 push 等确认类门禁降为软约束，不再提问）
+- ✅ **blast-radius-check.ps1** → `plugins/kix-guards.js`（pre-execute，5 大门禁；v8 自审修复 + v9 确认类软约束 + v11 源仓库豁免 + v12 控制平面写 remind）
 - ✅ **validate-handoff.ps1**（核心通用部分：sprint marker/plan/progress/blocker/QA 完成度）→ `plugins/kix-orchestration.js`（pre-execute + subagent/end + producer_closeout + sleep 提醒 + **v11 plan.md 契约写前校验**，96 断言，v8 QA 完成声明负向语义防误报）
 - ⚠️ **validate-handoff 深度部分**（worktree 登记 / plan_snapshot_sha / l2_gate_manifest_sha256 / stash 基线 / reverify marker）**不移植**——绑定 Copilot 的 runSubagent+agentName 分派格式，DSH 是 prompt 注入，过度移植 = 负债（见 PLUGINIZATION-ROADMAP.md §5 P2 决策）
 - ⚠️ **block-source-edit / block-dev-authority-edit / block-source-edit-qa** → 角色边界，DSH subagent 无角色标记，保留为 prompt 硬约束（kix-guards v3 已决策不接）
