@@ -16,8 +16,8 @@
 //     push/commit 子命令（commit message 含 "push +5"/"main.rs" 不再误拦）；`--force`/
 //     `--mirror` 补 `(?<![\w-])` 前缀断言（`abc--force` 不再误拦）；移除 rebase 兜底硬
 //     deny（`git rebase -i`/`git pull --rebase` 放行，与 ps1 一致）；targetsControlPlane
-//     限定用户级根（home/.dsh、.agent-presets、agent.cordis.yml），项目级 settings.yaml
-//     不再误拦
+//     限定用户级根（home/.dsh、.agent-presets、安装副本 agent.cordis.yml），项目级
+//     settings.yaml 不再误拦；v11 再豁免源仓库 dsh/preset|en/preset 事实源
 //   - SQL 工具（sql/sql_execute/run_sql）加入 KNOWN_SAFE_TOOLS（消除门禁 1 死代码，
 //     门禁 4 可达）；run_code 1b 补 require('fs')/import('fs')/writeFileSync 检查
 //   - 保留（按 kix 0% 误报纪律 + 规则是负债）：角色边界门禁不接（exec.agent 无角色
@@ -60,6 +60,10 @@
 //   - 控制平面保护改为只拦明确写意图（写/删/改动词或 shell 重定向命中目标）；
 //     grep/cat/ls/Get-Content 等只读诊断放行。
 //   - GitHub MCP 工具前缀可经 config.githubToolPrefix 配置（默认 mcp__github__）。
+//
+// v11（v1.2.14，PR#10 遗留）：targetsControlPlane 见任意 agent.cordis.yml 就
+//   deny，把源仓库事实源（dsh/preset/、en/preset/）当成安装副本误伤——维护者
+//   无法在本仓库改挂载注释/计数。安装面（~/.dsh / .agent-presets）仍优先命中。
 //
 //   - 修复「reflog 计数惩罚历史修整」：改用 reflog subject（%gs）口径，
 //     只数 commit 类条目。reset / merge / pull / checkout / rebase 不再
@@ -398,19 +402,31 @@ function isLocalDestructiveAsk(text) {
 }
 
 // v3：用户级控制平面路径判定（修复项目级 settings.yaml 误伤）：
-//   限定 home 下的 .dsh 根、.agent-presets（全局唯一目录名）、agent.cordis.yml（preset 专属）。
-function targetsControlPlane(text) {
-  const low = String(text || '').toLowerCase().replace(/\\/g, '/')
+//   限定 home 下的 .dsh 根、.agent-presets（全局唯一目录名）、安装副本
+//   agent.cordis.yml（preset 专属）。
+// v11：源仓库事实源 dsh/preset/ 与 en/preset/ 下的同名文件不是用户级安装
+//   副本——bare `agent.cordis.yml` 子串会把维护者对自己仓库的编辑当成
+//   CONTROL PLANE 误伤。安装副本仍走 .agent-presets / ~/.dsh 命中。
+function isSourceRepoPresetPath(low) {
+  return /(?:^|\/)(?:dsh|en)\/preset(?:\/|$)/.test(low)
+}
+function isInstallControlPlanePath(low) {
   const home = (process.env.USERPROFILE || process.env.HOME || '').toLowerCase().replace(/\\/g, '/')
   return (
     low.includes('.agent-presets') ||
-    low.includes('agent.cordis.yml') ||
     (home !== '' && low.includes(home + '/.dsh')) ||
     low.includes('~/.dsh') ||
     low.includes('$home/.dsh') ||
     low.includes('$env:userprofile/.dsh') ||
     low.includes('%userprofile%/.dsh')
   )
+}
+function targetsControlPlane(text) {
+  const low = String(text || '').toLowerCase().replace(/\\/g, '/')
+  // 安装面先于源路径豁免：挡住 dsh/preset/../../.dsh/.agent-presets 这类绕过。
+  if (isInstallControlPlanePath(low)) return true
+  if (isSourceRepoPresetPath(low)) return false
+  return low.includes('agent.cordis.yml')
 }
 
 // ── v8：终端控制平面保护只拦「写意图」────────────────────────────────────
