@@ -67,6 +67,7 @@ const { join } = require('node:path')
 const { randomUUID } = require('node:crypto')
 const { execFile } = require('node:child_process')
 const { promisify } = require('node:util')
+const lib = require('./consistency-lib.cjs')
 
 const execFileP = promisify(execFile)
 
@@ -602,14 +603,14 @@ module.exports = {
       if (st.pendingSleepRemind && st.pendingSleepRemind.callId === (exec && exec.callId)) {
         st.pendingSleepRemind = false
         st.sleepReminded = true
-        return { kind: 'accept', additionalContexts: [makeUserMessage(SLEEP_WAIT_REMIND)] }
+        return lib.appendContexts(await next(), [makeUserMessage(SLEEP_WAIT_REMIND)])
       }
       // v11：plan 契约提醒（独立槽位 + 独立一次性标志，不烧 handoff/sleep 槽）
       if (st.pendingPlanRemind && st.pendingPlanRemind.callId === (exec && exec.callId)) {
         const reason = st.pendingPlanRemind.reason
         st.pendingPlanRemind = null
         st.planReminded = true
-        return { kind: 'accept', additionalContexts: [makeUserMessage(reason)] }
+        return lib.appendContexts(await next(), [makeUserMessage(reason)])
       }
       if (!st.pendingRemind) return next()
       // 只消费与发起调用同 callId 的 post-execute；dispatch 抛错（不经
@@ -618,7 +619,7 @@ module.exports = {
       const reason = st.pendingRemind.reason
       st.pendingRemind = false
       st.reminded = true // 投递成功才消耗一次性提醒
-      return { kind: 'accept', additionalContexts: [makeUserMessage(reason)] }
+      return lib.appendContexts(await next(), [makeUserMessage(reason)])
     })
 
     // ── v2：subagent/end 返回侧校验（DSH×VS Code 融合矩阵 #2）────────────

@@ -75,34 +75,154 @@ function checkPersonaBudget({ root, rel, maxChars, maxEstTokens }) {
   return { failures, notes }
 }
 
-// 两文件字节一致（a/b 缺失分别报错，缺失与差异都是 failure）
-function checkFilesEqual({ root, a, b, label }) {
+// 该相同的数份必须相同（kix 哲学：不是写死的 zh/en 一对）。
+// 边界自感知：preset 根 = 同时含 agent.cordis.yml + preset.yml 的目录（DSH preset
+// 布局双标记，压假阳性），深度 ≤2 扫描（跳过 .* / node_modules）。
+// 边界即 preset 根本身：非 preset 根路径天然出组，无需任何逐路径豁免规则。
+// 其它仓库：≥2 个 preset 根才引导；单 preset / 普通项目零开销放行——规则是负债，
+// 只做启发引导。
+const PRESET_MARKERS = ['agent.cordis.yml', 'preset.yml']
+
+function isPresetRootDir(root, rel) {
+  return PRESET_MARKERS.every((m) => fs.existsSync(path.join(root, rel, m)))
+}
+
+function discoverPresetRoots(root, extraRoots) {
+  if (!root || typeof root !== 'string') return []
+  const out = []
+  const add = (rel) => {
+    const n = String(rel || '').replace(/\\/g, '/').replace(/\/+$/, '')
+    if (!n || n.startsWith('..') || path.isAbsolute(n)) return
+    if (out.includes(n)) return
+    if (isPresetRootDir(root, n)) out.push(n)
+  }
+  for (const rel of (Array.isArray(extraRoots) ? extraRoots : [])) add(rel)
+  let top
+  try { top = fs.readdirSync(root, { withFileTypes: true }) } catch { return out.sort() }
+  for (const d1 of top) {
+    if (!d1.isDirectory() || d1.name.startsWith('.') || d1.name === 'node_modules') continue
+    add(d1.name)
+    let mid
+    try { mid = fs.readdirSync(path.join(root, d1.name), { withFileTypes: true }) } catch { continue }
+    for (const d2 of mid) {
+      if (!d2.isDirectory() || d2.name.startsWith('.')) continue
+      add(d1.name + '/' + d2.name)
+    }
+  }
+  return out.sort()
+}
+
+function isMultiPresetWorkspace(root) {
+  return discoverPresetRoots(root).length >= 2
+}
+
+// post-execute 注入合并：注入方先 `await next()` 拿下游 decision，再把自己的
+// contexts 并进去。裸返回 accept-decision 会短路瀑布、饿死后面挂载的监听器
+// （WSL2 实弹实锤：kix-discipline 注入后，后挂载的 kix-consistency 的 post
+// 永远收不到同一调用——首写提醒丢失）。非 accept 的下游 decision（block 等
+// 更强决定）原样放行不覆盖；下游无可合并对象时新建 accept。
+function appendContexts(decision, msgs) {
+  const list = Array.isArray(msgs) ? msgs.filter(Boolean) : []
+  if (list.length === 0) return decision
+  if (decision && typeof decision === 'object' && decision.kind && decision.kind !== 'accept') return decision
+  const base = decision && typeof decision === 'object' ? decision : {}
+  const prev = Array.isArray(base.additionalContexts) ? base.additionalContexts : []
+  return { ...base, kind: base.kind || 'accept', additionalContexts: [...prev, ...list] }
+}
+
+// 会话工作区根解析（kix-consistency / kix-guards 共用，防双源）：
+// 会话 header.cwd（DSH 官方口径：不可变 cwd 才是 workspace-write 边界）→
+// sandboxPolicy.resolve({session})（逐调用根）→ sandboxPolicy.workspaceRoot
+// （部署回退，常为 process.cwd()——误当会话工作区会让整套自感知静默失效，
+// WSL2 E2E 实锤）。全部拿不到 → null。
+function resolveWorkspaceRoot(agent, sandboxPolicy) {
+  try {
+    const cwd = agent && agent.session && agent.session.header && agent.session.header.cwd
+    if (typeof cwd === 'string' && cwd.length > 0) return cwd
+  } catch { /* fall through */ }
+  if (sandboxPolicy === undefined || sandboxPolicy === null) return null
+  if (typeof sandboxPolicy.resolve === 'function') {
+    try {
+      const session = agent && agent.session
+      const resolved = sandboxPolicy.resolve(session ? { session } : {})
+      if (resolved && typeof resolved.workspaceRoot === 'string' && resolved.workspaceRoot.length > 0) {
+        return resolved.workspaceRoot
+      }
+    } catch { /* fall through */ }
+  }
+  const fallback = sandboxPolicy.workspaceRoot
+  return typeof fallback === 'string' && fallback.length > 0 ? fallback : null
+}
+
+// paths ≥ 2；任一缺失 / 任一份与锚点（第一份）字节不同 → failure。
+function checkIdenticalSet({ root, paths, label }) {
   const failures = []
   const notes = []
-  const pa = path.join(root, a)
-  const pb = path.join(root, b)
-  if (!fs.existsSync(pa)) return { failures: [`${a} missing`], notes }
-  if (!fs.existsSync(pb)) return { failures: [`${b} missing`], notes }
-  if (fs.readFileSync(pa).equals(fs.readFileSync(pb))) notes.push(`${label}: byte-identical`)
-  else failures.push(`${label}: ${a} differs from ${b}`)
+  const list = Array.isArray(paths) ? paths.filter(Boolean) : []
+  if (list.length < 2) return { failures: [`${label}: identity set needs ≥2 paths`], notes }
+  const missing = list.filter((p) => !fs.existsSync(path.join(root, p)))
+  if (missing.length) return { failures: missing.map((p) => `${p} missing`), notes }
+  const bufs = list.map((p) => fs.readFileSync(path.join(root, p)))
+  const differ = []
+  for (let i = 1; i < bufs.length; i++) {
+    if (!bufs[0].equals(bufs[i])) differ.push(list[i])
+  }
+  if (differ.length) {
+    failures.push(`${label}: ${list.length} copies not identical (${list[0]} differs from ${differ.join(', ')})`)
+  } else {
+    notes.push(`${label}: ${list.length} copies byte-identical`)
+  }
   return { failures, notes }
 }
 
-// 插件对：dsh/preset/plugins/{name} vs en/preset/plugins/{name} 字节一致；
-// test 文件存在（任一侧）则同样校验；双侧均无 test → note 跳过（如 opt-in kix-stalled）。
-function checkPluginPair({ root, name }) {
-  const out = checkFilesEqual({
-    root, a: `dsh/preset/plugins/${name}`, b: `en/preset/plugins/${name}`, label: `plugins/${name}`,
+// 两文件是 N=2 的特例；保留给既有调用方。
+function checkFilesEqual({ root, a, b, label }) {
+  return checkIdenticalSet({ root, paths: [a, b], label })
+}
+
+// 从被写路径反推它属于哪个已发现的 preset 根（最长前缀）。
+function presetRootOf(rel, presetRoots) {
+  const p = String(rel || '').replace(/\\/g, '/')
+  let hit = null
+  for (const r of presetRoots) {
+    if (p === r || p.startsWith(r + '/')) {
+      if (!hit || r.length > hit.length) hit = r
+    }
+  }
+  return hit
+}
+
+// 身份组：同一相对路径在每个 preset 根下的对应文件。
+// 例：写 dsh/preset/plugins/x.js → [dsh/preset/plugins/x.js, en/preset/plugins/x.js]
+function identityPathsFor(rel, presetRoots) {
+  const p = String(rel || '').replace(/\\/g, '/')
+  const home = presetRootOf(p, presetRoots)
+  if (!home) return []
+  const suffix = p.slice(home.length).replace(/^\//, '')
+  return presetRoots.map((r) => (suffix ? r + '/' + suffix : r))
+}
+
+function pluginIdentityPaths(name, presetRoots) {
+  return (Array.isArray(presetRoots) ? presetRoots : []).map((r) => r + '/plugins/' + name)
+}
+
+// 插件身份组：每个已发现 preset 根下的同名文件（未传 roots 则现场发现）。
+// test 任一根存在则整组校验；全无 test → note 跳过（如 opt-in kix-stalled）。
+function checkPluginPair({ root, name, presetRoots }) {
+  const roots = Array.isArray(presetRoots) && presetRoots.length ? presetRoots : discoverPresetRoots(root)
+  const paths = pluginIdentityPaths(name, roots)
+  const out = checkIdenticalSet({
+    root, paths, label: `plugins/${name}`,
   })
   const testName = name.replace(/\.(?:js|cjs)$/, '.test.js')
-  const hasTest = fs.existsSync(path.join(root, 'dsh/preset/plugins', testName)) ||
-    fs.existsSync(path.join(root, 'en/preset/plugins', testName))
+  const testPaths = pluginIdentityPaths(testName, roots)
+  const hasTest = testPaths.some((p) => fs.existsSync(path.join(root, p)))
   if (!hasTest) {
-    out.notes.push(`plugins/${testName}: absent on both sides (opt-in), skipped`)
+    out.notes.push(`plugins/${testName}: absent on all copies (opt-in), skipped`)
     return out
   }
-  const t = checkFilesEqual({
-    root, a: `dsh/preset/plugins/${testName}`, b: `en/preset/plugins/${testName}`, label: `plugins/${testName}`,
+  const t = checkIdenticalSet({
+    root, paths: testPaths, label: `plugins/${testName}`,
   })
   out.failures.push(...t.failures)
   out.notes.push(...t.notes)
@@ -266,10 +386,8 @@ function runAllZh(root) {
     checkReadmePhrase({ root, rel: 'README.en.md', phrase: '+ 4 memories' }),
     ...pluginNames(root).map((name) => checkPluginPair({ root, name })),
     checkVersionPair({ root }),
-    checkFilesEqual({ root, a: 'dsh/vision-bridge/index.js', b: 'en/bridge/index.js', label: 'vision-bridge/index.js' }),
-    checkFilesEqual({ root, a: 'dsh/vision-bridge/test.js', b: 'en/bridge/test.js', label: 'vision-bridge/test.js' }),
-    checkFilesEqual({ root, a: 'dsh/preset/plugins/kix-guards.js', b: 'plugins/kix-guards.js', label: 'root plugins/kix-guards.js (VS Code reference copy)' }),
-    checkFilesEqual({ root, a: 'dsh/preset/plugins/kix-guards.test.js', b: 'plugins/kix-guards.test.js', label: 'root plugins/kix-guards.test.js' }),
+    checkIdenticalSet({ root, paths: ['dsh/vision-bridge/index.js', 'en/bridge/index.js'], label: 'vision-bridge/index.js' }),
+    checkIdenticalSet({ root, paths: ['dsh/vision-bridge/test.js', 'en/bridge/test.js'], label: 'vision-bridge/test.js' }),
     checkMarkdownLinks({ root, rel: 'dsh/preset' }),
     checkMarkdownLinks({ root, rel: 'en/preset' }),
     checkSyntax({ root, rel: 'dsh/preset', label: 'dsh/preset' }),
@@ -296,6 +414,15 @@ module.exports = {
   estimateTokens,
   extractPersona,
   checkPersonaBudget,
+  checkIdenticalSet,
+  PRESET_MARKERS,
+  discoverPresetRoots,
+  isMultiPresetWorkspace,
+  appendContexts,
+  resolveWorkspaceRoot,
+  presetRootOf,
+  identityPathsFor,
+  pluginIdentityPaths,
   checkFilesEqual,
   checkPluginPair,
   checkMemoriesCount,

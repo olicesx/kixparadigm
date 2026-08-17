@@ -576,6 +576,12 @@
 # 可配置（githubToolPrefix，默认 mcp__github__）。
 # v9：发布/评论/普通 push 等确认类门禁降为软约束，不再提问；硬 deny 仅保留
 # 不可逆破坏性操作。单元测试 210 断言。
+# v13（v1.2.15，少即是多）：控制平面 = 安装面，唯此一条定义；v3 的裸
+# agent.cordis.yml 兜底分支删除——它误伤源仓库（v11/v13 两轮豁免补丁皆是
+# 给它打的），而「源 vs 安装副本」本是「该相同的数份」的领域：源/外仓
+# preset 写归 kix-consistency（身份组 + parity hint）管，guards 只管安装面。
+# 无豁免、无谓词、无逐路径规则。诚实边界：cwd 在安装目录内的相对路径写
+# 不提醒——那本就是用户显式自迭代（v12 已决策放行）。单元测试 243 断言。
 # 相对路径插件由 loader 以 baseUrl 解析（name 以 "." 开头 → new URL(name, baseUrl)）。
 - id: kix-guards
   name: ./plugins/kix-guards.js
@@ -611,16 +617,22 @@
 - id: kix-orchestration
   name: ./plugins/kix-orchestration.js
 
-# ── kix-consistency（P5，2026-08-17）：一致性守护写时拦截 ──────────────
+# ── kix-consistency（P5，2026-08-17；v1.2.15 泛化）：一致性守护写时拦截 ──
 # CI 脚本（scripts/check-dsh-consistency.cjs）只在测试期校验，改 preset 文件时
-# 不实时拦截 drift。本插件把「唯一事实源」从自觉变机械：写 dsh/preset/、
-# en/preset/、README*、package.json*、vision-bridge 相关文件时跑**相关子检查**
-# （persona 预算 / 插件对同步 / memories 计数 / README 表述 / 版本对 / 单文件语法），
-# 与 CI 共用 consistency-lib.cjs 单一事实源（防「CI 一套、运行时一套」双源漂移）。
-# 仅「kixparadigm 源仓库指纹」工作区（含 dsh/preset + en/preset + scripts 入口）
-# 触发；其余工作区零开销放行。强度默认 remind（文档可回滚不 deny）；
+# 不实时拦截 drift。本插件把「唯一事实源」从自觉变机械：写身份组成员时跑
+# **相关子检查**，与 CI 共用 consistency-lib.cjs 单一事实源（防「CI 一套、
+# 运行时一套」双源漂移）。边界自感知：preset 根 = 同时含 agent.cordis.yml +
+# preset.yml 的目录（深度 ≤2 扫描）；任意仓库 ≥2 根才引导——通用层只引导
+# 各根同名 plugins 字节一致（该相同的数份必须相同，N ≥ 2）；shell 写入不做
+# 机械提取（命令文本启发式是负债——软启发 + CI 兜底）；其余根内路径
+# （skills/agents/prompts 等翻译关系）只发 parity hint——不断言失败，把
+# 「其它根对应份是否同步」交给模型判断（没说到的形态靠提醒感知）。
+# 边界即 preset 根：非 preset 根路径天然出组（自感知推论，无逐路径豁免）。
+# kix 全量契约（persona 预算 /
+# memories 计数 / README 表述 / 版本对 / vision-bridge / 单文件语法）由仓库
+# 自带 scripts 入口自声明触发，外仓不硬套。强度默认 remind（只做启发引导）；
 # ask/block 需显式配置。remindOnce：每会话每类别一次。
-# 单元测试：node plugins/kix-consistency.test.js（54 断言）。
+# 单元测试：node plugins/kix-consistency.test.js（111 断言）。
 - id: kix-consistency
   name: ./plugins/kix-consistency.js
 

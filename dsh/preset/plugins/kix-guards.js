@@ -104,6 +104,7 @@ const { join } = require('node:path')
 const { randomUUID } = require('node:crypto')
 const { execFile } = require('node:child_process')
 const { promisify } = require('node:util')
+const lib = require('./consistency-lib.cjs')
 
 const execFileP = promisify(execFile)
 
@@ -408,14 +409,14 @@ function isLocalDestructiveAsk(text) {
 }
 
 // v3：用户级控制平面路径判定（修复项目级 settings.yaml 误伤）：
-//   限定 home 下的 .dsh 根、.agent-presets（全局唯一目录名）、安装副本
-//   agent.cordis.yml（preset 专属）。
-// v11：源仓库事实源 dsh/preset/ 与 en/preset/ 下的同名文件不是用户级安装
-//   副本——bare `agent.cordis.yml` 子串会把维护者对自己仓库的编辑当成
-//   CONTROL PLANE 误伤。安装副本仍走 .agent-presets / ~/.dsh 命中。
-function isSourceRepoPresetPath(low) {
-  return /(?:^|\/)(?:dsh|en)\/preset(?:\/|$)/.test(low)
-}
+//   限定 home 下的 .dsh 根、.agent-presets（全局唯一目录名）。
+// v13（少即是多）：控制平面 = 安装面，唯此一条定义。v3 的裸 agent.cordis.yml
+//   兜底分支删除——它既误伤源仓库（v11 起打补丁豁免），豁免本身又是负债
+//   （v13 谓词注入版本）。「源 vs 安装副本」本是「该相同的数份」的领域：
+//   源/外仓 preset 写归 kix-consistency（身份组 + parity hint + 契约层）管，
+//   guards 只管安装面。无豁免、无谓词、无逐路径规则。
+//   诚实边界：cwd 在安装目录内的相对路径写（如裸 agent.cordis.yml）不提醒
+//   ——那本就是用户显式自迭代（v12 已决策放行）。
 function isInstallControlPlanePath(low) {
   const home = (process.env.USERPROFILE || process.env.HOME || '').toLowerCase().replace(/\\/g, '/')
   return (
@@ -428,11 +429,7 @@ function isInstallControlPlanePath(low) {
   )
 }
 function targetsControlPlane(text) {
-  const low = String(text || '').toLowerCase().replace(/\\/g, '/')
-  // 安装面先于源路径豁免：挡住 dsh/preset/../../.dsh/.agent-presets 这类绕过。
-  if (isInstallControlPlanePath(low)) return true
-  if (isSourceRepoPresetPath(low)) return false
-  return low.includes('agent.cordis.yml')
+  return isInstallControlPlanePath(String(text || '').toLowerCase().replace(/\\/g, '/'))
 }
 
 const CONTROL_PLANE_REMIND =
@@ -900,7 +897,7 @@ module.exports = {
             if (decision) return decision
           }
         }
-        // 2c. 控制平面保护（v8：只拦明确写意图；v12：硬 deny → remind）
+        // 2c. 控制平面保护（v8：只拦明确写意图；v12：硬 deny → remind；v13：控制平面 = 安装面）
         if (isTerminalControlPlaneWrite(text)) {
           queueControlPlaneRemind(exec)
         }
@@ -911,7 +908,7 @@ module.exports = {
         // v9：gh 普通写操作仅软约束，不提问；gh 破坏性删除仍 deny。
       }
 
-      // 3. 编辑工具控制平面保护（v12：硬 deny → remind，自迭代可写安装副本）
+      // 3. 编辑工具控制平面保护（v12：硬 deny → remind，自迭代可写安装副本；v13：控制平面 = 安装面）
       if (EDIT_TOOLS.has(tool) && args) {
         const path = args.file_path || args.path || ''
         if (typeof path === 'string' && targetsControlPlane(path)) {
@@ -943,7 +940,7 @@ module.exports = {
       pendingControlPlane.delete(exec.callId)
       if (controlPlaneReminded) return next()
       controlPlaneReminded = true
-      return { kind: 'accept', additionalContexts: [makeUserMessage(pending)] }
+      return lib.appendContexts(await next(), [makeUserMessage(pending)])
     })
 
     // 记录挂载
