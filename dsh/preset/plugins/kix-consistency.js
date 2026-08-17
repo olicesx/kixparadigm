@@ -9,8 +9,8 @@
 // CI 脚本与本插件共用同一实现——不复制断言，防「CI 一套、运行时一套」双源漂移。
 //
 // 触发面（限制越少越好）：仅「kixparadigm 源仓库指纹」工作区（workspaceRoot 含
-// dsh/preset + en/preset + scripts/check-dsh-consistency.cjs）的 preset 区域写入。
-// 其余工作区/路径零开销放行。
+// dsh/preset + en/preset + scripts/check-dsh-consistency.cjs）的身份组写入。
+// 该相同的数份必须相同（dsh + en + EXTRA_IDENTICAL_COPIES）；其余工作区零开销放行。
 //
 // 强度：默认 remind；ask/block 需 agent.cordis.yml 显式配置。remindOnce：
 // 每会话每类别一次（persona/plugins/memories/readme/package/vision/misc）。
@@ -57,13 +57,14 @@ function toRepoRel(root, filePath) {
   return rel.replace(/\\/g, '/')
 }
 
-// 写入路径 → 提醒类别（remindOnce 粒度；非 preset 区域返回 null，零开销放行）
+// 写入路径 → 提醒类别（remindOnce 粒度；非身份组 / 非预算路径返回 null）
 // 插件文件匹配 .js/.cjs——与 lib.pluginNames() 的 CI 动态清单同口径：
 // consistency-lib.cjs 这类共享库源码同样受写时守护（否则「唯一事实源」自身裸奔）
 function classifyWrite(rel) {
   const p = String(rel || '').replace(/\\/g, '/')
   if (p === 'dsh/preset/agent.cordis.yml' || p === 'en/preset/agent.cordis.yml') return 'persona'
   if (/^(?:dsh\/preset|en\/preset)\/plugins\/[^/]+\.(?:js|cjs)$/.test(p)) return 'plugins'
+  if (lib.extraIdentityMembers().includes(p)) return 'plugins'
   if (/^(?:dsh\/preset|en\/preset)\/memories\//.test(p)) return 'memories'
   if (p === 'README.md' || p === 'README.en.md') return 'readme'
   if (p === 'package.json' || p === 'en/package.json') return 'package'
@@ -82,13 +83,16 @@ function pickChecks(root, rel) {
     checks.push(() => lib.checkPersonaBudget({ root, rel: 'en/preset/agent.cordis.yml', ...PERSONA_BUDGET.en }))
   }
   const pluginRel = /^(?:dsh\/preset|en\/preset)\/plugins\/([^/]+\.(?:js|cjs))$/.exec(p)
-  if (pluginRel) {
-    const name = pluginRel[1]
-    checks.push(() => lib.checkPluginPair({ root, name }))
+  const extraPlugin = lib.extraIdentityMembers().includes(p)
+    ? path.posix.basename(p)
+    : null
+  const pluginName = pluginRel ? pluginRel[1] : extraPlugin
+  if (pluginName) {
+    checks.push(() => lib.checkPluginPair({ root, name: pluginName }))
     // 写插件源码时顺带校验自身语法（测试文件不查——node --check 对 test 同样适用，
     // 但测试文件由 npm test 管，写时语法拦截只对源码，减少噪音）
-    if (!/\.test\.js$/.test(name)) {
-      checks.push(() => lib.checkFileSyntax({ root, rel: p, label: `plugins/${name}` }))
+    if (!/\.test\.js$/.test(pluginName)) {
+      checks.push(() => lib.checkFileSyntax({ root, rel: p, label: `plugins/${pluginName}` }))
     }
   }
   if (/^dsh\/preset\/memories\//.test(p)) {

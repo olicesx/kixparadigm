@@ -10,6 +10,7 @@
 - **PR#10 WSL2 E2E 实锤**：`kix-consistency` 误把 `sandboxPolicy.workspaceRoot`（部署回退 = `process.cwd()`）当会话工作区——dsh 从 `/root` 启动时指纹检查永远失败，整插件在任意非启动目录工作区静默失效（plan 门禁不受影响，因它只看 file_path）。改为会话 `header.cwd` → `sandboxPolicy.resolve({session})` → 回退根。单测 kix-consistency **52 → 54**
 - **kix-guards v11 源仓库豁免**：`targetsControlPlane` 见任意 `agent.cordis.yml` 就 deny，把源仓库事实源（`dsh/preset/`、`en/preset/`）当成安装副本误伤——维护者无法在本仓改挂载注释/计数。安装面（`~/.dsh` / `.agent-presets`）仍优先命中，`dsh/preset/../../.dsh/...` 不能绕过
 - **kix-guards v12 控制平面软门禁**：安装副本写从硬 deny 降为 remind（放行 + 注入一次带 id 的提醒）。kix 自迭代 / 用户已授权改 `~/.dsh` 时不再挡正事；源仓库事实源继续豁免不提醒。force push / main / 破坏性 SQL 仍硬 deny
+- **kix-consistency 身份组**：该相同的数份必须相同——`checkIdenticalSet` 一次比 N 份（缺一份 / 任一份与锚点不同都失败）。插件身份组 = dsh + en + `EXTRA_IDENTICAL_COPIES`（根目录 VS Code 参考副本不再只在 CI 两两比）。写时路由认额外副本。加语言/加参考副本 = 表里加一行
 
 ## v1.2.13（2026-08-17）部署复验整改
 

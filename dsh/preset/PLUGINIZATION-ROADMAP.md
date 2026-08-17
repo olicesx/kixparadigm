@@ -273,7 +273,7 @@ job_*/subagent-control）自动可见、裁不掉；scope 工具也无法经 cap
 
 **P5a — kix-consistency 插件（一致性守护写时拦截）**：
 - `scripts/check-dsh-consistency.cjs` 拆核为 `plugins/consistency-lib.cjs` 纯函数核心（root 参数化、返回 `{failures, notes}`、无 console 副作用）——**CI 脚本与插件共用单一事实源**，防「CI 一套、运行时一套」双源漂移（自己立的「消灭双源」范式不能自己违反）
-- 插件 pre-execute：写 `dsh/preset/`、`en/preset/`、README*、package.json*、vision-bridge 相关文件时按路径跑**相关子检查**（persona 预算 / 插件对同步 / memories 计数 / README 表述 / 版本对 / 单文件语法）
+- 插件 pre-execute：写身份组成员时按路径跑**相关子检查**（persona 预算 / **该相同的数份必须相同** / memories 计数 / README 表述 / 版本对 / 单文件语法）。身份组 = dsh + en + `EXTRA_IDENTICAL_COPIES`（加语言/加参考副本 = 表里加一行）
 - 触发面：仅「源仓库指纹」工作区（dsh/preset + en/preset + scripts 入口齐全）；其余工作区零开销放行
 - 强度：默认 remind（文档可回滚不 deny）；ask/block 可配；remindOnce 每会话每类别一次
 - 插件名清单动态化：`pluginNames()` 读目录，新增插件自动纳入 CI 检查（不再维护硬编码清单）
