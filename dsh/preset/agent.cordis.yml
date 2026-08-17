@@ -611,16 +611,18 @@
 - id: kix-orchestration
   name: ./plugins/kix-orchestration.js
 
-# ── kix-consistency（P5，2026-08-17）：一致性守护写时拦截 ──────────────
+# ── kix-consistency（P5，2026-08-17；v1.2.15 泛化）：一致性守护写时拦截 ──
 # CI 脚本（scripts/check-dsh-consistency.cjs）只在测试期校验，改 preset 文件时
-# 不实时拦截 drift。本插件把「唯一事实源」从自觉变机械：写 dsh/preset/、
-# en/preset/、README*、package.json*、vision-bridge 相关文件时跑**相关子检查**
-# （persona 预算 / 插件对同步 / memories 计数 / README 表述 / 版本对 / 单文件语法），
-# 与 CI 共用 consistency-lib.cjs 单一事实源（防「CI 一套、运行时一套」双源漂移）。
-# 仅「kixparadigm 源仓库指纹」工作区（含 dsh/preset + en/preset + scripts 入口）
-# 触发；其余工作区零开销放行。强度默认 remind（文档可回滚不 deny）；
+# 不实时拦截 drift。本插件把「唯一事实源」从自觉变机械：写身份组成员时跑
+# **相关子检查**，与 CI 共用 consistency-lib.cjs 单一事实源（防「CI 一套、
+# 运行时一套」双源漂移）。边界自感知：preset 根 = 同时含 agent.cordis.yml +
+# preset.yml 的目录（深度 ≤2 扫描）；任意仓库 ≥2 根才引导——通用层只引导
+# 各根同名 plugins 字节一致（该相同的数份必须相同，N ≥ 2）；VS Code 导入源
+# （根 plugins/）不是 preset 根，天然出组。kix 全量契约（persona 预算 /
+# memories 计数 / README 表述 / 版本对 / vision-bridge / 单文件语法）由仓库
+# 自带 scripts 入口自声明触发，外仓不硬套。强度默认 remind（只做启发引导）；
 # ask/block 需显式配置。remindOnce：每会话每类别一次。
-# 单元测试：node plugins/kix-consistency.test.js（54 断言）。
+# 单元测试：node plugins/kix-consistency.test.js（80 断言）。
 - id: kix-consistency
   name: ./plugins/kix-consistency.js
 

@@ -8,11 +8,15 @@
 // 单一事实源：检查逻辑全部在 ./consistency-lib.cjs（zh/en 字节一致共享）；
 // CI 脚本与本插件共用同一实现——不复制断言，防「CI 一套、运行时一套」双源漂移。
 //
-// 触发面（限制越少越好）：仅「kixparadigm 源仓库指纹」工作区（workspaceRoot 含
-// dsh/preset + en/preset + scripts/check-dsh-consistency.cjs）的身份组写入。
-// 该相同的数份必须相同（dsh + en + EXTRA_IDENTICAL_COPIES）；其余工作区零开销放行。
+// 触发面（限制越少越好，边界自感知）：扫描工作区「DSH preset 根」（同时含
+// agent.cordis.yml + preset.yml 的目录，深度 ≤2）。发现 ≥2 个 preset 根才引导——
+// 该相同的数份必须相同（各根下同名 plugins/*.{js,cjs} 字节一致，语言中立代码）。
+// 单 preset / 普通仓库 / VS Code 导入源（根 plugins/ 等，不是 preset 根）零开销放行。
+// kix 全量契约（persona 预算 / memories 计数 / README 表述 / 版本对 / vision-bridge）
+// 由仓库自带 scripts/check-dsh-consistency.cjs **自声明**触发——仓库自己携带契约
+// 入口才算契约仓，不是按仓库名硬编码（防外仓误伤 = 防过拟合）。
 //
-// 强度：默认 remind；ask/block 需 agent.cordis.yml 显式配置。remindOnce：
+// 强度：默认 remind（只做启发引导）；ask/block 需 agent.cordis.yml 显式配置。remindOnce：
 // 每会话每类别一次（persona/plugins/memories/readme/package/vision/misc）。
 //
 // 挂载：agent.cordis.yml 一行：
@@ -36,12 +40,13 @@ const PERSONA_BUDGET = {
 
 // ── 纯判定函数（模块级：单元测试经 __internals 直接验证）─────────────────
 
-// kixparadigm 源仓库指纹：preset 双份 + scripts 全量入口同时存在。
-function isRepoRoot(root) {
+// 契约层入口：仓库自带一致性契约脚本 = 自声明「本仓适用 kix 全量契约」。
+// 通用层（身份组）不看这个——任何 ≥2 preset 根的工作区都引导；契约层只对
+// 自带契约入口的仓库开（persona 预算 / memories 计数 / README 表述等是本仓
+// 特定常量，外仓没有这些约定，硬套就是过拟合）。
+function hasContractEntry(root) {
   if (!root || typeof root !== 'string') return false
-  return fs.existsSync(path.join(root, 'dsh/preset/agent.cordis.yml')) &&
-    fs.existsSync(path.join(root, 'en/preset/agent.cordis.yml')) &&
-    fs.existsSync(path.join(root, 'scripts/check-dsh-consistency.cjs'))
+  return fs.existsSync(path.join(root, 'scripts/check-dsh-consistency.cjs'))
 }
 
 // write/edit 的 file_path 可能是绝对路径、带 ./ 的相对路径、或 Windows 盘符路径。
@@ -57,62 +62,70 @@ function toRepoRel(root, filePath) {
   return rel.replace(/\\/g, '/')
 }
 
-// 写入路径 → 提醒类别（remindOnce 粒度；非身份组 / 非预算路径返回 null）
-// 插件文件匹配 .js/.cjs——与 lib.pluginNames() 的 CI 动态清单同口径：
-// consistency-lib.cjs 这类共享库源码同样受写时守护（否则「唯一事实源」自身裸奔）
-function classifyWrite(rel) {
+// 写入路径 → 提醒类别（remindOnce 粒度；边界外返回 null，零开销放行）
+// 通用层（任意 ≥2 preset 根工作区）：仅 plugins/*.{js,cjs}——语言中立代码的身份组，
+// 与 lib.pluginNames() 的 CI 动态清单同口径（consistency-lib.cjs 共享库同样受守护）。
+// 契约层（自带 scripts/check-dsh-consistency.cjs）：persona / memories / README /
+// package / vision——本仓自声明契约，外仓不套用。
+function classifyWrite(rel, presetRoots, withContract) {
   const p = String(rel || '').replace(/\\/g, '/')
-  if (p === 'dsh/preset/agent.cordis.yml' || p === 'en/preset/agent.cordis.yml') return 'persona'
-  if (/^(?:dsh\/preset|en\/preset)\/plugins\/[^/]+\.(?:js|cjs)$/.test(p)) return 'plugins'
-  if (lib.extraIdentityMembers().includes(p)) return 'plugins'
-  if (/^(?:dsh\/preset|en\/preset)\/memories\//.test(p)) return 'memories'
-  if (p === 'README.md' || p === 'README.en.md') return 'readme'
-  if (p === 'package.json' || p === 'en/package.json') return 'package'
-  if (/^dsh\/vision-bridge\//.test(p) || /^en\/bridge\//.test(p)) return 'vision'
+  const roots = Array.isArray(presetRoots) ? presetRoots : []
+  const home = lib.presetRootOf(p, roots)
+  if (home) {
+    const suffix = p.slice(home.length + 1)
+    if (/^plugins\/[^/]+\.(?:js|cjs)$/.test(suffix)) return 'plugins'
+    if (!withContract) return null
+    if (suffix === 'agent.cordis.yml') return 'persona'
+    if (/^memories\//.test(suffix)) return 'memories'
+    return null
+  }
+  if (withContract) {
+    if (p === 'README.md' || p === 'README.en.md') return 'readme'
+    if (p === 'package.json' || p === 'en/package.json') return 'package'
+    if (/^dsh\/vision-bridge\//.test(p) || /^en\/bridge\//.test(p)) return 'vision'
+  }
   return null
 }
 
 // 写入路径 → 相关子检查函数数组（增量：每次写入只跑与目标文件相关的检查）
-function pickChecks(root, rel) {
+// roots / withContract 可选（测试直呼时现场发现）；插件运行时传缓存值。
+function pickChecks(root, rel, presetRoots, withContract) {
   const p = String(rel || '').replace(/\\/g, '/')
   const checks = []
-  if (p === 'dsh/preset/agent.cordis.yml') {
-    checks.push(() => lib.checkPersonaBudget({ root, rel: 'dsh/preset/agent.cordis.yml', ...PERSONA_BUDGET.zh }))
+  const roots = Array.isArray(presetRoots) && presetRoots.length ? presetRoots : lib.discoverPresetRoots(root)
+  // 单 preset 根 / 普通仓库：零开销（<2 份谈不上「该相同的数份」）
+  if (!Array.isArray(roots) || roots.length < 2) return checks
+  const contract = typeof withContract === 'boolean' ? withContract : hasContractEntry(root)
+  const category = classifyWrite(p, roots, contract)
+  if (!category) return checks
+  const home = lib.presetRootOf(p, roots)
+  if (category === 'persona') {
+    // 预算是本仓两套 edition 的常量；未知名 preset 根无预算可查 → 不硬套
+    const budget = home === 'dsh/preset' ? PERSONA_BUDGET.zh : home === 'en/preset' ? PERSONA_BUDGET.en : null
+    if (budget) checks.push(() => lib.checkPersonaBudget({ root, rel: p, ...budget }))
   }
-  if (p === 'en/preset/agent.cordis.yml') {
-    checks.push(() => lib.checkPersonaBudget({ root, rel: 'en/preset/agent.cordis.yml', ...PERSONA_BUDGET.en }))
-  }
-  const pluginRel = /^(?:dsh\/preset|en\/preset)\/plugins\/([^/]+\.(?:js|cjs))$/.exec(p)
-  const extraPlugin = lib.extraIdentityMembers().includes(p)
-    ? path.posix.basename(p)
-    : null
-  const pluginName = pluginRel ? pluginRel[1] : extraPlugin
-  if (pluginName) {
-    checks.push(() => lib.checkPluginPair({ root, name: pluginName }))
+  if (category === 'plugins') {
+    const name = path.posix.basename(p)
+    checks.push(() => lib.checkPluginPair({ root, name, presetRoots: roots }))
     // 写插件源码时顺带校验自身语法（测试文件不查——node --check 对 test 同样适用，
     // 但测试文件由 npm test 管，写时语法拦截只对源码，减少噪音）
-    if (!/\.test\.js$/.test(pluginName)) {
-      checks.push(() => lib.checkFileSyntax({ root, rel: p, label: `plugins/${pluginName}` }))
+    if (!/\.test\.js$/.test(name)) {
+      checks.push(() => lib.checkFileSyntax({ root, rel: p, label: `plugins/${name}` }))
     }
   }
-  if (/^dsh\/preset\/memories\//.test(p)) {
-    checks.push(() => lib.checkMemoriesCount({ root, rel: 'dsh/preset/memories', expected: 4 }))
+  if (category === 'memories') {
+    checks.push(() => lib.checkMemoriesCount({ root, rel: home + '/memories', expected: 4 }))
   }
-  if (/^en\/preset\/memories\//.test(p)) {
-    checks.push(() => lib.checkMemoriesCount({ root, rel: 'en/preset/memories', expected: 4 }))
+  if (category === 'readme') {
+    const phrase = p === 'README.md' ? '+ 4 记忆' : '+ 4 memories'
+    checks.push(() => lib.checkReadmePhrase({ root, rel: p, phrase }))
   }
-  if (p === 'README.md') {
-    checks.push(() => lib.checkReadmePhrase({ root, rel: 'README.md', phrase: '+ 4 记忆' }))
-  }
-  if (p === 'README.en.md') {
-    checks.push(() => lib.checkReadmePhrase({ root, rel: 'README.en.md', phrase: '+ 4 memories' }))
-  }
-  if (p === 'package.json' || p === 'en/package.json') {
+  if (category === 'package') {
     checks.push(() => lib.checkVersionPair({ root }))
   }
-  if (/^dsh\/vision-bridge\//.test(p) || /^en\/bridge\//.test(p)) {
-    checks.push(() => lib.checkFilesEqual({ root, a: 'dsh/vision-bridge/index.js', b: 'en/bridge/index.js', label: 'vision-bridge/index.js' }))
-    checks.push(() => lib.checkFilesEqual({ root, a: 'dsh/vision-bridge/test.js', b: 'en/bridge/test.js', label: 'vision-bridge/test.js' }))
+  if (category === 'vision') {
+    checks.push(() => lib.checkIdenticalSet({ root, paths: ['dsh/vision-bridge/index.js', 'en/bridge/index.js'], label: 'vision-bridge/index.js' }))
+    checks.push(() => lib.checkIdenticalSet({ root, paths: ['dsh/vision-bridge/test.js', 'en/bridge/test.js'], label: 'vision-bridge/test.js' }))
   }
   return checks
 }
@@ -163,20 +176,35 @@ module.exports = {
     }
 
     const states = new Map()
+    // 配置覆盖：presetRoots 显式声明身份组根（自定义布局的仓库用；默认自感知扫描）
+    const configuredRoots = Array.isArray(cfg.presetRoots)
+      ? cfg.presetRoots.filter((r) => typeof r === 'string' && r.length > 0)
+      : null
+    function rootsFor(root) {
+      if (configuredRoots && configuredRoots.length > 0) return configuredRoots.slice()
+      return lib.discoverPresetRoots(root)
+    }
     function stateFor(agent) {
       const key = agent && agent.id ? String(agent.id) : 'anonymous'
       let st = states.get(key)
       if (!st) {
+        const root = resolveWorkspaceRoot(agent)
         st = {
           enabled: true,
-          workspaceRoot: resolveWorkspaceRoot(agent),
+          workspaceRoot: root,
+          presetRoots: root ? rootsFor(root) : [],
+          contract: root ? hasContractEntry(root) : false,
           reminded: new Set(),
           pendingRemind: new Map(),
         }
         states.set(key, st)
       } else {
         const live = resolveWorkspaceRoot(agent)
-        if (live) st.workspaceRoot = live
+        if (live && live !== st.workspaceRoot) {
+          st.workspaceRoot = live
+          st.presetRoots = rootsFor(live)
+          st.contract = hasContractEntry(live)
+        }
       }
       return st
     }
@@ -217,13 +245,14 @@ module.exports = {
 
       const st = stateFor(exec && exec.agent)
       if (!st.enabled) return next()
-      if (!st.workspaceRoot || !isRepoRoot(st.workspaceRoot)) return next()
+      // 通用门禁：≥2 个自感知 preset 根才引导（单 preset / 普通仓库零开销放行）
+      if (!st.workspaceRoot || !Array.isArray(st.presetRoots) || st.presetRoots.length < 2) return next()
 
       const relPath = toRepoRel(st.workspaceRoot, rawPath)
-      const category = classifyWrite(relPath)
+      const category = classifyWrite(relPath, st.presetRoots, st.contract)
       if (!category) return next()
 
-      const checks = pickChecks(st.workspaceRoot, relPath)
+      const checks = pickChecks(st.workspaceRoot, relPath, st.presetRoots, st.contract)
       if (checks.length === 0) return next()
 
       const failures = []
@@ -265,12 +294,12 @@ module.exports = {
       return { kind: 'accept', additionalContexts: [makeUserMessage(pending.reason)] }
     })
 
-    ctx.logger?.info?.('[kix-consistency] 一致性写时拦截已挂载（preset 区域增量校验 + remind；与 CI 共用 consistency-lib 单一事实源）')
+    ctx.logger?.info?.('[kix-consistency] 一致性写时拦截已挂载（边界自感知：≥2 preset 根才引导，身份组 = 各根同名 plugins；契约层由 scripts 入口自声明；与 CI 共用 consistency-lib 单一事实源）')
   },
 }
 
 module.exports.__internals = {
-  isRepoRoot,
+  hasContractEntry,
   toRepoRel,
   classifyWrite,
   pickChecks,

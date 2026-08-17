@@ -92,9 +92,11 @@ function makeRepoRoot() {
     fs.mkdirSync(path.dirname(p), { recursive: true })
     fs.writeFileSync(p, content, 'utf8')
   }
-  // 源仓库指纹三件套（内容最小化；persona 检查在单独用例中造合法块）
+  // 源仓库夹具（双标记 preset 根 + 契约入口；内容最小化；persona 检查单独造合法块）
   write('dsh/preset/agent.cordis.yml', 'text: |-\n  x\n')
+  write('dsh/preset/preset.yml', 'id: zh\n')
   write('en/preset/agent.cordis.yml', 'text: |-\n  x\n')
+  write('en/preset/preset.yml', 'id: en\n')
   write('scripts/check-dsh-consistency.cjs', '#!/usr/bin/env node\n')
   return root
 }
@@ -123,42 +125,80 @@ function makePostExec(callId) {
 
 // ══════════════════════════════════════════════════════════════════════════
 ;(async () => {
-  section('__internals: isRepoRoot')
+  section('__internals: 边界自感知（discoverPresetRoots / hasContractEntry）')
   const repo = makeRepoRoot()
-  await ok('指纹齐全 → true', I.isRepoRoot(repo))
+  await ok('自感知发现 dsh/preset + en/preset',
+    JSON.stringify(lib.discoverPresetRoots(repo)) === JSON.stringify(['dsh/preset', 'en/preset']))
+  await ok('多 preset 工作区 → 引导', lib.isMultiPresetWorkspace(repo))
   const noEn = makeRepoRoot()
   fs.rmSync(path.join(noEn, 'en/preset/agent.cordis.yml'))
-  await ok('缺 en/preset → false', I.isRepoRoot(noEn) === false)
-  await ok('null → false', I.isRepoRoot(null) === false)
-  await ok('undefined → false', I.isRepoRoot(undefined) === false)
+  await ok('单 preset 根 → 不引导（零开销）', lib.isMultiPresetWorkspace(noEn) === false)
+  await ok('null → 无发现', lib.discoverPresetRoots(null).length === 0)
+  await ok('undefined → 无发现', lib.discoverPresetRoots(undefined).length === 0)
   const plain = mkdtemp('kix-cons-test-plain-')
-  await ok('普通工作区 → false', I.isRepoRoot(plain) === false)
+  await ok('普通工作区 → 无发现', lib.discoverPresetRoots(plain).length === 0)
+  await ok('契约入口自声明 → true', I.hasContractEntry(repo))
+  await ok('外仓无契约入口 → false', I.hasContractEntry(plain) === false)
+  // 自定义布局外仓（非 dsh/en 命名）：深度 ≤2 扫描同样发现——泛化不绑本仓路径
+  const foreignLayout = mkdtemp('kix-cons-test-layout-')
+  for (const r of ['pkgs/zh', 'pkgs/en']) {
+    fs.mkdirSync(path.join(foreignLayout, r), { recursive: true })
+    fs.writeFileSync(path.join(foreignLayout, r, 'agent.cordis.yml'), 'x\n', 'utf8')
+    fs.writeFileSync(path.join(foreignLayout, r, 'preset.yml'), 'id: x\n', 'utf8')
+  }
+  await ok('自定义布局（pkgs/zh + pkgs/en）自感知发现',
+    JSON.stringify(lib.discoverPresetRoots(foreignLayout)) === JSON.stringify(['pkgs/en', 'pkgs/zh']))
+  // 单标记不算 preset 根（压假阳性：agent.cordis.yml 单独出现不触发）
+  const singleMarker = mkdtemp('kix-cons-test-marker-')
+  fs.mkdirSync(path.join(singleMarker, 'dsh/preset'), { recursive: true })
+  fs.writeFileSync(path.join(singleMarker, 'dsh/preset/agent.cordis.yml'), 'x\n', 'utf8')
+  await ok('仅 agent.cordis.yml 单标记 → 不算 preset 根', lib.discoverPresetRoots(singleMarker).length === 0)
 
-  section('__internals: classifyWrite')
-  await ok('zh agent.cordis.yml → persona', I.classifyWrite('dsh/preset/agent.cordis.yml') === 'persona')
-  await ok('en agent.cordis.yml → persona', I.classifyWrite('en/preset/agent.cordis.yml') === 'persona')
-  await ok('zh 插件源码 → plugins', I.classifyWrite('dsh/preset/plugins/kix-x.js') === 'plugins')
-  await ok('en 插件测试 → plugins', I.classifyWrite('en/preset/plugins/kix-x.test.js') === 'plugins')
-  await ok('memories → memories', I.classifyWrite('dsh/preset/memories/ai-agent-practices.md') === 'memories')
-  await ok('README.md → readme', I.classifyWrite('README.md') === 'readme')
-  await ok('README.en.md → readme', I.classifyWrite('README.en.md') === 'readme')
-  await ok('package.json → package', I.classifyWrite('package.json') === 'package')
-  await ok('vision-bridge → vision', I.classifyWrite('dsh/vision-bridge/index.js') === 'vision')
-  await ok('额外身份副本（VS Code 根）→ plugins', I.classifyWrite('plugins/kix-guards.js') === 'plugins')
-  await ok('普通源码 → null', I.classifyWrite('src/main.js') === null)
-  await ok('windows 反斜杠路径 → plugins', I.classifyWrite('dsh\\preset\\plugins\\kix-x.js') === 'plugins')
-  await ok('空 → null', I.classifyWrite('') === null)
+  section('__internals: classifyWrite（通用层 + 契约层）')
+  const KIX = ['dsh/preset', 'en/preset']
+  await ok('zh agent.cordis.yml → persona（契约层）', I.classifyWrite('dsh/preset/agent.cordis.yml', KIX, true) === 'persona')
+  await ok('en agent.cordis.yml → persona（契约层）', I.classifyWrite('en/preset/agent.cordis.yml', KIX, true) === 'persona')
+  await ok('无契约时 persona → null（外仓不硬套预算）', I.classifyWrite('dsh/preset/agent.cordis.yml', KIX, false) === null)
+  await ok('zh 插件源码 → plugins（通用层）', I.classifyWrite('dsh/preset/plugins/kix-x.js', KIX, false) === 'plugins')
+  await ok('en 插件测试 → plugins（通用层）', I.classifyWrite('en/preset/plugins/kix-x.test.js', KIX, false) === 'plugins')
+  await ok('memories → memories（契约层）', I.classifyWrite('dsh/preset/memories/ai-agent-practices.md', KIX, true) === 'memories')
+  await ok('无契约时 memories → null', I.classifyWrite('dsh/preset/memories/x.md', KIX, false) === null)
+  await ok('README.md → readme（契约层）', I.classifyWrite('README.md', KIX, true) === 'readme')
+  await ok('无契约时 README → null（外仓不硬套短语）', I.classifyWrite('README.md', KIX, false) === null)
+  await ok('README.en.md → readme', I.classifyWrite('README.en.md', KIX, true) === 'readme')
+  await ok('package.json → package', I.classifyWrite('package.json', KIX, true) === 'package')
+  await ok('vision-bridge → vision', I.classifyWrite('dsh/vision-bridge/index.js', KIX, true) === 'vision')
+  await ok('VS Code 导入源（根 plugins/）→ null（边界外）', I.classifyWrite('plugins/kix-guards.js', KIX, true) === null)
+  await ok('普通源码 → null', I.classifyWrite('src/main.js', KIX, true) === null)
+  await ok('windows 反斜杠路径 → plugins', I.classifyWrite('dsh\\preset\\plugins\\kix-x.js', KIX, true) === 'plugins')
+  await ok('空 → null', I.classifyWrite('', KIX, true) === null)
 
   section('__internals: pickChecks')
   const srcChecks = I.pickChecks(repo, 'dsh/preset/plugins/kix-x.js')
   await ok('写插件源码 → pair + 语法 2 检查', srcChecks.length === 2)
-  const extraChecks = I.pickChecks(repo, 'plugins/kix-guards.js')
-  await ok('写额外身份副本 → pair + 语法 2 检查', extraChecks.length === 2)
+  await ok('写 VS Code 导入源（根 plugins/）→ 0 检查（边界外）', I.pickChecks(repo, 'plugins/kix-guards.js').length === 0)
   const testChecks = I.pickChecks(repo, 'dsh/preset/plugins/kix-x.test.js')
   await ok('写插件测试 → 仅 pair 1 检查', testChecks.length === 1)
   const personaChecks = I.pickChecks(repo, 'dsh/preset/agent.cordis.yml')
-  await ok('写 persona → 1 检查', personaChecks.length === 1)
+  await ok('写 persona → 1 检查（契约）', personaChecks.length === 1)
   await ok('非 preset → 0 检查', I.pickChecks(repo, 'src/main.js').length === 0)
+  // 外仓（自定义布局、无契约脚本）：只有通用身份组检查
+  const foreign = mkdtemp('kix-cons-test-foreign-')
+  for (const r of ['pkgs/zh', 'pkgs/en']) {
+    fs.mkdirSync(path.join(foreign, r + '/plugins'), { recursive: true })
+    fs.writeFileSync(path.join(foreign, r, 'agent.cordis.yml'), 'x\n', 'utf8')
+    fs.writeFileSync(path.join(foreign, r, 'preset.yml'), 'id: x\n', 'utf8')
+  }
+  fs.writeFileSync(path.join(foreign, 'pkgs/zh/plugins/m.js'), 'M', 'utf8')
+  await ok('外仓写插件 → pair + 语法 2 检查（自感知根）', I.pickChecks(foreign, 'pkgs/zh/plugins/m.js').length === 2)
+  await ok('外仓写 persona → 0 检查（无契约不硬套）', I.pickChecks(foreign, 'pkgs/zh/agent.cordis.yml').length === 0)
+  await ok('外仓写 README → 0 检查', I.pickChecks(foreign, 'README.md').length === 0)
+  // 单 preset 根外仓：完全零开销
+  const solo = mkdtemp('kix-cons-test-solo-')
+  fs.mkdirSync(path.join(solo, 'preset/plugins'), { recursive: true })
+  fs.writeFileSync(path.join(solo, 'preset/agent.cordis.yml'), 'x\n', 'utf8')
+  fs.writeFileSync(path.join(solo, 'preset/preset.yml'), 'id: x\n', 'utf8')
+  await ok('单 preset 根 → pickChecks 0（不引导）', I.pickChecks(solo, 'preset/plugins/m.js').length === 0)
 
   section('lib: estimateTokens / checkFilesEqual / checkPluginPair')
   await ok('estimateTokens 空 → 0', lib.estimateTokens('') === 0)
@@ -174,42 +214,37 @@ function makePostExec(callId) {
   fs.writeFileSync(path.join(pairRoot, 'en/preset/plugins/a.js'), 'B', 'utf8')
   const diff = lib.checkFilesEqual({ root: pairRoot, a: 'dsh/preset/plugins/a.js', b: 'en/preset/plugins/a.js', label: 'a.js' })
   await ok('字节不一致 → failure', diff.failures.length === 1)
-  const pair1 = lib.checkPluginPair({ root: pairRoot, name: 'a.js' })
+  const PAIR_ROOTS = ['dsh/preset', 'en/preset']
+  const pair1 = lib.checkPluginPair({ root: pairRoot, name: 'a.js', presetRoots: PAIR_ROOTS })
   await ok('插件对不一致 → failure', pair1.failures.length === 1)
   fs.writeFileSync(path.join(pairRoot, 'en/preset/plugins/a.js'), 'A', 'utf8')
-  const pair2 = lib.checkPluginPair({ root: pairRoot, name: 'a.js' })
+  const pair2 = lib.checkPluginPair({ root: pairRoot, name: 'a.js', presetRoots: PAIR_ROOTS })
   await ok('插件对一致且双侧无 test → note 跳过', pair2.failures.length === 0 && pair2.notes.some((n) => n.includes('skipped')))
   fs.writeFileSync(path.join(pairRoot, 'dsh/preset/plugins/a.test.js'), 'T', 'utf8')
-  const pair3 = lib.checkPluginPair({ root: pairRoot, name: 'a.js' })
+  const pair3 = lib.checkPluginPair({ root: pairRoot, name: 'a.js', presetRoots: PAIR_ROOTS })
   await ok('test 单侧存在 → failure（en 缺 test）', pair3.failures.length === 1)
 
-  section('lib: checkIdenticalSet（该相同的数份必须相同）')
+  section('lib: checkIdenticalSet（该相同的数份必须相同，N ≥ 2）')
   const nRoot = mkdtemp('kix-cons-test-nset-')
-  fs.mkdirSync(path.join(nRoot, 'dsh/preset/plugins'), { recursive: true })
-  fs.mkdirSync(path.join(nRoot, 'en/preset/plugins'), { recursive: true })
-  fs.mkdirSync(path.join(nRoot, 'plugins'), { recursive: true })
-  fs.writeFileSync(path.join(nRoot, 'dsh/preset/plugins/kix-guards.js'), 'G', 'utf8')
-  fs.writeFileSync(path.join(nRoot, 'en/preset/plugins/kix-guards.js'), 'G', 'utf8')
-  fs.writeFileSync(path.join(nRoot, 'plugins/kix-guards.js'), 'G', 'utf8')
-  const n3 = lib.checkIdenticalSet({
-    root: nRoot,
-    paths: ['dsh/preset/plugins/kix-guards.js', 'en/preset/plugins/kix-guards.js', 'plugins/kix-guards.js'],
-    label: 'plugins/kix-guards.js',
-  })
+  const THREE = ['editions/one', 'editions/two', 'editions/three']
+  for (const r of THREE) {
+    fs.mkdirSync(path.join(nRoot, r, 'plugins'), { recursive: true })
+    fs.writeFileSync(path.join(nRoot, r, 'plugins/core.js'), 'X', 'utf8')
+  }
+  const threePaths = THREE.map((r) => r + '/plugins/core.js')
+  const n3 = lib.checkIdenticalSet({ root: nRoot, paths: threePaths, label: 'plugins/core.js' })
   await ok('3 份相同 → 无 failure', n3.failures.length === 0 && n3.notes.some((n) => n.includes('3 copies')))
-  fs.writeFileSync(path.join(nRoot, 'plugins/kix-guards.js'), 'DRIFT', 'utf8')
-  const n3d = lib.checkPluginPair({ root: nRoot, name: 'kix-guards.js' })
-  await ok('第 3 份漂移 → failure（不只查 zh/en）', n3d.failures.some((f) => f.includes('3 copies') && f.includes('plugins/kix-guards.js')))
-  const n1 = lib.checkIdenticalSet({ root: nRoot, paths: ['dsh/preset/plugins/kix-guards.js'], label: 'solo' })
+  fs.writeFileSync(path.join(nRoot, 'editions/three/plugins/core.js'), 'DRIFT', 'utf8')
+  const n3d = lib.checkPluginPair({ root: nRoot, name: 'core.js', presetRoots: THREE })
+  await ok('第 3 份漂移 → failure（不只查前两份）', n3d.failures.some((f) => f.includes('3 copies') && f.includes('editions/three')))
+  const n1 = lib.checkIdenticalSet({ root: nRoot, paths: ['editions/one/plugins/core.js'], label: 'solo' })
   await ok('少于 2 份 → failure', n1.failures.length === 1)
-  const nMiss = lib.checkIdenticalSet({
-    root: nRoot,
-    paths: ['dsh/preset/plugins/kix-guards.js', 'en/preset/plugins/kix-guards.js', 'plugins/missing.js'],
-    label: 'miss',
-  })
-  await ok('第 N 份缺失 → missing', nMiss.failures.some((f) => f.includes('plugins/missing.js missing')))
-  await ok('pluginIdentityPaths 含额外副本', lib.pluginIdentityPaths('kix-guards.js').includes('plugins/kix-guards.js'))
-  await ok('无额外声明的插件仍是 2 份', lib.pluginIdentityPaths('kix-x.js').length === 2)
+  const nMiss = lib.checkIdenticalSet({ root: nRoot, paths: threePaths.concat(['editions/four/plugins/core.js']), label: 'miss' })
+  await ok('第 N 份缺失 → missing', nMiss.failures.some((f) => f.includes('editions/four/plugins/core.js missing')))
+  await ok('pluginIdentityPaths 按自感知根展开', JSON.stringify(lib.pluginIdentityPaths('core.js', THREE)) === JSON.stringify(threePaths))
+  await ok('未传 roots → 空数组（不猜）', lib.pluginIdentityPaths('core.js').length === 0)
+  await ok('identityPathsFor 写哪份映射全组', JSON.stringify(lib.identityPathsFor('editions/two/plugins/core.js', THREE)) === JSON.stringify(threePaths))
+  await ok('identityPathsFor 边界外 → 空', lib.identityPathsFor('src/main.js', THREE).length === 0)
 
   section('pre-execute: remind 触发（写 preset 区域，en 未同步）')
   const repo2 = makeRepoRoot()
@@ -249,13 +284,13 @@ function makePostExec(callId) {
 
   // ── PR#10 审查修复回归（.cjs 路由 / 未覆盖分支 / 并发投递）──────────────
   section('__internals: .cjs 路由与未覆盖分支（PR#10）')
-  await ok('classifyWrite zh .cjs 共享库 → plugins', I.classifyWrite('dsh/preset/plugins/consistency-lib.cjs') === 'plugins')
-  await ok('classifyWrite en .cjs 共享库 → plugins', I.classifyWrite('en/preset/plugins/consistency-lib.cjs') === 'plugins')
+  await ok('classifyWrite zh .cjs 共享库 → plugins', I.classifyWrite('dsh/preset/plugins/consistency-lib.cjs', KIX, true) === 'plugins')
+  await ok('classifyWrite en .cjs 共享库 → plugins', I.classifyWrite('en/preset/plugins/consistency-lib.cjs', KIX, true) === 'plugins')
   await ok('pickChecks .cjs → pair + 语法 2 检查', I.pickChecks(repo, 'dsh/preset/plugins/consistency-lib.cjs').length === 2)
   await ok('pickChecks README.md → 1 检查', I.pickChecks(repo, 'README.md').length === 1)
   await ok('pickChecks package.json → 1 检查', I.pickChecks(repo, 'package.json').length === 1)
   await ok('pickChecks vision-bridge → 2 检查', I.pickChecks(repo, 'dsh/vision-bridge/index.js').length === 2)
-  await ok('classifyWrite 额外身份副本 → plugins', I.classifyWrite('plugins/kix-guards.test.js') === 'plugins')
+  await ok('VS Code 导入源 classify → null', I.classifyWrite('plugins/kix-guards.test.js', KIX, true) === null)
 
   section('pre/post: 并发多类别写（Map 挂起不互相覆盖）')
   const repo3 = makeRepoRoot()
@@ -332,6 +367,33 @@ function makePostExec(callId) {
     !!(sessPost && sessPost.additionalContexts && sessPost.additionalContexts.length === 1))
   await ok('会话 cwd 路径下的提醒带非空 id',
     typeof sessPost.additionalContexts[0].id === 'string' && sessPost.additionalContexts[0].id.length > 0)
+
+  section('pre-execute: 外仓实测（自感知双根，无契约脚本，VS Code 导入源在根）')
+  const repoF = mkdtemp('kix-cons-test-fwe2e-')
+  for (const r of ['pkgs/zh', 'pkgs/en']) {
+    fs.mkdirSync(path.join(repoF, r + '/plugins'), { recursive: true })
+    fs.writeFileSync(path.join(repoF, r, 'agent.cordis.yml'), 'x\n', 'utf8')
+    fs.writeFileSync(path.join(repoF, r, 'preset.yml'), 'id: x\n', 'utf8')
+  }
+  fs.writeFileSync(path.join(repoF, 'pkgs/zh/plugins/m.js'), 'M', 'utf8')
+  fs.mkdirSync(path.join(repoF, 'plugins'), { recursive: true })
+  fs.writeFileSync(path.join(repoF, 'plugins/kix-guards.js'), 'IMPORT-SOURCE', 'utf8')
+  workspaceRootMock = repoF
+  const fAgent = { id: 'cons-foreign' }
+  const fExec = { name: 'write', callId: 'fw-1', arguments: { file_path: 'pkgs/zh/plugins/m.js' }, agent: fAgent }
+  await preExecute[0](fExec, () => 'NEXT')
+  const fPost = await postExecute[0]({ name: 'write', callId: 'fw-1', agent: fAgent }, {}, () => 'NEXT')
+  await ok('外仓漂移写入 → 注入提醒（指向 pkgs/en 缺失份）',
+    !!(fPost && fPost.additionalContexts && fPost.additionalContexts.length === 1 &&
+      fPost.additionalContexts[0].content[0].text.includes('pkgs/en/plugins/m.js missing')))
+  const f2 = { name: 'write', callId: 'fw-2', arguments: { file_path: 'pkgs/zh/agent.cordis.yml' }, agent: fAgent }
+  await preExecute[0](f2, () => 'NEXT')
+  const f2Post = await postExecute[0]({ name: 'write', callId: 'fw-2', agent: fAgent }, {}, () => 'NEXT')
+  await ok('外仓 persona 写入 → 零开销放行（无契约不硬套预算）', f2Post === 'NEXT')
+  const f3 = { name: 'write', callId: 'fw-3', arguments: { file_path: 'plugins/kix-guards.js' }, agent: fAgent }
+  await preExecute[0](f3, () => 'NEXT')
+  const f3Post = await postExecute[0]({ name: 'write', callId: 'fw-3', agent: fAgent }, {}, () => 'NEXT')
+  await ok('VS Code 导入源写入 → 零开销放行（边界 = DSH preset 根）', f3Post === 'NEXT')
 
   // ── 收尾：清理夹具 ─────────────────────────────────────────────────────
   for (const dir of created) {
