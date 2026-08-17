@@ -305,6 +305,22 @@ async function softCase(label, name, args) {
   assert.ok(!I.targetsControlPlane('C:/Users/other/.dsh/settings.yaml'), '其他用户 home 不拦')
   passed += 7
 
+  // v11：源仓库事实源豁免（bare agent.cordis.yml 不再误伤维护者）
+  assert.ok(!I.targetsControlPlane('dsh/preset/agent.cordis.yml'), '相对 zh 源路径不拦')
+  assert.ok(!I.targetsControlPlane('en/preset/agent.cordis.yml'), '相对 en 源路径不拦')
+  assert.ok(!I.targetsControlPlane('C:/work/kixparadigm/dsh/preset/agent.cordis.yml'), '绝对 zh 源路径不拦')
+  assert.ok(!I.targetsControlPlane('C:\\work\\kixparadigm\\en\\preset\\agent.cordis.yml'), 'Windows 反斜杠 en 源路径不拦')
+  assert.ok(!I.targetsControlPlane('./dsh/preset/agent.cordis.yml'), './ 前缀源路径不拦')
+  assert.ok(I.targetsControlPlane('C:/Users/x/.dsh/.agent-presets/kixparadigm/agent.cordis.yml'), '安装副本仍拦')
+  assert.ok(I.targetsControlPlane('agent.cordis.yml'), '裸文件名仍拦（无法证明是源仓库）')
+  assert.ok(I.targetsControlPlane('dsh/preset/../../.dsh/.agent-presets/kixparadigm/agent.cordis.yml'), '源路径+.. 不能绕过安装面')
+  passed += 8
+  check('write: 源仓库 zh agent.cordis.yml → allow（v11 事实源豁免）', await dispatch('write', { file_path: 'dsh/preset/agent.cordis.yml' }), false)
+  check('edit: 源仓库 en agent.cordis.yml → allow（v11 事实源豁免）', await dispatch('edit', { file_path: 'C:/work/kixparadigm/en/preset/agent.cordis.yml' }), false)
+  check('write: 安装副本 agent.cordis.yml → deny（v11 豁免不放松安装面）', await dispatch('write', { file_path: 'C:\\Users\\x\\.dsh\\.agent-presets\\kixparadigm\\agent.cordis.yml' }), true)
+  check('pwsh: rm 源仓库 agent.cordis.yml → allow（终端写意图也豁免源路径）', await dispatch('pwsh', { command: 'rm dsh/preset/agent.cordis.yml' }), false)
+  check('pwsh: rm 安装副本 agent.cordis.yml → deny', await dispatch('pwsh', { command: `rm ${HOME}/.dsh/.agent-presets/kixparadigm/agent.cordis.yml` }), true)
+
   // ══ 8. v6：gh CLI 写保护 + 重复尝试记忆 ═════════════════════════════════
   // 8a. gh CLI 纯判定（__internals）
   assert.ok(I.isGhMutation('gh pr create --title x'), 'gh pr create → mutation')
