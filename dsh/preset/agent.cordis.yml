@@ -632,7 +632,7 @@
 # memories 计数 / README 表述 / 版本对 / vision-bridge / 单文件语法）由仓库
 # 自带 scripts 入口自声明触发，外仓不硬套。强度默认 remind（只做启发引导）；
 # ask/block 需显式配置。remindOnce：每会话每类别一次。
-# 单元测试：node plugins/kix-consistency.test.js（114 断言）。
+# 单元测试：node plugins/kix-consistency.test.js（118 断言）。
 - id: kix-consistency
   name: ./plugins/kix-consistency.js
 

@@ -50,6 +50,7 @@
 const { readFileSync, writeFileSync, mkdirSync, existsSync } = require('node:fs')
 const { join } = require('node:path')
 const { randomUUID } = require('node:crypto')
+const lib = require('./consistency-lib.cjs')
 
 // ── 常量 ───────────────────────────────────────────────────────────────────
 const SPEC_FILENAME = 'spec.md'
@@ -442,14 +443,12 @@ module.exports = {
         return next()
       }
 
-      // 待注入的 red remind
+      // 待注入的 red remind（合并注入：await next() 后并 contexts——裸返回
+      // 会短路瀑布饿死后挂载的监听器，WSL2 实弹实锤首写提醒因此丢失）
       if (st.pendingRemind) {
         st.pendingRemind = false
         const reason = 'kix-discipline: 本次编辑前未记录需求三检契约。若任务模糊或影响面大，请先调用 kix_discipline_spec 记录 goal/xy/assumptions/path/acceptance；字面明确低风险可逆的任务可忽略本提醒直接继续（kix 需求三检只按信号触发，不强制）。'
-        return {
-          kind: 'accept',
-          additionalContexts: [makeUserMessage(reason)],
-        }
+        return lib.appendContexts(await next(), [makeUserMessage(reason)])
       }
       return next()
     })

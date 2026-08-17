@@ -565,6 +565,50 @@ function makePostExec(callId) {
   await ok('discoverRootsFromFile：相对路径 → null（不猜）', I.discoverRootsFromFile('dsh/preset/x.js') === null)
   await ok('discoverRootsFromFile：普通目录 → null', I.discoverRootsFromFile(path.join(plainFallback, 'a.txt')) === null)
 
+  // ── 堆叠监听器回归（WSL2 实弹实锤：post-execute 裸返回短路瀑布）─────────
+  section('堆叠注入：kix-discipline + kix-consistency 同挂，首写双投递')
+  {
+    const discipline = require(path.join(__dirname, 'kix-discipline.js'))
+    const stackL = {}
+    const stackCtx = {
+      config: {},
+      logger: { info() {}, warn() {}, error() {} },
+      get(name) {
+        if (name === 'sandboxPolicy') {
+          return { workspaceRoot: workspaceRootMock, resolve: () => ({ workspaceRoot: workspaceRootMock }) }
+        }
+        return undefined
+      },
+      on(e, c) { (stackL[e] ||= []).push(c) },
+      effect() {},
+      tools: { register() { return () => {} } },
+      commands: { register() { return () => {} } },
+    }
+    discipline.apply(stackCtx, {})   // yml 挂载顺序：discipline 在前
+    plugin.apply(stackCtx, {})       // consistency 在后（被短路饿死的一方）
+    const repoStack = makeRepoRoot()
+    workspaceRootMock = repoStack
+    const sAgent = { id: 'cons-stack' }
+    const sExec = { name: 'write', callId: 'stack-1', arguments: { file_path: 'dsh/preset/skills/stacked.md' }, agent: sAgent }
+    await stackL['tools/pre-execute'][0](sExec, () => 'NEXT')
+    await stackL['tools/pre-execute'][1](sExec, () => 'NEXT')
+    // 真瀑布语义：next() 链到下一监听器，终结返回 {kind:'accept'}
+    const postChain = (i) => i >= stackL['tools/post-execute'].length
+      ? Promise.resolve({ kind: 'accept' })
+      : stackL['tools/post-execute'][i](sExec, {}, () => postChain(i + 1))
+    const sPost = await postChain(0)
+    const texts = sPost && Array.isArray(sPost.additionalContexts) ? sPost.additionalContexts.map((m) => m.content[0].text) : []
+    await ok('首写双投递：discipline 与 consistency 都送达（不再短路）',
+      texts.length === 2 && texts.some((t) => t.includes('kix-discipline')) && texts.some((t) => t.includes('由你判断')))
+    await ok('合并 decision 保留 accept kind 与消息 id',
+      sPost.kind === 'accept' && texts.length === 2 && sPost.additionalContexts.every((m) => typeof m.id === 'string' && m.id.length > 0))
+    await ok('appendContexts 纯函数：非 accept 下游原样放行',
+      JSON.stringify(lib.appendContexts({ kind: 'block', reason: 'x' }, [{ id: 'a' }])) === JSON.stringify({ kind: 'block', reason: 'x' }))
+    await ok('appendContexts 纯函数：accept 下游合并',
+      Array.isArray(lib.appendContexts({ kind: 'accept', additionalContexts: [{ id: 'a' }] }, [{ id: 'b' }]).additionalContexts) &&
+      lib.appendContexts({ kind: 'accept', additionalContexts: [{ id: 'a' }] }, [{ id: 'b' }]).additionalContexts.length === 2)
+  }
+
   // ── 收尾：清理夹具 ─────────────────────────────────────────────────────
   for (const dir of created) {
     try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* 忽略清理失败 */ }

@@ -116,6 +116,20 @@ function isMultiPresetWorkspace(root) {
   return discoverPresetRoots(root).length >= 2
 }
 
+// post-execute 注入合并：注入方先 `await next()` 拿下游 decision，再把自己的
+// contexts 并进去。裸返回 accept-decision 会短路瀑布、饿死后面挂载的监听器
+// （WSL2 实弹实锤：kix-discipline 注入后，后挂载的 kix-consistency 的 post
+// 永远收不到同一调用——首写提醒丢失）。非 accept 的下游 decision（block 等
+// 更强决定）原样放行不覆盖；下游无可合并对象时新建 accept。
+function appendContexts(decision, msgs) {
+  const list = Array.isArray(msgs) ? msgs.filter(Boolean) : []
+  if (list.length === 0) return decision
+  if (decision && typeof decision === 'object' && decision.kind && decision.kind !== 'accept') return decision
+  const base = decision && typeof decision === 'object' ? decision : {}
+  const prev = Array.isArray(base.additionalContexts) ? base.additionalContexts : []
+  return { ...base, kind: base.kind || 'accept', additionalContexts: [...prev, ...list] }
+}
+
 // 会话工作区根解析（kix-consistency / kix-guards 共用，防双源）：
 // 会话 header.cwd（DSH 官方口径：不可变 cwd 才是 workspace-write 边界）→
 // sandboxPolicy.resolve({session})（逐调用根）→ sandboxPolicy.workspaceRoot
@@ -404,6 +418,7 @@ module.exports = {
   PRESET_MARKERS,
   discoverPresetRoots,
   isMultiPresetWorkspace,
+  appendContexts,
   resolveWorkspaceRoot,
   presetRootOf,
   identityPathsFor,

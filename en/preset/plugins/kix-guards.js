@@ -104,6 +104,7 @@ const { join } = require('node:path')
 const { randomUUID } = require('node:crypto')
 const { execFile } = require('node:child_process')
 const { promisify } = require('node:util')
+const lib = require('./consistency-lib.cjs')
 
 const execFileP = promisify(execFile)
 
@@ -939,7 +940,7 @@ module.exports = {
       pendingControlPlane.delete(exec.callId)
       if (controlPlaneReminded) return next()
       controlPlaneReminded = true
-      return { kind: 'accept', additionalContexts: [makeUserMessage(pending)] }
+      return lib.appendContexts(await next(), [makeUserMessage(pending)])
     })
 
     // 记录挂载

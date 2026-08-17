@@ -378,11 +378,11 @@ module.exports = {
         if (failures.length) {
           if (st.reminded.has('plugins')) return next()
           st.reminded.add('plugins')
-          return { kind: 'accept', additionalContexts: [makeUserMessage('kix-consistency: shell 写入后检测到身份组漂移 — ' + failures.join(' ') + '。该相同的数份必须相同；同步或回滚由你判断。')] }
+          return lib.appendContexts(await next(), [makeUserMessage('kix-consistency: shell 写入后检测到身份组漂移 — ' + failures.join(' ') + '。该相同的数份必须相同；同步或回滚由你判断。')])
         }
         if (hasOther && !st.reminded.has('parity')) {
           st.reminded.add('parity')
-          return { kind: 'accept', additionalContexts: [makeUserMessage(buildParityHint(firstOther.root + '/' + firstOther.rel, firstOther.root, st.presetRoots))] }
+          return lib.appendContexts(await next(), [makeUserMessage(buildParityHint(firstOther.root + '/' + firstOther.rel, firstOther.root, st.presetRoots))])
         }
         return next()
       }
@@ -394,7 +394,7 @@ module.exports = {
       // 并发同类别双写：首条投递已消耗该类别，后续挂起条目静默丢弃（remindOnce）
       if (st.reminded.has(pending.category)) return next()
       st.reminded.add(pending.category)
-      return { kind: 'accept', additionalContexts: [makeUserMessage(pending.reason)] }
+      return lib.appendContexts(await next(), [makeUserMessage(pending.reason)])
     })
 
     ctx.logger?.info?.('[kix-consistency] 一致性写时拦截已挂载（边界自感知：≥2 preset 根才引导，身份组 = 各根同名 plugins；契约层由 scripts 入口自声明；与 CI 共用 consistency-lib 单一事实源）')
