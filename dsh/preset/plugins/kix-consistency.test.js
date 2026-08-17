@@ -144,6 +144,7 @@ function makePostExec(callId) {
   await ok('README.en.md → readme', I.classifyWrite('README.en.md') === 'readme')
   await ok('package.json → package', I.classifyWrite('package.json') === 'package')
   await ok('vision-bridge → vision', I.classifyWrite('dsh/vision-bridge/index.js') === 'vision')
+  await ok('额外身份副本（VS Code 根）→ plugins', I.classifyWrite('plugins/kix-guards.js') === 'plugins')
   await ok('普通源码 → null', I.classifyWrite('src/main.js') === null)
   await ok('windows 反斜杠路径 → plugins', I.classifyWrite('dsh\\preset\\plugins\\kix-x.js') === 'plugins')
   await ok('空 → null', I.classifyWrite('') === null)
@@ -151,6 +152,8 @@ function makePostExec(callId) {
   section('__internals: pickChecks')
   const srcChecks = I.pickChecks(repo, 'dsh/preset/plugins/kix-x.js')
   await ok('写插件源码 → pair + 语法 2 检查', srcChecks.length === 2)
+  const extraChecks = I.pickChecks(repo, 'plugins/kix-guards.js')
+  await ok('写额外身份副本 → pair + 语法 2 检查', extraChecks.length === 2)
   const testChecks = I.pickChecks(repo, 'dsh/preset/plugins/kix-x.test.js')
   await ok('写插件测试 → 仅 pair 1 检查', testChecks.length === 1)
   const personaChecks = I.pickChecks(repo, 'dsh/preset/agent.cordis.yml')
@@ -179,6 +182,34 @@ function makePostExec(callId) {
   fs.writeFileSync(path.join(pairRoot, 'dsh/preset/plugins/a.test.js'), 'T', 'utf8')
   const pair3 = lib.checkPluginPair({ root: pairRoot, name: 'a.js' })
   await ok('test 单侧存在 → failure（en 缺 test）', pair3.failures.length === 1)
+
+  section('lib: checkIdenticalSet（该相同的数份必须相同）')
+  const nRoot = mkdtemp('kix-cons-test-nset-')
+  fs.mkdirSync(path.join(nRoot, 'dsh/preset/plugins'), { recursive: true })
+  fs.mkdirSync(path.join(nRoot, 'en/preset/plugins'), { recursive: true })
+  fs.mkdirSync(path.join(nRoot, 'plugins'), { recursive: true })
+  fs.writeFileSync(path.join(nRoot, 'dsh/preset/plugins/kix-guards.js'), 'G', 'utf8')
+  fs.writeFileSync(path.join(nRoot, 'en/preset/plugins/kix-guards.js'), 'G', 'utf8')
+  fs.writeFileSync(path.join(nRoot, 'plugins/kix-guards.js'), 'G', 'utf8')
+  const n3 = lib.checkIdenticalSet({
+    root: nRoot,
+    paths: ['dsh/preset/plugins/kix-guards.js', 'en/preset/plugins/kix-guards.js', 'plugins/kix-guards.js'],
+    label: 'plugins/kix-guards.js',
+  })
+  await ok('3 份相同 → 无 failure', n3.failures.length === 0 && n3.notes.some((n) => n.includes('3 copies')))
+  fs.writeFileSync(path.join(nRoot, 'plugins/kix-guards.js'), 'DRIFT', 'utf8')
+  const n3d = lib.checkPluginPair({ root: nRoot, name: 'kix-guards.js' })
+  await ok('第 3 份漂移 → failure（不只查 zh/en）', n3d.failures.some((f) => f.includes('3 copies') && f.includes('plugins/kix-guards.js')))
+  const n1 = lib.checkIdenticalSet({ root: nRoot, paths: ['dsh/preset/plugins/kix-guards.js'], label: 'solo' })
+  await ok('少于 2 份 → failure', n1.failures.length === 1)
+  const nMiss = lib.checkIdenticalSet({
+    root: nRoot,
+    paths: ['dsh/preset/plugins/kix-guards.js', 'en/preset/plugins/kix-guards.js', 'plugins/missing.js'],
+    label: 'miss',
+  })
+  await ok('第 N 份缺失 → missing', nMiss.failures.some((f) => f.includes('plugins/missing.js missing')))
+  await ok('pluginIdentityPaths 含额外副本', lib.pluginIdentityPaths('kix-guards.js').includes('plugins/kix-guards.js'))
+  await ok('无额外声明的插件仍是 2 份', lib.pluginIdentityPaths('kix-x.js').length === 2)
 
   section('pre-execute: remind 触发（写 preset 区域，en 未同步）')
   const repo2 = makeRepoRoot()
@@ -224,6 +255,7 @@ function makePostExec(callId) {
   await ok('pickChecks README.md → 1 检查', I.pickChecks(repo, 'README.md').length === 1)
   await ok('pickChecks package.json → 1 检查', I.pickChecks(repo, 'package.json').length === 1)
   await ok('pickChecks vision-bridge → 2 检查', I.pickChecks(repo, 'dsh/vision-bridge/index.js').length === 2)
+  await ok('classifyWrite 额外身份副本 → plugins', I.classifyWrite('plugins/kix-guards.test.js') === 'plugins')
 
   section('pre/post: 并发多类别写（Map 挂起不互相覆盖）')
   const repo3 = makeRepoRoot()

@@ -75,34 +75,65 @@ function checkPersonaBudget({ root, rel, maxChars, maxEstTokens }) {
   return { failures, notes }
 }
 
-// 两文件字节一致（a/b 缺失分别报错，缺失与差异都是 failure）
-function checkFilesEqual({ root, a, b, label }) {
+// 该相同的数份必须相同（kix 哲学：不是写死的 zh/en 一对）。
+// paths ≥ 2；任一缺失 / 任一份与锚点（第一份）字节不同 → failure。
+function checkIdenticalSet({ root, paths, label }) {
   const failures = []
   const notes = []
-  const pa = path.join(root, a)
-  const pb = path.join(root, b)
-  if (!fs.existsSync(pa)) return { failures: [`${a} missing`], notes }
-  if (!fs.existsSync(pb)) return { failures: [`${b} missing`], notes }
-  if (fs.readFileSync(pa).equals(fs.readFileSync(pb))) notes.push(`${label}: byte-identical`)
-  else failures.push(`${label}: ${a} differs from ${b}`)
+  const list = Array.isArray(paths) ? paths.filter(Boolean) : []
+  if (list.length < 2) return { failures: [`${label}: identity set needs ≥2 paths`], notes }
+  const missing = list.filter((p) => !fs.existsSync(path.join(root, p)))
+  if (missing.length) return { failures: missing.map((p) => `${p} missing`), notes }
+  const bufs = list.map((p) => fs.readFileSync(path.join(root, p)))
+  const differ = []
+  for (let i = 1; i < bufs.length; i++) {
+    if (!bufs[0].equals(bufs[i])) differ.push(list[i])
+  }
+  if (differ.length) {
+    failures.push(`${label}: ${list.length} copies not identical (${list[0]} differs from ${differ.join(', ')})`)
+  } else {
+    notes.push(`${label}: ${list.length} copies byte-identical`)
+  }
   return { failures, notes }
 }
 
-// 插件对：dsh/preset/plugins/{name} vs en/preset/plugins/{name} 字节一致；
-// test 文件存在（任一侧）则同样校验；双侧均无 test → note 跳过（如 opt-in kix-stalled）。
+// 两文件是 N=2 的特例；保留给既有调用方。
+function checkFilesEqual({ root, a, b, label }) {
+  return checkIdenticalSet({ root, paths: [a, b], label })
+}
+
+// 声明：这些路径是同一份的额外副本（加语言 / 参考副本 = 加一行，不加 if）。
+// key = dsh 侧锚点；value = 除 dsh/en 之外仍必须相同的路径。
+const EXTRA_IDENTICAL_COPIES = {
+  'dsh/preset/plugins/kix-guards.js': ['plugins/kix-guards.js'],
+  'dsh/preset/plugins/kix-guards.test.js': ['plugins/kix-guards.test.js'],
+}
+
+function pluginIdentityPaths(name) {
+  const dsh = `dsh/preset/plugins/${name}`
+  const en = `en/preset/plugins/${name}`
+  return [dsh, en, ...(EXTRA_IDENTICAL_COPIES[dsh] || [])]
+}
+
+function extraIdentityMembers() {
+  return Object.values(EXTRA_IDENTICAL_COPIES).flat()
+}
+
+// 插件身份组：dsh + en + 声明的额外副本；
+// test 文件存在（任一侧 / 额外副本）则同样校验；全无 test → note 跳过（如 opt-in kix-stalled）。
 function checkPluginPair({ root, name }) {
-  const out = checkFilesEqual({
-    root, a: `dsh/preset/plugins/${name}`, b: `en/preset/plugins/${name}`, label: `plugins/${name}`,
+  const out = checkIdenticalSet({
+    root, paths: pluginIdentityPaths(name), label: `plugins/${name}`,
   })
   const testName = name.replace(/\.(?:js|cjs)$/, '.test.js')
-  const hasTest = fs.existsSync(path.join(root, 'dsh/preset/plugins', testName)) ||
-    fs.existsSync(path.join(root, 'en/preset/plugins', testName))
+  const testPaths = pluginIdentityPaths(testName)
+  const hasTest = testPaths.some((p) => fs.existsSync(path.join(root, p)))
   if (!hasTest) {
-    out.notes.push(`plugins/${testName}: absent on both sides (opt-in), skipped`)
+    out.notes.push(`plugins/${testName}: absent on all copies (opt-in), skipped`)
     return out
   }
-  const t = checkFilesEqual({
-    root, a: `dsh/preset/plugins/${testName}`, b: `en/preset/plugins/${testName}`, label: `plugins/${testName}`,
+  const t = checkIdenticalSet({
+    root, paths: testPaths, label: `plugins/${testName}`,
   })
   out.failures.push(...t.failures)
   out.notes.push(...t.notes)
@@ -266,10 +297,8 @@ function runAllZh(root) {
     checkReadmePhrase({ root, rel: 'README.en.md', phrase: '+ 4 memories' }),
     ...pluginNames(root).map((name) => checkPluginPair({ root, name })),
     checkVersionPair({ root }),
-    checkFilesEqual({ root, a: 'dsh/vision-bridge/index.js', b: 'en/bridge/index.js', label: 'vision-bridge/index.js' }),
-    checkFilesEqual({ root, a: 'dsh/vision-bridge/test.js', b: 'en/bridge/test.js', label: 'vision-bridge/test.js' }),
-    checkFilesEqual({ root, a: 'dsh/preset/plugins/kix-guards.js', b: 'plugins/kix-guards.js', label: 'root plugins/kix-guards.js (VS Code reference copy)' }),
-    checkFilesEqual({ root, a: 'dsh/preset/plugins/kix-guards.test.js', b: 'plugins/kix-guards.test.js', label: 'root plugins/kix-guards.test.js' }),
+    checkIdenticalSet({ root, paths: ['dsh/vision-bridge/index.js', 'en/bridge/index.js'], label: 'vision-bridge/index.js' }),
+    checkIdenticalSet({ root, paths: ['dsh/vision-bridge/test.js', 'en/bridge/test.js'], label: 'vision-bridge/test.js' }),
     checkMarkdownLinks({ root, rel: 'dsh/preset' }),
     checkMarkdownLinks({ root, rel: 'en/preset' }),
     checkSyntax({ root, rel: 'dsh/preset', label: 'dsh/preset' }),
@@ -296,6 +325,10 @@ module.exports = {
   estimateTokens,
   extractPersona,
   checkPersonaBudget,
+  checkIdenticalSet,
+  EXTRA_IDENTICAL_COPIES,
+  pluginIdentityPaths,
+  extraIdentityMembers,
   checkFilesEqual,
   checkPluginPair,
   checkMemoriesCount,
