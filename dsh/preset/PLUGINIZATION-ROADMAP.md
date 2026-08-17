@@ -277,7 +277,7 @@ job_*/subagent-control）自动可见、裁不掉；scope 工具也无法经 cap
 - 触发面：仅「源仓库指纹」工作区（dsh/preset + en/preset + scripts 入口齐全）；其余工作区零开销放行
 - 强度：默认 remind（文档可回滚不 deny）；ask/block 可配；remindOnce 每会话每类别一次
 - 插件名清单动态化：`pluginNames()` 读目录，新增插件自动纳入 CI 检查（不再维护硬编码清单）
-- **v1.2.15 泛化（自感知边界）**：触发面从「kixparadigm 指纹」改为自感知——preset 根 = `agent.cordis.yml` + `preset.yml` 双标记目录（深度 ≤2 扫描），任意仓库 ≥2 根才引导，单 preset / 普通项目零开销；身份组 = 各根同名 plugins（N ≥ 2 一次比完）；其余根内路径（skills/agents 等翻译关系）发 **parity hint**——不断言失败，「其它根对应份是否同步」交给模型判断（没说到的形态靠提醒感知，每会话一次）；VS Code 导入源（根 `plugins/`）不是 preset 根，天然出组；kix 全量契约（预算/计数/表述/版本对）由 `scripts/check-dsh-consistency.cjs` 入口自声明，外仓只引导身份组——规则是负债，只做启发引导
+- **v1.2.15 泛化（自感知边界）**：触发面从「kixparadigm 指纹」改为自感知——preset 根 = `agent.cordis.yml` + `preset.yml` 双标记目录（深度 ≤2 扫描），任意仓库 ≥2 根才引导，单 preset / 普通项目零开销；身份组 = 各根同名 plugins（N ≥ 2 一次比完）；**shell 写入通道**（pwsh/bash 命令提及根内路径）pre 登记、post 复验身份组；其余根内路径（skills/agents 等翻译关系）发 **parity hint**——不断言失败，「其它根对应份是否同步」交给模型判断（没说到的形态靠提醒感知，每会话一次）；VS Code 导入源（根 `plugins/`）不是 preset 根，天然出组；kix 全量契约（预算/计数/表述/版本对）由 `scripts/check-dsh-consistency.cjs` 入口自声明，外仓只引导身份组——规则是负债，只做启发引导
 
 **P5b — kix-orchestration v11（plan.md 契约写前校验）**：
 - 落地边界注释「task_dag / verifiable_gates 结构校验做轻量版（存在性）」：只校验 kix-guards 预算链**真正消费**的字段（`task_sizing.derived_commit_budget` / `blast_radius.max_commits`，缺则预算静默落冷启动 3——sprint-9 事故形态）+ 任务清单存在性

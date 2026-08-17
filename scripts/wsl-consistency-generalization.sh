@@ -97,6 +97,14 @@ async function run(name, wsRoot, files) {
   }
   return out
 }
+async function runShell(name, wsRoot, cmd, tool) {
+  const h = makeHarness(wsRoot)
+  const agent = { id: 'drvsh-' + name }
+  const callId = 'sh-' + name
+  await h.pre({ name: tool || 'pwsh', callId, arguments: { command: cmd }, agent }, () => 'NEXT')
+  const post = await h.post({ name: tool || 'pwsh', callId, agent }, {}, () => 'NEXT')
+  return post && post.additionalContexts ? post.additionalContexts.map((m) => m.content[0].text).join(' | ') : null
+}
 (async () => {
   const r1 = await run('multi', '/root/kix-foreign-multi', ['pkgs/zh/plugins/m.js', 'pkgs/zh/agent.cordis.yml', 'pkgs/zh/skills/new.md'])
   await check('S1 外仓双根（pkgs/zh+pkgs/en）漂移写入 → remind 指向 pkgs/en 缺失份', r1[0] !== null && r1[0].includes('pkgs/en/plugins/m.js missing'))
@@ -112,6 +120,14 @@ async function run(name, wsRoot, files) {
   const r6 = await run('marker', '/root/kix-foreign-marker', ['alpha/plugins/x.js'])
   await check('S7 单标记（无 preset.yml）→ 不算 preset 根，零开销', r6[0] === null)
   const fs = require('node:fs')
+  const s8 = await runShell('drift', '/root/kix-foreign-multi', 'cp /tmp/new.js pkgs/zh/plugins/shell.js')
+  await check('S8 shell 写漂移插件（pwsh）→ post 复验注入 drift 提醒', s8 !== null && s8.includes('shell 写入后检测到身份组漂移'))
+  const s9 = await runShell('skill', '/root/kix-foreign-multi', 'Set-Content pkgs/zh/skills/shell-skill.md hi')
+  await check('S9 shell 写根内非 plugins（pwsh）→ parity hint', s9 !== null && s9.includes('由你判断'))
+  const s10 = await runShell('unrel', '/root/kix-foreign-multi', 'npm install && npm test')
+  await check('S10 shell 未提及 preset 根路径 → 零开销', s10 === null)
+  const s11 = await runShell('bashdrift', '/root/kix-foreign-multi', 'sed -i s/a/b/ pkgs/zh/plugins/m.js', 'bash')
+  await check('S11 bash 通道同样覆盖（漂移提醒）', s11 !== null && s11.includes('身份组漂移'))
   if (fs.existsSync('/root/kix-p5-e2e/scripts/check-dsh-consistency.cjs')) {
     const r7 = await run('kixreg', '/root/kix-p5-e2e', ['dsh/preset/plugins/regress.js', 'README.md'])
     await check('S6 kix 仓回归 → remind en 缺失份', r7[0] !== null && r7[0].includes('en/preset/plugins/regress.js missing'))
@@ -144,6 +160,7 @@ echo '== 4) report =='
   echo '- S3 VS Code 导入源根 plugins/ 写入 → 零开销（边界 = DSH preset 根）'
   echo '- S4 单 preset 根 → 零开销；S5 普通仓库 → 零开销'
   echo '- S7 单标记目录（仅 agent.cordis.yml）→ 不算 preset 根'
+  echo '- S8/S9/S10/S11 shell 通道（pwsh 漂移/hint、无关零开销、bash 覆盖）'
   echo '- S6 kix 仓回归（kix-p5-e2e, 契约自声明）→ remind + README 契约层'
   echo
   echo '```'

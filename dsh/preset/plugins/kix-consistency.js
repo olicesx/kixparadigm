@@ -32,6 +32,10 @@ const { randomUUID } = require('node:crypto')
 const lib = require('./consistency-lib.cjs')
 
 const MUTATION_TOOLS = new Set(['edit', 'write'])
+// shell 写入（cp/Set-Content/重定向/sed -i…）不走 file_path，写前拿不到目标——
+// pre 只登记命令中提到的 preset 根内路径，post（磁盘已是新状态）才做身份组检查。
+const SHELL_TOOLS = new Set(['pwsh', 'bash'])
+const SHELL_TARGETS_CAP = 8
 
 const PERSONA_BUDGET = {
   zh: { maxChars: 4500, maxEstTokens: 2600 },
@@ -143,6 +147,37 @@ function makeUserMessage(text) {
   }
 }
 
+// parity hint 文案（write/edit 与 shell 共用）：点名其余根 + 交给模型判断
+function buildParityHint(relPath, home, presetRoots) {
+  const suffix = relPath.slice(home.length + 1)
+  const others = presetRoots.filter((r) => r !== home)
+  return 'kix-consistency hint: 写入 ' + relPath + '（preset 根 ' + home + '）。' +
+    '该类文件无机械一致性检查（字节校验只覆盖各根 plugins）；' +
+    '其余根（' + others.join(', ') + '）的对应份「' + suffix + '」是否需要同步/翻译由你判断。'
+}
+
+// 从 shell 命令文本提取 preset 根内路径（启发：正斜杠/反斜杠均认，截到引号/空白）。
+// 误提取的代价 = 一次 post 检查（文件不存在 → checkPluginPair 报 missing，仍是有效提醒）。
+function extractShellTargets(cmd, presetRoots) {
+  const out = []
+  const seen = new Set()
+  for (const root of presetRoots) {
+    const esc = root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\//g, '[/\\\\]')
+    const re = new RegExp(esc + '[/\\\\]([A-Za-z0-9_.\-/\\\\]+)', 'g')
+    let m
+    while ((m = re.exec(String(cmd || '')))) {
+      const rel = m[1].replace(/\\/g, '/').replace(/[^A-Za-z0-9_.\-/]+.*$/, '')
+      if (!rel || rel.length === 0) continue
+      const key = root + '/' + rel
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({ root, rel })
+      if (out.length >= SHELL_TARGETS_CAP) return out
+    }
+  }
+  return out
+}
+
 module.exports = {
   name: 'kix-consistency',
   inject: ['tools'],
@@ -200,6 +235,7 @@ module.exports = {
           contract: root ? hasContractEntry(root) : false,
           reminded: new Set(),
           pendingRemind: new Map(),
+          pendingShell: new Map(),
         }
         states.set(key, st)
       } else {
@@ -241,6 +277,20 @@ module.exports = {
     ctx.on('tools/pre-execute', async (exec, next) => {
       const name = exec && exec.name
       const tool = (name || '').toLowerCase()
+
+      // shell 写入：pre 只登记命令中提到的 preset 根内路径（写前磁盘未变，检查无意义）
+      if (SHELL_TOOLS.has(tool)) {
+        const st = stateFor(exec && exec.agent)
+        if (!st.enabled || !st.workspaceRoot || !Array.isArray(st.presetRoots) || st.presetRoots.length < 2) return next()
+        const args = exec && (exec.arguments ?? exec.args)
+        const cmd = args && (args.command || args.script || args.cmd)
+        if (typeof cmd !== 'string' || cmd.length === 0) return next()
+        const targets = extractShellTargets(cmd, st.presetRoots)
+        if (targets.length === 0) return next()
+        st.pendingShell.set(exec.callId, targets)
+        return next()
+      }
+
       if (!MUTATION_TOOLS.has(tool)) return next()
 
       const args = exec && (exec.arguments ?? exec.args)
@@ -261,12 +311,7 @@ module.exports = {
       if (category === 'parity') {
         if (st.reminded.has('parity')) return next()
         const home = lib.presetRootOf(relPath, st.presetRoots) || ''
-        const suffix = relPath.slice(home.length + 1)
-        const others = st.presetRoots.filter((r) => r !== home)
-        const reason = 'kix-consistency hint: 写入 ' + relPath + '（preset 根 ' + home + '）。' +
-          '该类文件无机械一致性检查（字节校验只覆盖各根 plugins）；' +
-          '其余根（' + others.join(', ') + '）的对应份「' + suffix + '」是否需要同步/翻译由你判断。'
-        st.pendingRemind.set(exec.callId, { category: 'parity', reason })
+        st.pendingRemind.set(exec.callId, { category: 'parity', reason: buildParityHint(relPath, home, st.presetRoots) })
         return next()
       }
 
@@ -302,7 +347,37 @@ module.exports = {
     // ── post-execute：注入 remind（按 callId 匹配消费，防错位注入）────────
     ctx.on('tools/post-execute', async (exec, result, next) => {
       const st = stateFor(exec && exec.agent)
-      if (!st.enabled || st.pendingRemind.size === 0) return next()
+      if (!st.enabled) return next()
+
+      // shell 写入后验：磁盘已是新状态，身份组检查此刻才有效；漂移优先于 hint
+      const shellTargets = st.pendingShell.get(exec && exec.callId)
+      if (shellTargets) {
+        st.pendingShell.delete(exec.callId)
+        const pluginNames = new Set()
+        let hasOther = false
+        let firstOther = null
+        for (const t of shellTargets) {
+          if (/^plugins\/[^/]+\.(?:js|cjs)$/.test(t.rel)) pluginNames.add(t.rel.replace(/^plugins\//, ''))
+          else if (!firstOther) { firstOther = t; hasOther = true }
+        }
+        const failures = []
+        for (const n of pluginNames) {
+          const r = lib.checkPluginPair({ root: st.workspaceRoot, name: n, presetRoots: st.presetRoots })
+          if (r && r.failures) failures.push(...r.failures)
+        }
+        if (failures.length) {
+          if (st.reminded.has('plugins')) return next()
+          st.reminded.add('plugins')
+          return { kind: 'accept', additionalContexts: [makeUserMessage('kix-consistency: shell 写入后检测到身份组漂移 — ' + failures.join(' ') + '。该相同的数份必须相同；同步或回滚由你判断。')] }
+        }
+        if (hasOther && !st.reminded.has('parity')) {
+          st.reminded.add('parity')
+          return { kind: 'accept', additionalContexts: [makeUserMessage(buildParityHint(firstOther.root + '/' + firstOther.rel, firstOther.root, st.presetRoots))] }
+        }
+        return next()
+      }
+
+      if (st.pendingRemind.size === 0) return next()
       const pending = st.pendingRemind.get(exec && exec.callId)
       if (!pending) return next()
       st.pendingRemind.delete(exec.callId)
@@ -321,6 +396,9 @@ module.exports.__internals = {
   toRepoRel,
   classifyWrite,
   pickChecks,
+  buildParityHint,
+  extractShellTargets,
   MUTATION_TOOLS,
+  SHELL_TOOLS,
   makeUserMessage,
 }

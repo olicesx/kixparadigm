@@ -404,6 +404,132 @@ function makePostExec(callId) {
   const f3Post = await postExecute[0]({ name: 'write', callId: 'fw-3', agent: fAgent }, {}, () => 'NEXT')
   await ok('VS Code 导入源写入 → 零开销放行（边界 = DSH preset 根）', f3Post === 'NEXT')
 
+  // ── 任务形态覆盖：edit 工具（非 write 的变更通道）───────────────────────
+  section('任务形态：edit 工具')
+  const repoE = makeRepoRoot()
+  workspaceRootMock = repoE
+  const eEd = { name: 'edit', callId: 'ed-1', arguments: { file_path: 'dsh/preset/plugins/ed.js' }, agent: { id: 'cons-ed' } }
+  await preExecute[0](eEd, () => 'NEXT')
+  const edPost = await postExecute[0]({ name: 'edit', callId: 'ed-1', agent: eEd.agent }, {}, () => 'NEXT')
+  await ok('edit 工具写漂移插件 → 注入提醒', !!(edPost && edPost.additionalContexts && edPost.additionalContexts.length === 1))
+  const eEd2 = { name: 'edit', callId: 'ed-2', arguments: { file_path: 'dsh/preset/skills/x.md' }, agent: { id: 'cons-ed2' } }
+  await preExecute[0](eEd2, () => 'NEXT')
+  const ed2Post = await postExecute[0]({ name: 'edit', callId: 'ed-2', agent: eEd2.agent }, {}, () => 'NEXT')
+  await ok('edit 工具写根内非 plugins → parity hint', !!(ed2Post && ed2Post.additionalContexts && ed2Post.additionalContexts[0].content[0].text.includes('由你判断')))
+
+  // ── 任务形态覆盖：shell 写入（pwsh / bash，无 file_path）────────────────
+  section('任务形态：shell 写入（pwsh / bash）')
+  const repoSh = makeRepoRoot()
+  workspaceRootMock = repoSh
+  fs.mkdirSync(path.join(repoSh, 'dsh/preset/plugins'), { recursive: true })
+  fs.writeFileSync(path.join(repoSh, 'dsh/preset/plugins/sh.js'), 'S', 'utf8')
+  const sh1 = { name: 'pwsh', callId: 'sh-1', arguments: { command: 'Copy-Item /tmp/x.js dsh\\preset\\plugins\\sh.js' }, agent: { id: 'cons-sh' } }
+  await preExecute[0](sh1, () => 'NEXT')
+  const sh1Post = await postExecute[0]({ name: 'pwsh', callId: 'sh-1', agent: sh1.agent }, {}, () => 'NEXT')
+  await ok('pwsh 写漂移插件（反斜杠路径）→ post 检测注入提醒',
+    !!(sh1Post && sh1Post.additionalContexts && sh1Post.additionalContexts[0].content[0].text.includes('shell 写入后检测到身份组漂移')))
+  const sh2 = { name: 'pwsh', callId: 'sh-2', arguments: { command: 'Set-Content dsh/preset/skills/foo.md hi' }, agent: { id: 'cons-sh2' } }
+  await preExecute[0](sh2, () => 'NEXT')
+  const sh2Post = await postExecute[0]({ name: 'pwsh', callId: 'sh-2', agent: sh2.agent }, {}, () => 'NEXT')
+  await ok('pwsh 写根内非 plugins → parity hint', !!(sh2Post && sh2Post.additionalContexts && sh2Post.additionalContexts[0].content[0].text.includes('由你判断')))
+  const sh3 = { name: 'pwsh', callId: 'sh-3', arguments: { command: 'Get-ChildItem src/ && npm test' }, agent: { id: 'cons-sh3' } }
+  await preExecute[0](sh3, () => 'NEXT')
+  const sh3Post = await postExecute[0]({ name: 'pwsh', callId: 'sh-3', agent: sh3.agent }, {}, () => 'NEXT')
+  await ok('pwsh 未提及 preset 根路径 → 零开销', sh3Post === 'NEXT')
+  // bash + 一致写入（双侧都在且相同）→ 无假阳性
+  const repoShB = makeRepoRoot()
+  for (const r of ['dsh/preset', 'en/preset']) {
+    fs.mkdirSync(path.join(repoShB, r + '/plugins'), { recursive: true })
+    fs.writeFileSync(path.join(repoShB, r + '/plugins/ok.js'), 'OK', 'utf8')
+  }
+  workspaceRootMock = repoShB
+  const sh4 = { name: 'bash', callId: 'sh-4', arguments: { command: 'sed -i s/a/b/ dsh/preset/plugins/ok.js' }, agent: { id: 'cons-sh4' } }
+  await preExecute[0](sh4, () => 'NEXT')
+  const sh4Post = await postExecute[0]({ name: 'bash', callId: 'sh-4', agent: sh4.agent }, {}, () => 'NEXT')
+  await ok('bash 工具通道同样覆盖（一致写入 → 不误报）', sh4Post === 'NEXT')
+  const sh5 = { name: 'bash', callId: 'sh-5', arguments: { command: 'cp /tmp/n.js en/preset/plugins/new.js' }, agent: { id: 'cons-sh5' } }
+  await preExecute[0](sh5, () => 'NEXT')
+  const sh5Post = await postExecute[0]({ name: 'bash', callId: 'sh-5', agent: sh5.agent }, {}, () => 'NEXT')
+  await ok('bash 写漂移插件（en 有 zh 无）→ post 注入提醒', !!(sh5Post && sh5Post.additionalContexts && sh5Post.additionalContexts.length === 1))
+
+  // ── 提取器单测 ─────────────────────────────────────────────────────────
+  section('__internals: extractShellTargets')
+  const ext1 = I.extractShellTargets('cp a dsh/preset/plugins/x.js && cat dsh/preset/skills/y.md', KIX)
+  await ok('正斜杠命令提取 2 目标', ext1.length === 2 && ext1[0].rel === 'plugins/x.js' && ext1[1].rel === 'skills/y.md')
+  const ext2 = I.extractShellTargets('Copy-Item x dsh\\preset\\plugins\\x.ps1', KIX)
+  await ok('反斜杠命令提取（rel 归一正斜杠）', ext2.length === 1 && ext2[0].rel === 'plugins/x.ps1')
+  await ok('无关命令 → 空', I.extractShellTargets('npm install && npm test', KIX).length === 0)
+  await ok('cap 8 目标', I.extractShellTargets(Array.from({ length: 20 }, (_, i) => `dsh/preset/plugins/f${i}.js`).join(' '), KIX).length === 8)
+
+  // ── 强度免疫：parity hint 不受 block / ask 影响 ────────────────────────
+  section('强度免疫：parity hint（无失败可拦）')
+  const repoBlk = makeRepoRoot()
+  workspaceRootMock = repoBlk
+  const bp = { name: 'write', callId: 'blk-par', arguments: { file_path: 'dsh/preset/skills/x.md' }, agent: { id: 'cons-blk' } }
+  const bPre = await blockListeners['tools/pre-execute'][0](bp, () => 'NEXT')
+  await ok('block 强度下 parity 写入不被 deny', bPre === 'NEXT')
+  const bPost = await blockListeners['tools/post-execute'][0]({ name: 'write', callId: 'blk-par', agent: bp.agent }, {}, () => 'NEXT')
+  await ok('block 强度下 parity hint 照常注入', !!(bPost && bPost.additionalContexts && bPost.additionalContexts.length === 1))
+  const askListeners = {}
+  let askCalls = 0
+  const ctxAsk = {
+    config: { intensity: 'ask' },
+    logger: { info() {}, warn() {}, error() {} },
+    get(name) {
+      if (name === 'sandboxPolicy') return { workspaceRoot: workspaceRootMock, resolve: () => ({ workspaceRoot: workspaceRootMock }) }
+      if (name === 'userQuestions') return { ask: async () => { askCalls++; return { answers: [{ selected: ['继续写入'] }] } } }
+      return undefined
+    },
+    on(e, c) { (askListeners[e] ||= []).push(c) },
+    effect() {},
+    tools: { register() { return () => {} } },
+    commands: { register() { return () => {} } },
+  }
+  plugin.apply(ctxAsk, { intensity: 'ask' })
+  const ap = { name: 'write', callId: 'ask-par', arguments: { file_path: 'en/preset/skills/y.md' }, agent: { id: 'cons-ask' } }
+  const aPre = await askListeners['tools/pre-execute'][0](ap, () => 'NEXT')
+  await ok('ask 强度下 parity 写入不打断提问', aPre === 'NEXT' && askCalls === 0)
+  const aPost = await askListeners['tools/post-execute'][0]({ name: 'write', callId: 'ask-par', agent: ap.agent }, {}, () => 'NEXT')
+  await ok('ask 强度下 parity hint 照常注入', !!(aPost && aPost.additionalContexts && aPost.additionalContexts.length === 1))
+
+  // ── 多根 / 多 agent / 深路径 / 扩展名形态 ──────────────────────────────
+  section('形态：N=3 根 hint 点名其余两根 / 双 agent 独立 / 深路径 / 扩展名')
+  const n3repo = mkdtemp('kix-cons-test-n3hint-')
+  for (const r of ['editions/a', 'editions/b', 'editions/c']) {
+    fs.mkdirSync(path.join(n3repo, r), { recursive: true })
+    fs.writeFileSync(path.join(n3repo, r, 'agent.cordis.yml'), 'x\n', 'utf8')
+    fs.writeFileSync(path.join(n3repo, r, 'preset.yml'), 'id: x\n', 'utf8')
+  }
+  workspaceRootMock = n3repo
+  const h3 = { name: 'write', callId: 'n3-1', arguments: { file_path: 'editions/a/skills/s.md' }, agent: { id: 'cons-n3' } }
+  await preExecute[0](h3, () => 'NEXT')
+  const h3Post = await postExecute[0]({ name: 'write', callId: 'n3-1', agent: h3.agent }, {}, () => 'NEXT')
+  const h3Text = h3Post && h3Post.additionalContexts ? h3Post.additionalContexts[0].content[0].text : ''
+  await ok('N=3 根 hint 点名其余两根', h3Text.includes('editions/b') && h3Text.includes('editions/c') && !h3Text.includes('editions/a）的对应份'))
+  await ok('parity hint 消息带非空 id（restore 契约）', typeof (h3Post.additionalContexts[0].id) === 'string' && h3Post.additionalContexts[0].id.length > 0)
+  const h3b = { name: 'write', callId: 'n3-2', arguments: { file_path: 'editions/b/skills/s.md' }, agent: { id: 'cons-n3-b' } }
+  await preExecute[0](h3b, () => 'NEXT')
+  const h3bPost = await postExecute[0]({ name: 'write', callId: 'n3-2', agent: h3b.agent }, {}, () => 'NEXT')
+  await ok('另一 agent 有独立 remindOnce（同工作区双 hint）', !!(h3bPost && h3bPost.additionalContexts && h3bPost.additionalContexts.length === 1))
+  await ok('反斜杠根内路径 → parity', I.classifyWrite('dsh\\preset\\skills\\x.md', KIX, true) === 'parity')
+  await ok('深路径未知目录 → parity', I.classifyWrite('pkgs/zh/assets/x/y.json', ['pkgs/zh', 'pkgs/en'], false) === 'parity')
+  await ok('.ps1 → parity', I.classifyWrite('dsh/preset/skills/kixpower/hooks/h.ps1', KIX, true) === 'parity')
+  await ok('.yml → parity', I.classifyWrite('en/preset/prompts/p.yml', KIX, true) === 'parity')
+
+  // ── 类别隔离：plugins 漂移提醒与 parity hint 同会话都可达 ──────────────
+  section('类别隔离：plugins 提醒与 parity hint 互不消耗')
+  const repoIso = makeRepoRoot()
+  workspaceRootMock = repoIso
+  const isoAgent = { id: 'cons-iso' }
+  const isoA = { name: 'write', callId: 'iso-1', arguments: { file_path: 'dsh/preset/plugins/iso.js' }, agent: isoAgent }
+  await preExecute[0](isoA, () => 'NEXT')
+  const isoAPost = await postExecute[0]({ name: 'write', callId: 'iso-1', agent: isoAgent }, {}, () => 'NEXT')
+  const isoB = { name: 'write', callId: 'iso-2', arguments: { file_path: 'dsh/preset/skills/iso.md' }, agent: isoAgent }
+  await preExecute[0](isoB, () => 'NEXT')
+  const isoBPost = await postExecute[0]({ name: 'write', callId: 'iso-2', agent: isoAgent }, {}, () => 'NEXT')
+  await ok('plugins 漂移与 parity hint 同会话双投递（互不消耗）',
+    !!(isoAPost && isoAPost.additionalContexts) && !!(isoBPost && isoBPost.additionalContexts))
+
   // ── 收尾：清理夹具 ─────────────────────────────────────────────────────
   for (const dir of created) {
     try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* 忽略清理失败 */ }

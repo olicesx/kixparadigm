@@ -617,7 +617,8 @@
 # **相关子检查**，与 CI 共用 consistency-lib.cjs 单一事实源（防「CI 一套、
 # 运行时一套」双源漂移）。边界自感知：preset 根 = 同时含 agent.cordis.yml +
 # preset.yml 的目录（深度 ≤2 扫描）；任意仓库 ≥2 根才引导——通用层只引导
-# 各根同名 plugins 字节一致（该相同的数份必须相同，N ≥ 2）；其余根内路径
+# 各根同名 plugins 字节一致（该相同的数份必须相同，N ≥ 2）；shell 写入
+# （pwsh/bash 命令提及 preset 根路径）post-execute 复验身份组；其余根内路径
 # （skills/agents/prompts 等翻译关系）只发 parity hint——不断言失败，把
 # 「其它根对应份是否同步」交给模型判断（没说到的形态靠提醒感知）。
 # VS Code 导入源
@@ -625,7 +626,7 @@
 # memories 计数 / README 表述 / 版本对 / vision-bridge / 单文件语法）由仓库
 # 自带 scripts 入口自声明触发，外仓不硬套。强度默认 remind（只做启发引导）；
 # ask/block 需显式配置。remindOnce：每会话每类别一次。
-# 单元测试：node plugins/kix-consistency.test.js（84 断言）。
+# 单元测试：node plugins/kix-consistency.test.js（107 断言）。
 - id: kix-consistency
   name: ./plugins/kix-consistency.js
 
