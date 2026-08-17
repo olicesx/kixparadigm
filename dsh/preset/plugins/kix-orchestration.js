@@ -40,6 +40,12 @@
 // v8（v1.2.10）：checkQaReturn 完成声明识别改为「负向表述优先排除 + 明确
 //   正向锚点匹配」——not done / undone / not passed / passed nothing /
 //   completed=false 不再触发提醒；回归见测试「负向表述」用例。
+// v11（2026-08-17，P5 落地）：plan.md 契约写前校验——写 docs/sprint-N/plan.md
+//   时校验 kix-guards 预算链真正消费的字段（task_sizing.derived_commit_budget /
+//   blast_radius.max_commits）与任务清单存在性（边界注释「task_dag /
+//   verifiable_gates 结构校验做轻量版」落地）；缺则 remind（ask/block 可配）。
+//   只对 write 全量写入校验（args.content 可拿完整新内容）；edit 拿不到完整
+//   新内容，0 误报纪律不猜测。
 //
 //
 // 边界（诚实声明）：
@@ -369,6 +375,27 @@ function isSleepWaitForSubagent({ command, description }) {
   return (SLEEP_WAIT_CMD.test(cmd) || PWSH_SLEEP_WAIT_CMD.test(cmd)) && SLEEP_WAIT_DESC.test(desc)
 }
 
+// plan.md 契约轻量校验（v11，P5；边界注释「task_dag / verifiable_gates 结构
+// 校验做轻量版（存在性）」落地）。只校验 kix-guards 预算链真正消费的字段 +
+// 任务清单存在性——机械可枚举、0 误报（合法 plan 必然具备）：
+//   - 预算链有源：task_sizing.derived_commit_budget 或 blast_radius.max_commits
+//     （缺则 resolveCommitBudget 静默落冷启动 3——sprint-9 事故形态，guards v7 修过）
+//   - 任务清单：至少一条 - [ ] / - [x]
+// 不做 manifest SHA 数学、不校验任务内容（认知层留给模型）。
+function checkPlanContract(text) {
+  const s = String(text || '')
+  const reasons = []
+  const hasBudgetSource = /task_sizing:[\s\S]*?derived_commit_budget:\s*\d+/.test(s) ||
+    /blast_radius:[\s\S]*?max_commits:\s*\d+/.test(s)
+  if (!hasBudgetSource) {
+    reasons.push('plan.md 缺少 commit 预算来源（task_sizing.derived_commit_budget 或 blast_radius.max_commits）——预算兜底链将静默落冷启动 3')
+  }
+  if (!/-\s*\[[ xX]\]/.test(s)) {
+    reasons.push('plan.md 缺少任务清单（- [ ] 条目）')
+  }
+  return reasons
+}
+
 function makeUserMessage(text) {
   return {
     id: randomUUID(),
@@ -397,7 +424,7 @@ module.exports = {
         const session = agent && agent.session
         const header = session && session.header
         const cwd = header && header.cwd && typeof header.cwd === 'string' ? header.cwd : undefined
-        st = { enabled: true, reminded: false, returnReminded: false, sleepReminded: false, workspaceRoot: defaultRoot || cwd || undefined }
+        st = { enabled: true, reminded: false, returnReminded: false, sleepReminded: false, planReminded: false, pendingPlanRemind: null, workspaceRoot: defaultRoot || cwd || undefined }
         states.set(key, st)
       }
       return st
@@ -445,13 +472,40 @@ module.exports = {
         // block/ask——sleep 是编排卫生问题不是危险操作，remind 恰当。
         // 去硬编码：不按工具名门控——任意工具的 arguments.command 都查
         // （命令形态双正则恒测，平台/工具无关；无 command 的工具零开销短路）。
-        const st = exec && exec.agent ? stateFor(exec.agent) : undefined
-        if (st && st.enabled && !st.sleepReminded) {
+        const st = stateFor(exec && exec.agent)
+        if (st.enabled && !st.sleepReminded) {
           const args = exec && (exec.arguments ?? exec.args)
           const cmd = args && typeof args.command === 'string' ? args.command : ''
           const desc = args && typeof args.description === 'string' ? args.description : ''
           if (cmd && isSleepWaitForSubagent({ command: cmd, description: desc })) {
             st.pendingSleepRemind = { callId: exec.callId }
+          }
+        }
+        // v11（P5）：plan.md 契约写前校验。只对 write 全量写入校验
+        // （args.content 可拿完整新内容——DSH write 工具契约）；edit 拿不到
+        // 完整新内容，0 误报纪律不猜测（说明性注释，非机制缺陷）。
+        if (tool === 'write' || tool === 'edit') {
+          const args = exec && (exec.arguments ?? exec.args)
+          const p = args && (args.file_path || args.path)
+          if (typeof p === 'string' && /docs\/sprint-\d+\/plan\.md$/i.test(p.replace(/\\/g, '/'))) {
+            if (tool === 'write' && typeof args.content === 'string') {
+              const planReasons = checkPlanContract(args.content)
+              if (planReasons.length > 0) {
+                const reason = 'kix-orchestration: ' + planReasons.join(' ')
+                if (intensity === 'block') {
+                  return { kind: 'deny', reason }
+                }
+                if (intensity === 'ask') {
+                  const ok = await askUser(exec, reason)
+                  if (ok === false) return { kind: 'deny', reason: 'kix-orchestration: 用户拒绝，请先补齐 plan 契约字段。' }
+                  if (ok === void 0) return { kind: 'deny', reason: 'kix-orchestration: 无法向用户提问（无提问通道），已自动拒绝。' }
+                  return next()
+                }
+                if (!st.planReminded) {
+                  st.pendingPlanRemind = { callId: exec.callId, reason }
+                }
+              }
+            }
           }
         }
         return next()
@@ -546,6 +600,13 @@ module.exports = {
         st.pendingSleepRemind = false
         st.sleepReminded = true
         return { kind: 'accept', additionalContexts: [makeUserMessage(SLEEP_WAIT_REMIND)] }
+      }
+      // v11：plan 契约提醒（独立槽位 + 独立一次性标志，不烧 handoff/sleep 槽）
+      if (st.pendingPlanRemind && st.pendingPlanRemind.callId === (exec && exec.callId)) {
+        const reason = st.pendingPlanRemind.reason
+        st.pendingPlanRemind = null
+        st.planReminded = true
+        return { kind: 'accept', additionalContexts: [makeUserMessage(reason)] }
       }
       if (!st.pendingRemind) return next()
       // 只消费与发起调用同 callId 的 post-execute；dispatch 抛错（不经
@@ -651,6 +712,7 @@ module.exports.__internals = {
   SLEEP_WAIT_CMD,
   PWSH_SLEEP_WAIT_CMD,
   SLEEP_WAIT_DESC,
+  checkPlanContract,
   makeUserMessage,
   SUBAGENT_TOOLS,
   SPRINT_MARKER,

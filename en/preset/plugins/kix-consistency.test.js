@@ -1,0 +1,213 @@
+// kix-consistency 回归测试（2026-08-17，P5）
+//
+// 单元级验证：加载 kix-consistency.js，mock DSH pre-execute / post-execute 派发，覆盖：
+//   - 纯逻辑（__internals）：isRepoRoot / classifyWrite / pickChecks
+//   - lib 判定：estimateTokens / checkFilesEqual / checkPluginPair（临时文件夹具）
+//   - pre-execute 写时拦截：remind（放行+待注入）/ block（deny）/ 非 preset 路径放行 /
+//     非源仓库放行
+//   - post-execute：remind 注入 + remindOnce 每类别一次
+// 运行：node plugins/kix-consistency.test.js
+
+const path = require('node:path')
+const assert = require('node:assert')
+const os = require('node:os')
+const fs = require('node:fs')
+
+// ── mock ctx（sandboxPolicy.workspaceRoot 动态指向当前夹具）───────────────
+const listeners = {}
+let workspaceRootMock = null
+const configMock = { intensity: 'remind' }
+const ctx = {
+  config: configMock,
+  logger: { info() {}, warn() {}, error() {} },
+  get(name) {
+    if (name === 'sandboxPolicy') return { workspaceRoot: workspaceRootMock }
+    return undefined
+  },
+  on(event, cb) {
+    ;(listeners[event] ||= []).push(cb)
+  },
+  effect() {},
+}
+ctx.tools = { register() { return () => {} } }
+ctx.commands = { register() { return () => {} } }
+
+// ── 加载被测试插件 ────────────────────────────────────────────────────────
+const plugin = require(path.join(__dirname, 'kix-consistency.js'))
+assert.strictEqual(plugin.name, 'kix-consistency')
+plugin.apply(ctx, configMock)
+const preExecute = listeners['tools/pre-execute']
+const postExecute = listeners['tools/post-execute']
+assert.ok(Array.isArray(preExecute) && preExecute.length === 1, 'pre-execute 监听器已注册')
+assert.ok(Array.isArray(postExecute) && postExecute.length === 1, 'post-execute 监听器已注册')
+
+const I = plugin.__internals
+const lib = require(path.join(__dirname, 'consistency-lib.cjs'))
+
+// ── block 强度独立实例（同 kix-orchestration.test.js：apply 快照 intensity）─
+const blockListeners = {}
+const ctxBlock = {
+  config: { intensity: 'block' },
+  logger: { info() {}, warn() {}, error() {} },
+  get(name) {
+    if (name === 'sandboxPolicy') return { workspaceRoot: workspaceRootMock }
+    return undefined
+  },
+  on(event, cb) {
+    ;(blockListeners[event] ||= []).push(cb)
+  },
+  effect() {},
+  tools: { register() { return () => {} } },
+  commands: { register() { return () => {} } },
+}
+plugin.apply(ctxBlock, { intensity: 'block' })
+
+// ── 夹具（统一登记，文件末尾统一删除——不泄漏 /tmp 目录）─────────────────
+const created = []
+function mkdtemp(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  created.push(dir)
+  return dir
+}
+function makeRepoRoot() {
+  const root = mkdtemp('kix-cons-test-repo-')
+  const write = (rel, content) => {
+    const p = path.join(root, rel)
+    fs.mkdirSync(path.dirname(p), { recursive: true })
+    fs.writeFileSync(p, content, 'utf8')
+  }
+  // 源仓库指纹三件套（内容最小化；persona 检查在单独用例中造合法块）
+  write('dsh/preset/agent.cordis.yml', 'text: |-\n  x\n')
+  write('en/preset/agent.cordis.yml', 'text: |-\n  x\n')
+  write('scripts/check-dsh-consistency.cjs', '#!/usr/bin/env node\n')
+  return root
+}
+
+let passed = 0
+let failed = 0
+async function ok(label, cond) {
+  const okk = await cond
+  if (okk) { passed++ } else { failed++ }
+  console.log(`${okk ? 'PASS' : 'FAIL'}  ${label}`)
+}
+function section(title) { console.log('\n── ' + title + ' ──') }
+
+// ── mock exec 构造 ────────────────────────────────────────────────────────
+let callSeq = 0
+function makeExec(tool, relPath, callId) {
+  return {
+    name: tool,
+    callId: callId !== undefined ? callId : 'c' + (++callSeq),
+    arguments: { file_path: relPath },
+  }
+}
+function makePostExec(callId) {
+  return { name: 'write', callId }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+;(async () => {
+  section('__internals: isRepoRoot')
+  const repo = makeRepoRoot()
+  await ok('指纹齐全 → true', I.isRepoRoot(repo))
+  const noEn = makeRepoRoot()
+  fs.rmSync(path.join(noEn, 'en/preset/agent.cordis.yml'))
+  await ok('缺 en/preset → false', I.isRepoRoot(noEn) === false)
+  await ok('null → false', I.isRepoRoot(null) === false)
+  await ok('undefined → false', I.isRepoRoot(undefined) === false)
+  const plain = mkdtemp('kix-cons-test-plain-')
+  await ok('普通工作区 → false', I.isRepoRoot(plain) === false)
+
+  section('__internals: classifyWrite')
+  await ok('zh agent.cordis.yml → persona', I.classifyWrite('dsh/preset/agent.cordis.yml') === 'persona')
+  await ok('en agent.cordis.yml → persona', I.classifyWrite('en/preset/agent.cordis.yml') === 'persona')
+  await ok('zh 插件源码 → plugins', I.classifyWrite('dsh/preset/plugins/kix-x.js') === 'plugins')
+  await ok('en 插件测试 → plugins', I.classifyWrite('en/preset/plugins/kix-x.test.js') === 'plugins')
+  await ok('memories → memories', I.classifyWrite('dsh/preset/memories/ai-agent-practices.md') === 'memories')
+  await ok('README.md → readme', I.classifyWrite('README.md') === 'readme')
+  await ok('README.en.md → readme', I.classifyWrite('README.en.md') === 'readme')
+  await ok('package.json → package', I.classifyWrite('package.json') === 'package')
+  await ok('vision-bridge → vision', I.classifyWrite('dsh/vision-bridge/index.js') === 'vision')
+  await ok('普通源码 → null', I.classifyWrite('src/main.js') === null)
+  await ok('windows 反斜杠路径 → plugins', I.classifyWrite('dsh\\preset\\plugins\\kix-x.js') === 'plugins')
+  await ok('空 → null', I.classifyWrite('') === null)
+
+  section('__internals: pickChecks')
+  const srcChecks = I.pickChecks(repo, 'dsh/preset/plugins/kix-x.js')
+  await ok('写插件源码 → pair + 语法 2 检查', srcChecks.length === 2)
+  const testChecks = I.pickChecks(repo, 'dsh/preset/plugins/kix-x.test.js')
+  await ok('写插件测试 → 仅 pair 1 检查', testChecks.length === 1)
+  const personaChecks = I.pickChecks(repo, 'dsh/preset/agent.cordis.yml')
+  await ok('写 persona → 1 检查', personaChecks.length === 1)
+  await ok('非 preset → 0 检查', I.pickChecks(repo, 'src/main.js').length === 0)
+
+  section('lib: estimateTokens / checkFilesEqual / checkPluginPair')
+  await ok('estimateTokens 空 → 0', lib.estimateTokens('') === 0)
+  await ok('estimateTokens 英文词 > 0', lib.estimateTokens('hello world foo bar') > 0)
+  await ok('estimateTokens 中文 > 0', lib.estimateTokens('规则是负债的自我应用') > 0)
+  const pairRoot = mkdtemp('kix-cons-test-pair-')
+  fs.mkdirSync(path.join(pairRoot, 'dsh/preset/plugins'), { recursive: true })
+  fs.mkdirSync(path.join(pairRoot, 'en/preset/plugins'), { recursive: true })
+  fs.writeFileSync(path.join(pairRoot, 'dsh/preset/plugins/a.js'), 'A', 'utf8')
+  fs.writeFileSync(path.join(pairRoot, 'en/preset/plugins/a.js'), 'A', 'utf8')
+  const same = lib.checkFilesEqual({ root: pairRoot, a: 'dsh/preset/plugins/a.js', b: 'en/preset/plugins/a.js', label: 'a.js' })
+  await ok('字节一致 → 无 failure', same.failures.length === 0)
+  fs.writeFileSync(path.join(pairRoot, 'en/preset/plugins/a.js'), 'B', 'utf8')
+  const diff = lib.checkFilesEqual({ root: pairRoot, a: 'dsh/preset/plugins/a.js', b: 'en/preset/plugins/a.js', label: 'a.js' })
+  await ok('字节不一致 → failure', diff.failures.length === 1)
+  const pair1 = lib.checkPluginPair({ root: pairRoot, name: 'a.js' })
+  await ok('插件对不一致 → failure', pair1.failures.length === 1)
+  fs.writeFileSync(path.join(pairRoot, 'en/preset/plugins/a.js'), 'A', 'utf8')
+  const pair2 = lib.checkPluginPair({ root: pairRoot, name: 'a.js' })
+  await ok('插件对一致且双侧无 test → note 跳过', pair2.failures.length === 0 && pair2.notes.some((n) => n.includes('skipped')))
+  fs.writeFileSync(path.join(pairRoot, 'dsh/preset/plugins/a.test.js'), 'T', 'utf8')
+  const pair3 = lib.checkPluginPair({ root: pairRoot, name: 'a.js' })
+  await ok('test 单侧存在 → failure（en 缺 test）', pair3.failures.length === 1)
+
+  section('pre-execute: remind 触发（写 preset 区域，en 未同步）')
+  const repo2 = makeRepoRoot()
+  workspaceRootMock = repo2
+  // 写 dsh/preset/plugins/foo.js（en 侧缺失 → checkPluginPair failure）
+  const e1 = makeExec('write', 'dsh/preset/plugins/foo.js')
+  const pre1 = await preExecute[0](e1, () => 'NEXT')
+  // DSH pre-execute 放行语义：调用 next() 放行（mock next 返回 'NEXT'）
+  await ok('remind 不 deny（走 next 放行）', pre1 === 'NEXT')
+  const post1 = await postExecute[0](makePostExec(e1.callId), {}, () => 'NEXT')
+  await ok('post-execute 注入提醒 1 条', post1 && Array.isArray(post1.additionalContexts) && post1.additionalContexts.length === 1)
+  // 同类别第二次：remindOnce 不重复注入
+  const e2 = makeExec('write', 'dsh/preset/plugins/bar.js')
+  await preExecute[0](e2, () => 'NEXT')
+  const post2 = await postExecute[0](makePostExec(e2.callId), {}, () => 'NEXT')
+  await ok('同类别第二次不注入（remindOnce）', post2 === 'NEXT')
+
+  section('pre-execute: 非 preset 路径 / 非源仓库 / 非写工具放行')
+  const e3 = makeExec('write', 'src/main.js')
+  await preExecute[0](e3, () => 'NEXT')
+  const post3 = await postExecute[0](makePostExec(e3.callId), {}, () => 'NEXT')
+  await ok('非 preset 路径 → 无注入', post3 === 'NEXT')
+  workspaceRootMock = mkdtemp('kix-cons-test-nonrepo-')
+  const e4 = makeExec('write', 'dsh/preset/plugins/foo.js')
+  await preExecute[0](e4, () => 'NEXT')
+  const post4 = await postExecute[0](makePostExec(e4.callId), {}, () => 'NEXT')
+  await ok('非源仓库 → 无注入', post4 === 'NEXT')
+  const e5 = makeExec('read', 'dsh/preset/plugins/foo.js')
+  const pre5 = await preExecute[0](e5, () => 'NEXT')
+  await ok('非写工具（read）→ 放行无副作用', pre5 === 'NEXT')
+
+  section('pre-execute: block 强度 → deny')
+  workspaceRootMock = makeRepoRoot()
+  const e6 = makeExec('write', 'dsh/preset/plugins/foo.js')
+  const pre6 = await blockListeners['tools/pre-execute'][0](e6, () => 'NEXT')
+  await ok('block 强度 → deny 且带原因', pre6 && pre6.kind === 'deny' && typeof pre6.reason === 'string')
+
+  // ── 收尾：清理夹具 ─────────────────────────────────────────────────────
+  for (const dir of created) {
+    try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* 忽略清理失败 */ }
+  }
+
+  console.log(`\n${passed} passed, ${failed} failed`)
+  process.exit(failed > 0 ? 1 : 0)
+})().catch((err) => {
+  console.error(err)
+  process.exit(1)
+})
