@@ -117,8 +117,9 @@ function pickChecks(root, rel, presetRoots, withContract) {
     const name = path.posix.basename(p)
     checks.push(() => lib.checkPluginPair({ root, name, presetRoots: roots }))
     // 写插件源码时顺带校验自身语法（测试文件不查——node --check 对 test 同样适用，
-    // 但测试文件由 npm test 管，写时语法拦截只对源码，减少噪音）
-    if (!/\.test\.js$/.test(name)) {
+    // 但测试文件由 npm test 管，写时语法拦截只对源码，减少噪音）；
+    // 目标尚不存在（pre-write 新建文件）时跳过——检查不存在的文件只产 missing 噪音
+    if (!/\.test\.js$/.test(name) && fs.existsSync(path.join(root, p))) {
       checks.push(() => lib.checkFileSyntax({ root, rel: p, label: `plugins/${name}` }))
     }
   }
@@ -146,6 +147,24 @@ function makeUserMessage(text) {
     content: [{ type: 'text', text }],
     source: { kind: 'plugin', plugin: 'kix-consistency', form: 'notice', summary: text.slice(0, 100) },
   }
+}
+
+// 从写入目标反推工作区（首派发兜底）：live 首次工具派发时 agent 可能还解析不出
+// 会话 cwd（WSL2 实弹实锤：首写 parity hint 丢失、第二写靠 stateFor 自愈才触发）。
+// 写入目标本身是绝对路径——沿祖先找「含 ≥2 个 preset 根」的最近祖先，用同一
+// discoverPresetRoots 判定（边界仍由标记决定，不猜）。找到即写入 state 供后续
+// 派发复用；找不到保持零开销。只兜 write/edit（shell 命令路径多为相对，不适用）。
+function discoverRootsFromFile(absPath, configuredRoots) {
+  if (typeof absPath !== 'string' || absPath.length === 0) return null
+  const norm = path.normalize(absPath.replace(/\\/g, '/'))
+  if (!path.isAbsolute(norm)) return null
+  let dir = path.dirname(norm)
+  for (let i = 0; i < 8 && dir && dir !== path.dirname(dir); i++) {
+    const roots = (configuredRoots && configuredRoots.length ? configuredRoots : lib.discoverPresetRoots(dir))
+    if (Array.isArray(roots) && roots.length >= 2) return { workspaceRoot: dir, presetRoots: roots }
+    dir = path.dirname(dir)
+  }
+  return null
 }
 
 // parity hint 文案（write/edit 与 shell 共用）：点名其余根 + 交给模型判断
@@ -279,8 +298,17 @@ module.exports = {
 
       const st = stateFor(exec && exec.agent)
       if (!st.enabled) return next()
-      // 通用门禁：≥2 个自感知 preset 根才引导（单 preset / 普通仓库零开销放行）
-      if (!st.workspaceRoot || !Array.isArray(st.presetRoots) || st.presetRoots.length < 2) return next()
+      // 通用门禁：≥2 个自感知 preset 根才引导（单 preset / 普通仓库零开销放行）。
+      // 首派发兜底：live 会话的首次工具派发可能解析不出会话 cwd（WSL2 实弹实锤：
+      // 首写 hint 丢失、第二写靠 stateFor 自愈才触发）——此时写入目标本身是绝对
+      // 路径，从它反推含 ≥2 preset 根的祖先工作区，找到即固化进 state 供后续复用。
+      if (!st.workspaceRoot || !Array.isArray(st.presetRoots) || st.presetRoots.length < 2) {
+        const healed = discoverRootsFromFile(rawPath, configuredRoots)
+        if (!healed) return next()
+        st.workspaceRoot = healed.workspaceRoot
+        st.presetRoots = healed.presetRoots
+        st.contract = hasContractEntry(healed.workspaceRoot)
+      }
 
       const relPath = toRepoRel(st.workspaceRoot, rawPath)
       const category = classifyWrite(relPath, st.presetRoots, st.contract)
@@ -305,7 +333,9 @@ module.exports = {
       }
       if (failures.length === 0) return next()
 
-      const reason = 'kix-consistency: ' + failures.join(' ')
+      // 去重：同一缺失可能被身份组与语法检查重复报（WSL2 实弹曾三连 missing）
+      const unique = [...new Set(failures)]
+      const reason = 'kix-consistency: ' + unique.join(' ')
 
       if (intensity === 'block') {
         return { kind: 'deny', reason }
@@ -377,6 +407,7 @@ module.exports.__internals = {
   classifyWrite,
   pickChecks,
   buildParityHint,
+  discoverRootsFromFile,
   extractShellTargets,
   MUTATION_TOOLS,
   SHELL_TOOLS,

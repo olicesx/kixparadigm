@@ -177,8 +177,12 @@ function makePostExec(callId) {
   await ok('空 → null', I.classifyWrite('', KIX, true) === null)
 
   section('__internals: pickChecks')
+  fs.mkdirSync(path.join(repo, 'dsh/preset/plugins'), { recursive: true })
+  fs.writeFileSync(path.join(repo, 'dsh/preset/plugins/kix-x.js'), 'X', 'utf8')
   const srcChecks = I.pickChecks(repo, 'dsh/preset/plugins/kix-x.js')
-  await ok('写插件源码 → pair + 语法 2 检查', srcChecks.length === 2)
+  await ok('写已存在插件源码 → pair + 语法 2 检查', srcChecks.length === 2)
+  await ok('写全新插件（pre-write 缺失）→ 仅 pair 1 检查（语法跳过，不产 missing 噪音）',
+    I.pickChecks(repo, 'dsh/preset/plugins/brand-new.js').length === 1)
   await ok('写根 plugins/（非 preset 根）→ 0 检查（边界外）', I.pickChecks(repo, 'plugins/kix-guards.js').length === 0)
   const testChecks = I.pickChecks(repo, 'dsh/preset/plugins/kix-x.test.js')
   await ok('写插件测试 → 仅 pair 1 检查', testChecks.length === 1)
@@ -289,7 +293,7 @@ function makePostExec(callId) {
   section('__internals: .cjs 路由与未覆盖分支（PR#10）')
   await ok('classifyWrite zh .cjs 共享库 → plugins', I.classifyWrite('dsh/preset/plugins/consistency-lib.cjs', KIX, true) === 'plugins')
   await ok('classifyWrite en .cjs 共享库 → plugins', I.classifyWrite('en/preset/plugins/consistency-lib.cjs', KIX, true) === 'plugins')
-  await ok('pickChecks .cjs → pair + 语法 2 检查', I.pickChecks(repo, 'dsh/preset/plugins/consistency-lib.cjs').length === 2)
+  await ok('pickChecks .cjs（缺失目标）→ 仅 pair 1 检查', I.pickChecks(repo, 'dsh/preset/plugins/consistency-lib.cjs').length === 1)
   await ok('pickChecks README.md → 1 检查', I.pickChecks(repo, 'README.md').length === 1)
   await ok('pickChecks package.json → 1 检查', I.pickChecks(repo, 'package.json').length === 1)
   await ok('pickChecks vision-bridge → 2 检查', I.pickChecks(repo, 'dsh/vision-bridge/index.js').length === 2)
@@ -529,6 +533,37 @@ function makePostExec(callId) {
   const isoBPost = await postExecute[0]({ name: 'write', callId: 'iso-2', agent: isoAgent }, {}, () => 'NEXT')
   await ok('plugins 漂移与 parity hint 同会话双投递（互不消耗）',
     !!(isoAPost && isoAPost.additionalContexts) && !!(isoBPost && isoBPost.additionalContexts))
+
+  // ── 首派发兜底（live 实弹回归：WSL2 首写 hint 丢失根因）────────────────
+  section('首派发兜底：agent 无 session / 工作区根不可解析时从写入目标反推')
+  const plainFallback = mkdtemp('kix-cons-test-fallback-') // 模拟 dsh 从 /root 启动的回退根（无 preset 根）
+  fs.writeFileSync(path.join(plainFallback, 'a.txt'), 'a', 'utf8')
+  workspaceRootMock = plainFallback
+  const healAgent = { id: 'cons-heal' } // 无 session：模拟 live 首派发解析不出 cwd
+  const h1 = makeExec('write', path.join(repo, 'dsh', 'preset', 'skills', 'heal-skill.md'))
+  // healAgent 无 session → 回退根无根 → 兜底从绝对路径反推
+  await preExecute[0]({ ...h1, agent: healAgent }, () => 'NEXT')
+  const h1Post = await postExecute[0]({ name: 'write', callId: h1.callId, agent: healAgent }, {}, () => 'NEXT')
+  await ok('首派发（无 session、回退根无根）+ 绝对路径写根内文件 → parity hint 照发',
+    !!(h1Post && h1Post.additionalContexts && h1Post.additionalContexts[0].content[0].text.includes('由你判断')))
+  const repoHeal = makeRepoRoot()
+  workspaceRootMock = plainFallback
+  const h2 = makeExec('write', path.join(repoHeal, 'dsh', 'preset', 'plugins', 'heal-drift.js'))
+  await preExecute[0]({ ...h2, agent: { id: 'cons-heal2' } }, () => 'NEXT')
+  const h2Post = await postExecute[0]({ name: 'write', callId: h2.callId, agent: { id: 'cons-heal2' } }, {}, () => 'NEXT')
+  await ok('首派发兜底 + 绝对路径写漂移插件 → drift 提醒照发（去重后无重复条目）',
+    !!(h2Post && h2Post.additionalContexts &&
+      h2Post.additionalContexts[0].content[0].text.includes('en/preset/plugins/heal-drift.js missing') &&
+      !h2Post.additionalContexts[0].content[0].text.includes('missing dsh/preset/plugins/heal-drift.js missing')))
+  workspaceRootMock = plainFallback
+  const hPlain = makeExec('write', path.join(plainFallback, 'a.txt'))
+  await preExecute[0]({ ...hPlain, agent: { id: 'cons-heal3' } }, () => 'NEXT')
+  const hPlainPost = await postExecute[0]({ name: 'write', callId: hPlain.callId, agent: { id: 'cons-heal3' } }, {}, () => 'NEXT')
+  await ok('兜底也找不到根（普通文件）→ 零开销放行', hPlainPost === 'NEXT')
+  await ok('discoverRootsFromFile 单元：多根工作区祖先 → 命中',
+    I.discoverRootsFromFile(path.join(repoHeal, 'dsh/preset/plugins/x.js')).workspaceRoot === repoHeal)
+  await ok('discoverRootsFromFile：相对路径 → null（不猜）', I.discoverRootsFromFile('dsh/preset/x.js') === null)
+  await ok('discoverRootsFromFile：普通目录 → null', I.discoverRootsFromFile(path.join(plainFallback, 'a.txt')) === null)
 
   // ── 收尾：清理夹具 ─────────────────────────────────────────────────────
   for (const dir of created) {
