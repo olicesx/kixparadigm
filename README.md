@@ -43,7 +43,7 @@ chmod +x install.sh && ./install.sh
 |----|------|--------|
 | **认知层**（怎么思考） | kixparadigm persona | 三通道交叉验证、阶段二相性、规则是负债、需求三检（不迎合用户）、写码前决策链 |
 | **执行层**（怎么执行） | kixpower | 编曲模型：主模型自由挑成员（dev/qa/reviewer）+ Sprint 流程、DAG 拓扑、4 层 loop、四条不变量地板 |
-| 机械门禁 | `kix-guards` | commit 预算、feature branch、force push、危险 SQL、控制面保护（硬 deny 仅不可逆破坏） |
+| 机械门禁 | `kix-guards` · `kix-consistency` | commit 预算、feature branch、force push、危险 SQL、控制面保护（硬 deny 仅不可逆破坏）；preset 一致性写时拦截（防 zh/en 漂移） |
 | 交接纪律 | `kix-orchestration` · `kix-discipline` | subagent 交接证据链校验；spec 契约 gate + 验证 gate |
 | 聚焦 | `kix-focus` | 工具面 85→18 常驻裁剪 + 按需目录与代理执行——渐进披露的运行时形态 |
 | 成本路由 | `kix-cost` · `kix-route` | 子代理思考强度归一化；哨兵模型名 → 运行时可用路由 |

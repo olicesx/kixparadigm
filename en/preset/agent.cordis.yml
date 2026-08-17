@@ -634,9 +634,25 @@
 # dispatch carries current_sprint, verify the workspace docs/.kixpower-current-sprint
 # marker matches, docs/sprint-N/{plan,progress}.md exist, progress has no blocker,
 # and QA handoff requires all tasks completed. Default remind; ask/block need
-# explicit config. v8: QA completion marker excludes negated statements (not done / undone / not passed). Unit tests: node plugins/kix-orchestration.test.js (69 assertions).
+# explicit config. v8: QA completion marker excludes negated statements (not done / undone / not passed). Unit tests: node plugins/kix-orchestration.test.js (69 assertions; v11 plan contract +12).
 - id: kix-orchestration
   name: ./plugins/kix-orchestration.js
+
+# ── kix-consistency (P5, 2026-08-17): write-time consistency guard ──────
+# The CI script (scripts/check-consistency.cjs) only validates at test time;
+# edits to preset files are not intercepted in real time. This plugin turns the
+# "single source of truth" convention from self-discipline into mechanism: when
+# writing under dsh/preset/, en/preset/, README*, package.json* or
+# vision-bridge/bridge, it runs the relevant sub-checks (persona budget / plugin
+# pair sync / memories count / README phrases / version pair / single-file
+# syntax), sharing consistency-lib.cjs with CI — one implementation, no
+# CI-vs-runtime drift. Only fires in a kixparadigm source-repo workspace
+# (dsh/preset + en/preset + scripts entry all present); other workspaces pass
+# through untouched. Default intensity remind (docs are reversible, no deny);
+# ask/block need explicit config. remindOnce: once per session per category.
+# Unit tests: node plugins/kix-consistency.test.js (36 assertions).
+- id: kix-consistency
+  name: ./plugins/kix-consistency.js
 
 # ── kix-cost (v5.8 cost discipline): lite-tier auto-routing + child effort tiering ──
 # On the agent/request waterfall: (A) light children (budget cap ≤8K,

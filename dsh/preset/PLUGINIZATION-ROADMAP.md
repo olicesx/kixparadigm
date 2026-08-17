@@ -267,6 +267,26 @@ job_*/subagent-control）自动可见、裁不掉；scope 工具也无法经 cap
 
 ---
 
+### P5 — 一致性守护写时拦截 + plan 契约校验（✅ 已实施，2026-08-17）
+
+**背景**：上一轮复核（2026-08-17）逐项过哲学筛后，7 项候选只有 2 项通过可立即落地（其余被「规则是负债」正确否决：静态文件映射=反过拟合、compaction 已机制化=重复负债、direct schema=三层覆盖已全）。
+
+**P5a — kix-consistency 插件（一致性守护写时拦截）**：
+- `scripts/check-dsh-consistency.cjs` 拆核为 `plugins/consistency-lib.cjs` 纯函数核心（root 参数化、返回 `{failures, notes}`、无 console 副作用）——**CI 脚本与插件共用单一事实源**，防「CI 一套、运行时一套」双源漂移（自己立的「消灭双源」范式不能自己违反）
+- 插件 pre-execute：写 `dsh/preset/`、`en/preset/`、README*、package.json*、vision-bridge 相关文件时按路径跑**相关子检查**（persona 预算 / 插件对同步 / memories 计数 / README 表述 / 版本对 / 单文件语法）
+- 触发面：仅「源仓库指纹」工作区（dsh/preset + en/preset + scripts 入口齐全）；其余工作区零开销放行
+- 强度：默认 remind（文档可回滚不 deny）；ask/block 可配；remindOnce 每会话每类别一次
+- 插件名清单动态化：`pluginNames()` 读目录，新增插件自动纳入 CI 检查（不再维护硬编码清单）
+
+**P5b — kix-orchestration v11（plan.md 契约写前校验）**：
+- 落地边界注释「task_dag / verifiable_gates 结构校验做轻量版（存在性）」：只校验 kix-guards 预算链**真正消费**的字段（`task_sizing.derived_commit_budget` / `blast_radius.max_commits`，缺则预算静默落冷启动 3——sprint-9 事故形态）+ 任务清单存在性
+- 只对 write 全量写入校验（args.content 可拿完整新内容）；edit 拿不到完整新内容，0 误报纪律不猜
+- 独立提醒槽位 + 独立一次性标志（不烧 handoff/sleep 槽）
+
+**验收**：kix-consistency 36 断言 / kix-orchestration 77→89 全绿；zh/en 双包 npm test 全绿；CI（test + pack dry-run）4 平台通过。
+
+---
+
 ## 6. 验收指标（改造完成的定义）
 
 | 指标 | 改造前（2026-08-15） | 现状（2026-08-16，P0+P1+P2） | 目标 |
