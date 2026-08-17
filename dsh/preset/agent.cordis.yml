@@ -607,7 +607,7 @@
 #   - v3 producer_closeout 收尾证据链：spec「验收标准」在档 / 任务全完成 /
 #     测试文件自 l2_verified_sha 有变更要求重验（替代 Copilot qa-signoff 深度校验
 #     中可机械的部分；worktree/SHA 数学/stash 绑定 Copilot 特有流程不移植）。
-# 单元测试：node plugins/kix-orchestration.test.js（77 断言；v10.1 Tri-Block [CONTEXT] Sprint N 容错；v11 plan 契约 +12）。
+# 单元测试：node plugins/kix-orchestration.test.js（96 断言；v10.1 Tri-Block [CONTEXT] Sprint N 容错；v11 plan 契约）。
 - id: kix-orchestration
   name: ./plugins/kix-orchestration.js
 
@@ -620,7 +620,7 @@
 # 仅「kixparadigm 源仓库指纹」工作区（含 dsh/preset + en/preset + scripts 入口）
 # 触发；其余工作区零开销放行。强度默认 remind（文档可回滚不 deny）；
 # ask/block 需显式配置。remindOnce：每会话每类别一次。
-# 单元测试：node plugins/kix-consistency.test.js（36 断言）。
+# 单元测试：node plugins/kix-consistency.test.js（54 断言）。
 - id: kix-consistency
   name: ./plugins/kix-consistency.js
 

@@ -16,8 +16,8 @@
 //     push/commit 子命令（commit message 含 "push +5"/"main.rs" 不再误拦）；`--force`/
 //     `--mirror` 补 `(?<![\w-])` 前缀断言（`abc--force` 不再误拦）；移除 rebase 兜底硬
 //     deny（`git rebase -i`/`git pull --rebase` 放行，与 ps1 一致）；targetsControlPlane
-//     限定用户级根（home/.dsh、.agent-presets、agent.cordis.yml），项目级 settings.yaml
-//     不再误拦
+//     限定用户级根（home/.dsh、.agent-presets、安装副本 agent.cordis.yml），项目级
+//     settings.yaml 不再误拦；v11 再豁免源仓库 dsh/preset|en/preset 事实源
 //   - SQL 工具（sql/sql_execute/run_sql）加入 KNOWN_SAFE_TOOLS（消除门禁 1 死代码，
 //     门禁 4 可达）；run_code 1b 补 require('fs')/import('fs')/writeFileSync 检查
 //   - 保留（按 kix 0% 误报纪律 + 规则是负债）：角色边界门禁不接（exec.agent 无角色
@@ -50,7 +50,7 @@
 //   - 原 ASK 级门禁（普通 push / 本地破坏性 git / gh 与 GitHub mutation）
 //     全部改为放行，由 persona + kixpower-review 流程做软约束。
 //   - 硬 DENY 仅保留真正不可逆/可机械判定为破坏性的操作：force push、
-//     main/master 保护、控制平面写、破坏性 SQL、未知执行工具、run_code
+//     main/master 保护、破坏性 SQL、未知执行工具、run_code
 //     受限能力、gh/GitHub 删除远端数据。
 //
 // v8（v1.2.10 自审整改；0% 误报反例回归）：
@@ -60,6 +60,15 @@
 //   - 控制平面保护改为只拦明确写意图（写/删/改动词或 shell 重定向命中目标）；
 //     grep/cat/ls/Get-Content 等只读诊断放行。
 //   - GitHub MCP 工具前缀可经 config.githubToolPrefix 配置（默认 mcp__github__）。
+//
+// v11（v1.2.14，PR#10 遗留）：targetsControlPlane 见任意 agent.cordis.yml 就
+//   deny，把源仓库事实源（dsh/preset/、en/preset/）当成安装副本误伤——维护者
+//   无法在本仓库改挂载注释/计数。安装面（~/.dsh / .agent-presets）仍优先命中。
+//
+// v12（v1.2.14，用户决策）：控制平面写从硬 deny 降为 remind。kix 自迭代 /
+//   用户已授权改安装副本时，硬拦会挡正事；安装面仍识别并注入一次提醒
+//   （additionalContexts，带 id），不记 denyMemo。源仓库事实源继续豁免
+//   （不提醒）。force push / main / 破坏性 SQL 仍硬 deny。
 //
 //   - 修复「reflog 计数惩罚历史修整」：改用 reflog subject（%gs）口径，
 //     只数 commit 类条目。reset / merge / pull / checkout / rebase 不再
@@ -92,6 +101,7 @@
 
 const { readFile } = require('node:fs/promises')
 const { join } = require('node:path')
+const { randomUUID } = require('node:crypto')
 const { execFile } = require('node:child_process')
 const { promisify } = require('node:util')
 
@@ -398,19 +408,43 @@ function isLocalDestructiveAsk(text) {
 }
 
 // v3：用户级控制平面路径判定（修复项目级 settings.yaml 误伤）：
-//   限定 home 下的 .dsh 根、.agent-presets（全局唯一目录名）、agent.cordis.yml（preset 专属）。
-function targetsControlPlane(text) {
-  const low = String(text || '').toLowerCase().replace(/\\/g, '/')
+//   限定 home 下的 .dsh 根、.agent-presets（全局唯一目录名）、安装副本
+//   agent.cordis.yml（preset 专属）。
+// v11：源仓库事实源 dsh/preset/ 与 en/preset/ 下的同名文件不是用户级安装
+//   副本——bare `agent.cordis.yml` 子串会把维护者对自己仓库的编辑当成
+//   CONTROL PLANE 误伤。安装副本仍走 .agent-presets / ~/.dsh 命中。
+function isSourceRepoPresetPath(low) {
+  return /(?:^|\/)(?:dsh|en)\/preset(?:\/|$)/.test(low)
+}
+function isInstallControlPlanePath(low) {
   const home = (process.env.USERPROFILE || process.env.HOME || '').toLowerCase().replace(/\\/g, '/')
   return (
     low.includes('.agent-presets') ||
-    low.includes('agent.cordis.yml') ||
     (home !== '' && low.includes(home + '/.dsh')) ||
     low.includes('~/.dsh') ||
     low.includes('$home/.dsh') ||
     low.includes('$env:userprofile/.dsh') ||
     low.includes('%userprofile%/.dsh')
   )
+}
+function targetsControlPlane(text) {
+  const low = String(text || '').toLowerCase().replace(/\\/g, '/')
+  // 安装面先于源路径豁免：挡住 dsh/preset/../../.dsh/.agent-presets 这类绕过。
+  if (isInstallControlPlanePath(low)) return true
+  if (isSourceRepoPresetPath(low)) return false
+  return low.includes('agent.cordis.yml')
+}
+
+const CONTROL_PLANE_REMIND =
+  'kix-guards: 正在改写用户级控制平面（~/.dsh / .agent-presets）。自迭代或用户已授权时可继续；改完请用新会话验证挂载，勿把安装副本当源仓库提交。'
+
+function makeUserMessage(text) {
+  return {
+    id: randomUUID(),
+    role: 'user',
+    content: [{ type: 'text', text }],
+    source: { kind: 'plugin', plugin: 'kix-guards', form: 'notice', summary: text.slice(0, 100) },
+  }
 }
 
 // ── v8：终端控制平面保护只拦「写意图」────────────────────────────────────
@@ -611,6 +645,15 @@ module.exports = {
     const DENY = (reason) => ({ kind: 'deny', reason })
     // v6：会话内重复尝试记忆（key → 原拒绝原因；只记录拒绝，用户放行不记）
     const denyMemo = new Map()
+    // v12：控制平面软提醒（每会话一次；投递成功才消耗）
+    const pendingControlPlane = new Map()
+    let controlPlaneReminded = false
+
+    function queueControlPlaneRemind(exec) {
+      if (controlPlaneReminded) return
+      const callId = exec && exec.callId
+      if (callId) pendingControlPlane.set(callId, CONTROL_PLANE_REMIND)
+    }
 
     // ── 工具分类 ──────────────────────────────────────────────────────────
     const TERMINAL_TOOLS = new Set(['pwsh', 'bash'])
@@ -857,9 +900,9 @@ module.exports = {
             if (decision) return decision
           }
         }
-        // 2c. 控制平面保护（v8：只拦明确写意图，grep/cat/ls 等只读诊断放行）
+        // 2c. 控制平面保护（v8：只拦明确写意图；v12：硬 deny → remind）
         if (isTerminalControlPlaneWrite(text)) {
-          return deny('CONTROL PLANE: 禁止通过命令改写用户级 Agent/Skill/Prompt/Hook/设置。')
+          queueControlPlaneRemind(exec)
         }
         // 2d. gh CLI（GitHub CLI）写保护（v6：堵「经 pwsh 调 gh 绕过 MCP GitHub 门禁」）
         if (isGhDestructive(text)) {
@@ -868,11 +911,11 @@ module.exports = {
         // v9：gh 普通写操作仅软约束，不提问；gh 破坏性删除仍 deny。
       }
 
-      // 3. 编辑工具控制平面保护
+      // 3. 编辑工具控制平面保护（v12：硬 deny → remind，自迭代可写安装副本）
       if (EDIT_TOOLS.has(tool) && args) {
         const path = args.file_path || args.path || ''
         if (typeof path === 'string' && targetsControlPlane(path)) {
-          return deny('CONTROL PLANE: 禁止编辑用户级 Agent/Skill/Prompt/Hook/设置文件。')
+          queueControlPlaneRemind(exec)
         }
       }
 
@@ -893,9 +936,19 @@ module.exports = {
       return next()
     })
 
+    ctx.on('tools/post-execute', async (exec, result, next) => {
+      if (pendingControlPlane.size === 0) return next()
+      const pending = pendingControlPlane.get(exec && exec.callId)
+      if (!pending) return next()
+      pendingControlPlane.delete(exec.callId)
+      if (controlPlaneReminded) return next()
+      controlPlaneReminded = true
+      return { kind: 'accept', additionalContexts: [makeUserMessage(pending)] }
+    })
+
     // 记录挂载
     ctx.on('ready', () => {
-      ctx.logger?.info?.('[kix-guards] 机械门禁监听器已挂载（v9：硬 deny 仅保留不可逆破坏；发布/评论/普通 push 等确认类操作软约束）')
+      ctx.logger?.info?.('[kix-guards] 机械门禁监听器已挂载（v12：控制平面写 remind；硬 deny 仅不可逆破坏）')
     })
   },
 }
@@ -930,4 +983,6 @@ module.exports.__internals = {
   escapeRegex,
   COMMIT_HARD_CAP,
   COMMIT_BUDGET_DEFAULT,
+  CONTROL_PLANE_REMIND,
+  makeUserMessage,
 }

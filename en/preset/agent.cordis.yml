@@ -634,7 +634,7 @@
 # dispatch carries current_sprint, verify the workspace docs/.kixpower-current-sprint
 # marker matches, docs/sprint-N/{plan,progress}.md exist, progress has no blocker,
 # and QA handoff requires all tasks completed. Default remind; ask/block need
-# explicit config. v8: QA completion marker excludes negated statements (not done / undone / not passed). Unit tests: node plugins/kix-orchestration.test.js (69 assertions; v11 plan contract +12).
+# explicit config. v8: QA completion marker excludes negated statements (not done / undone / not passed). Unit tests: node plugins/kix-orchestration.test.js (96 assertions; v10.1 Tri-Block [CONTEXT] Sprint N tolerance; v11 plan contract).
 - id: kix-orchestration
   name: ./plugins/kix-orchestration.js
 
@@ -650,7 +650,7 @@
 # (dsh/preset + en/preset + scripts entry all present); other workspaces pass
 # through untouched. Default intensity remind (docs are reversible, no deny);
 # ask/block need explicit config. remindOnce: once per session per category.
-# Unit tests: node plugins/kix-consistency.test.js (36 assertions).
+# Unit tests: node plugins/kix-consistency.test.js (54 assertions).
 - id: kix-consistency
   name: ./plugins/kix-consistency.js
 
