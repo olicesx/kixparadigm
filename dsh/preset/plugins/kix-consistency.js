@@ -129,22 +129,50 @@ module.exports = {
     const cfg = config || {}
     const intensity = cfg.intensity || 'remind'
 
+    function sessionCwd(agent) {
+      try {
+        const cwd = agent && agent.session && agent.session.header && agent.session.header.cwd
+        return typeof cwd === 'string' && cwd.length > 0 ? cwd : undefined
+      } catch {
+        return undefined
+      }
+    }
+
+    // sandboxPolicy.workspaceRoot 是部署回退（常为 process.cwd()），不是会话工作区。
+    // DSH 官方口径：会话不可变 cwd 才是 workspace-write 边界；resolve({session}) 才给出逐调用根。
+    // 误用回退值 → isRepoRoot(/root) 失败 → 整插件在任何非启动目录工作区静默失效（WSL2 E2E 实锤）。
+    function resolveWorkspaceRoot(agent) {
+      const cwd = sessionCwd(agent)
+      if (cwd) return cwd
+      const sandboxPolicy = ctx.get('sandboxPolicy')
+      if (sandboxPolicy === undefined) return undefined
+      if (typeof sandboxPolicy.resolve === 'function') {
+        try {
+          const session = agent && agent.session
+          const resolved = sandboxPolicy.resolve(session ? { session } : {})
+          if (resolved && typeof resolved.workspaceRoot === 'string' && resolved.workspaceRoot.length > 0) {
+            return resolved.workspaceRoot
+          }
+        } catch { /* fall through */ }
+      }
+      return sandboxPolicy.workspaceRoot || undefined
+    }
+
     const states = new Map()
     function stateFor(agent) {
       const key = agent && agent.id ? String(agent.id) : 'anonymous'
       let st = states.get(key)
       if (!st) {
-        const sandboxPolicy = ctx.get('sandboxPolicy')
-        const session = agent && agent.session
-        const header = session && session.header
         st = {
           enabled: true,
-          workspaceRoot: (sandboxPolicy !== undefined && sandboxPolicy.workspaceRoot) ||
-            (header && header.cwd) || undefined,
+          workspaceRoot: resolveWorkspaceRoot(agent),
           reminded: new Set(),
           pendingRemind: new Map(),
         }
         states.set(key, st)
+      } else {
+        const live = resolveWorkspaceRoot(agent)
+        if (live) st.workspaceRoot = live
       }
       return st
     }
