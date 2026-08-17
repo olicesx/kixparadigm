@@ -33,7 +33,7 @@
     "test:installer": "node --test scripts/install-lib.test.js",
     "test:consistency": "node scripts/check-consistency.cjs",
     "test:vision": "node --test bridge/test.js",
-    "test": "npm run test:installer && node scripts/check-consistency.cjs && node --test bridge/test.js && node preset/plugins/kix-guards.test.js && node preset/plugins/kix-commands.test.js && node preset/plugins/kix-cost.test.js && node preset/plugins/kix-route.test.js && node preset/plugins/kix-discipline.test.js && node preset/plugins/kix-orchestration.test.js && node preset/plugins/kix-focus.test.js"
+    "test": "npm run test:installer && node scripts/check-consistency.cjs && node --test bridge/test.js && node preset/plugins/kix-guards.test.js && node preset/plugins/kix-commands.test.js && node preset/plugins/kix-cost.test.js && node preset/plugins/kix-route.test.js && node preset/plugins/kix-discipline.test.js && node preset/plugins/kix-orchestration.test.js && node preset/plugins/kix-focus.test.js && node preset/plugins/kix-consistency.test.js"
   },
   "engines": {
     "node": ">=20.16.0"

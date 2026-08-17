@@ -148,6 +148,16 @@ cannot see scope-local names). The plan evolved:
 | run_code sub-dispatch | ✅ SDK `tools.read` works; `tools["mcp__github__push_files"]` blocked by gate, error identical to direct call — **no gate bypass** |
 | Native parallel | ✅ edit/read/pwsh/kix_capability_* direct calls fine (per-agent presentation coexists with host default native) |
 
+### P5 — Write-time consistency guard + plan contract gate (implemented 2026-08-17)
+
+Two candidates survived the philosophy filter (of seven; the rest were correctly rejected by rules-are-liability: static file-type mapping = anti-overfit violation, compaction already mechanized = duplicate liability, direct-path schema = three layers already cover it).
+
+**P5a — `kix-consistency` plugin (write-time consistency guard)**: `scripts/check-dsh-consistency.cjs` refactored into `plugins/consistency-lib.cjs` (pure functions, root-parameterized, returns `{failures, notes}`, no console side effects) — **CI scripts and the plugin share one implementation** (no CI-vs-runtime dual source). `tools/pre-execute` on writes under `dsh/preset/`, `en/preset/`, README*, package.json*, vision-bridge runs the relevant sub-checks (persona budget / plugin pair sync / memories count / README phrases / version pair / single-file syntax). Fires only in a source-repo-fingerprint workspace; everything else passes untouched. Default `remind` (docs are reversible, no deny); `ask`/`block` configurable; remindOnce per session per category. Plugin-name list is now dynamic (`pluginNames()` scans the dir) — new plugins join CI checks automatically.
+
+**P5b — kix-orchestration v11 (plan.md contract write gate)**: writing `docs/sprint-N/plan.md` validates the budget-chain fields kix-guards actually consumes + task-list existence; only full `write` is validated (`edit` has no full new content — 0-false-positive discipline); dedicated reminder slot.
+
+**Acceptance**: kix-consistency 36 asserts / kix-orchestration 77→89; zh/en `npm test` fully green; CI (test + pack dry-run) on 4 platform combos.
+
 ## Status
 
 | Metric | Before | Now (P0-P4) | Target |

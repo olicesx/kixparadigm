@@ -43,7 +43,7 @@ See [INSTALL.md](INSTALL.md). Start with `/kixpower-new`.
 |-------|-----------|-----------|
 | **Cognition** (how to think) | kixparadigm persona | Three-channel cross-validation, phase duality, rules-are-debt, requirement triple-check (no user-pleasing), pre-code decision chain |
 | **Execution** (how to execute) | kixpower | Orchestration model: lead model freely picks members (dev/qa/reviewer) + Sprint flow, DAG topology, 4-layer loop, four invariant floors |
-| Mechanical guards | `kix-guards` | Commit budget, feature branch, force push, dangerous SQL, control-plane protection (hard deny only for irreversible damage) |
+| Mechanical guards | `kix-guards` · `kix-consistency` | Commit budget, feature branch, force push, dangerous SQL, control-plane protection (hard deny only for irreversible damage); preset consistency write-time guard (prevents zh/en drift) |
 | Handoff discipline | `kix-orchestration` · `kix-discipline` | Subagent handoff evidence-chain checks; spec contract gate + verification gate |
 | Focus | `kix-focus` | Tool surface 85→18 resident cut + on-demand catalog & proxied execution — progressive disclosure at runtime |
 | Cost & routing | `kix-cost` · `kix-route` | Subagent thinking-effort normalization; sentinel model names → runtime-available routes |
