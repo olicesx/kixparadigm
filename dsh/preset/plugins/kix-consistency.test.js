@@ -421,52 +421,20 @@ function makePostExec(callId) {
   const ed2Post = await postExecute[0]({ name: 'edit', callId: 'ed-2', agent: eEd2.agent }, {}, () => 'NEXT')
   await ok('edit 工具写根内非 plugins → parity hint', !!(ed2Post && ed2Post.additionalContexts && ed2Post.additionalContexts[0].content[0].text.includes('由你判断')))
 
-  // ── 任务形态覆盖：shell 写入（pwsh / bash，无 file_path）────────────────
-  section('任务形态：shell 写入（pwsh / bash）')
+  // ── 任务形态边界：shell 写入零开销（评审否决机械提取——软启发 + CI 兜底）──
+  section('任务形态：shell 写入零开销（无机械提取，非负债）')
   const repoSh = makeRepoRoot()
   workspaceRootMock = repoSh
   fs.mkdirSync(path.join(repoSh, 'dsh/preset/plugins'), { recursive: true })
   fs.writeFileSync(path.join(repoSh, 'dsh/preset/plugins/sh.js'), 'S', 'utf8')
   const sh1 = { name: 'pwsh', callId: 'sh-1', arguments: { command: 'Copy-Item /tmp/x.js dsh\\preset\\plugins\\sh.js' }, agent: { id: 'cons-sh' } }
-  await preExecute[0](sh1, () => 'NEXT')
+  const sh1Pre = await preExecute[0](sh1, () => 'NEXT')
   const sh1Post = await postExecute[0]({ name: 'pwsh', callId: 'sh-1', agent: sh1.agent }, {}, () => 'NEXT')
-  await ok('pwsh 写漂移插件（反斜杠路径）→ post 检测注入提醒',
-    !!(sh1Post && sh1Post.additionalContexts && sh1Post.additionalContexts[0].content[0].text.includes('shell 写入后检测到身份组漂移')))
-  const sh2 = { name: 'pwsh', callId: 'sh-2', arguments: { command: 'Set-Content dsh/preset/skills/foo.md hi' }, agent: { id: 'cons-sh2' } }
-  await preExecute[0](sh2, () => 'NEXT')
-  const sh2Post = await postExecute[0]({ name: 'pwsh', callId: 'sh-2', agent: sh2.agent }, {}, () => 'NEXT')
-  await ok('pwsh 写根内非 plugins → parity hint', !!(sh2Post && sh2Post.additionalContexts && sh2Post.additionalContexts[0].content[0].text.includes('由你判断')))
-  const sh3 = { name: 'pwsh', callId: 'sh-3', arguments: { command: 'Get-ChildItem src/ && npm test' }, agent: { id: 'cons-sh3' } }
-  await preExecute[0](sh3, () => 'NEXT')
-  const sh3Post = await postExecute[0]({ name: 'pwsh', callId: 'sh-3', agent: sh3.agent }, {}, () => 'NEXT')
-  await ok('pwsh 未提及 preset 根路径 → 零开销', sh3Post === 'NEXT')
-  // bash + 一致写入（双侧都在且相同）→ 无假阳性
-  const repoShB = makeRepoRoot()
-  for (const r of ['dsh/preset', 'en/preset']) {
-    fs.mkdirSync(path.join(repoShB, r + '/plugins'), { recursive: true })
-    fs.writeFileSync(path.join(repoShB, r + '/plugins/ok.js'), 'OK', 'utf8')
-  }
-  workspaceRootMock = repoShB
-  const sh4 = { name: 'bash', callId: 'sh-4', arguments: { command: 'sed -i s/a/b/ dsh/preset/plugins/ok.js' }, agent: { id: 'cons-sh4' } }
-  await preExecute[0](sh4, () => 'NEXT')
-  const sh4Post = await postExecute[0]({ name: 'bash', callId: 'sh-4', agent: sh4.agent }, {}, () => 'NEXT')
-  await ok('bash 工具通道同样覆盖（一致写入 → 不误报）', sh4Post === 'NEXT')
+  await ok('pwsh 写入（含根内路径）→ 零开销放行（无机械提取）', sh1Pre === 'NEXT' && sh1Post === 'NEXT')
   const sh5 = { name: 'bash', callId: 'sh-5', arguments: { command: 'cp /tmp/n.js en/preset/plugins/new.js' }, agent: { id: 'cons-sh5' } }
-  await preExecute[0](sh5, () => 'NEXT')
+  const sh5Pre = await preExecute[0](sh5, () => 'NEXT')
   const sh5Post = await postExecute[0]({ name: 'bash', callId: 'sh-5', agent: sh5.agent }, {}, () => 'NEXT')
-  await ok('bash 写漂移插件（en 有 zh 无）→ post 注入提醒', !!(sh5Post && sh5Post.additionalContexts && sh5Post.additionalContexts.length === 1))
-
-  // ── 提取器单测 ─────────────────────────────────────────────────────────
-  section('__internals: extractShellTargets')
-  const ext1 = I.extractShellTargets('cp a dsh/preset/plugins/x.js && cat dsh/preset/skills/y.md', KIX)
-  await ok('正斜杠命令提取 2 目标', ext1.length === 2 && ext1[0].rel === 'plugins/x.js' && ext1[1].rel === 'skills/y.md')
-  await ok('连字符文件名完整提取（live 实弹回归：shell-live.js 曾截成 shell）',
-    I.extractShellTargets('cp a dsh/preset/plugins/shell-live.js', KIX)[0].rel === 'plugins/shell-live.js')
-  await ok('连字符 + 相对段混合', I.extractShellTargets('cp pkgs/zh/plugins/my-plugin.test.js b', ['pkgs/zh'])[0].rel === 'plugins/my-plugin.test.js')
-  const ext2 = I.extractShellTargets('Copy-Item x dsh\\preset\\plugins\\x.ps1', KIX)
-  await ok('反斜杠命令提取（rel 归一正斜杠）', ext2.length === 1 && ext2[0].rel === 'plugins/x.ps1')
-  await ok('无关命令 → 空', I.extractShellTargets('npm install && npm test', KIX).length === 0)
-  await ok('cap 8 目标', I.extractShellTargets(Array.from({ length: 20 }, (_, i) => `dsh/preset/plugins/f${i}.js`).join(' '), KIX).length === 8)
+  await ok('bash 写入（漂移场景）→ 零开销放行（同步感知靠软启发 + CI）', sh5Pre === 'NEXT' && sh5Post === 'NEXT')
 
   // ── 强度免疫：parity hint 不受 block / ask 影响 ────────────────────────
   section('强度免疫：parity hint（无失败可拦）')
