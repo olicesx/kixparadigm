@@ -390,7 +390,7 @@ function checkPlanContract(text) {
   if (!hasBudgetSource) {
     reasons.push('plan.md 缺少 commit 预算来源（task_sizing.derived_commit_budget 或 blast_radius.max_commits）——预算兜底链将静默落冷启动 3')
   }
-  if (!/[-*]\s*\[[ xX]\]/.test(s)) {
+  if (!/[-*+]\s*\[[ xX]\]/.test(s)) {
     reasons.push('plan.md 缺少任务清单（- [ ] 条目）')
   }
   return reasons

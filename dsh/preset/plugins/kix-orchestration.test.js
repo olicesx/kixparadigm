@@ -686,6 +686,31 @@ await ok('/kix-orchestration off 后 plan 门禁不再拦（enabled 门控，blo
   // off 后必须放行：deny = 门禁绕过了关闭开关
   return pre === 'NEXT' || pre === undefined || (pre && pre.kind === 'allow')
 })())
+await ok('+ bullet 任务清单同样接受', (() => {
+  const r = I.checkPlanContract('---\ntask_sizing:\n  derived_commit_budget: 4\n---\n+ [ ] t1\n')
+  return r.length === 0
+})())
+await ok('Windows 反斜杠路径触发 plan 门禁', (async () => {
+  const agent = { id: 'orch-plan13', session: { header: sessionHeader } }
+  const exec = { name: 'write', arguments: { file_path: 'docs\\sprint-1\\plan.md', content: 'no budget\n' }, token: 't', callId: 'plan-c13', agent }
+  await preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+  const post = await postExecute[0]({ name: 'write', callId: 'plan-c13', agent }, {}, () => 'NEXT')
+  return post && post.additionalContexts && post.additionalContexts.length === 1
+})())
+await ok('plan 提醒不烧 sleep 槽（同 agent 链式：plan 后 sleep 各自投递）', (async () => {
+  const agentId = 'orch-plan14'
+  const mkAgent = () => ({ id: agentId, session: { header: sessionHeader } })
+  // 先触发 plan 提醒（write 残缺 plan）
+  const wExec = { name: 'write', arguments: { file_path: 'docs/sprint-4/plan.md', content: 'bad' }, token: 't', callId: 'plan-c14', agent: mkAgent() }
+  await preExecute[0](wExec, () => Promise.resolve({ kind: 'allow' }))
+  const wPost = await postExecute[0]({ name: 'write', callId: 'plan-c14', agent: mkAgent() }, {}, () => 'NEXT')
+  // 同 agent 再触发 sleep 空转（bash + subagent description）
+  const sExec = { name: 'bash', arguments: { command: 'sleep 45 && echo done', description: 'Wait for subagents to progress' }, token: 't', callId: 'plan-c14s', agent: mkAgent() }
+  await preExecute[0](sExec, () => Promise.resolve({ kind: 'allow' }))
+  const sPost = await postExecute[0]({ name: 'bash', callId: 'plan-c14s', agent: mkAgent() }, { isError: false }, () => 'NEXT')
+  return !!(wPost && wPost.additionalContexts && wPost.additionalContexts.length === 1) &&
+    !!(sPost && sPost.additionalContexts && sPost.additionalContexts.length === 1)
+})())
 
 // ── 清理临时工作区（2026-08-17：曾泄漏 /tmp/kix-orch-test-* 593 个目录）──
 for (const ws of createdWorkspaces) fs.rmSync(ws, { recursive: true, force: true })
