@@ -76,6 +76,46 @@ function checkPersonaBudget({ root, rel, maxChars, maxEstTokens }) {
 }
 
 // 该相同的数份必须相同（kix 哲学：不是写死的 zh/en 一对）。
+// 边界自感知：preset 根 = 同时含 agent.cordis.yml + preset.yml 的目录（DSH preset
+// 布局双标记，压假阳性），深度 ≤2 扫描（跳过 .* / node_modules）。
+// 本仓自感知结果 = dsh/preset + en/preset；根 plugins/ 是 VS Code 导入源，不是
+// preset 根，天然不进身份组。其它仓库：≥2 个 preset 根才引导；单 preset /
+// 普通项目零开销放行——规则是负债，只做启发引导。
+const PRESET_MARKERS = ['agent.cordis.yml', 'preset.yml']
+
+function isPresetRootDir(root, rel) {
+  return PRESET_MARKERS.every((m) => fs.existsSync(path.join(root, rel, m)))
+}
+
+function discoverPresetRoots(root, extraRoots) {
+  if (!root || typeof root !== 'string') return []
+  const out = []
+  const add = (rel) => {
+    const n = String(rel || '').replace(/\\/g, '/').replace(/\/+$/, '')
+    if (!n || n.startsWith('..') || path.isAbsolute(n)) return
+    if (out.includes(n)) return
+    if (isPresetRootDir(root, n)) out.push(n)
+  }
+  for (const rel of (Array.isArray(extraRoots) ? extraRoots : [])) add(rel)
+  let top
+  try { top = fs.readdirSync(root, { withFileTypes: true }) } catch { return out.sort() }
+  for (const d1 of top) {
+    if (!d1.isDirectory() || d1.name.startsWith('.') || d1.name === 'node_modules') continue
+    add(d1.name)
+    let mid
+    try { mid = fs.readdirSync(path.join(root, d1.name), { withFileTypes: true }) } catch { continue }
+    for (const d2 of mid) {
+      if (!d2.isDirectory() || d2.name.startsWith('.')) continue
+      add(d1.name + '/' + d2.name)
+    }
+  }
+  return out.sort()
+}
+
+function isMultiPresetWorkspace(root) {
+  return discoverPresetRoots(root).length >= 2
+}
+
 // paths ≥ 2；任一缺失 / 任一份与锚点（第一份）字节不同 → failure。
 function checkIdenticalSet({ root, paths, label }) {
   const failures = []
@@ -102,31 +142,42 @@ function checkFilesEqual({ root, a, b, label }) {
   return checkIdenticalSet({ root, paths: [a, b], label })
 }
 
-// 声明：这些路径是同一份的额外副本（加语言 / 参考副本 = 加一行，不加 if）。
-// key = dsh 侧锚点；value = 除 dsh/en 之外仍必须相同的路径。
-const EXTRA_IDENTICAL_COPIES = {
-  'dsh/preset/plugins/kix-guards.js': ['plugins/kix-guards.js'],
-  'dsh/preset/plugins/kix-guards.test.js': ['plugins/kix-guards.test.js'],
+// 从被写路径反推它属于哪个已发现的 preset 根（最长前缀）。
+function presetRootOf(rel, presetRoots) {
+  const p = String(rel || '').replace(/\\/g, '/')
+  let hit = null
+  for (const r of presetRoots) {
+    if (p === r || p.startsWith(r + '/')) {
+      if (!hit || r.length > hit.length) hit = r
+    }
+  }
+  return hit
 }
 
-function pluginIdentityPaths(name) {
-  const dsh = `dsh/preset/plugins/${name}`
-  const en = `en/preset/plugins/${name}`
-  return [dsh, en, ...(EXTRA_IDENTICAL_COPIES[dsh] || [])]
+// 身份组：同一相对路径在每个 preset 根下的对应文件。
+// 例：写 dsh/preset/plugins/x.js → [dsh/preset/plugins/x.js, en/preset/plugins/x.js]
+function identityPathsFor(rel, presetRoots) {
+  const p = String(rel || '').replace(/\\/g, '/')
+  const home = presetRootOf(p, presetRoots)
+  if (!home) return []
+  const suffix = p.slice(home.length).replace(/^\//, '')
+  return presetRoots.map((r) => (suffix ? r + '/' + suffix : r))
 }
 
-function extraIdentityMembers() {
-  return Object.values(EXTRA_IDENTICAL_COPIES).flat()
+function pluginIdentityPaths(name, presetRoots) {
+  return (Array.isArray(presetRoots) ? presetRoots : []).map((r) => r + '/plugins/' + name)
 }
 
-// 插件身份组：dsh + en + 声明的额外副本；
-// test 文件存在（任一侧 / 额外副本）则同样校验；全无 test → note 跳过（如 opt-in kix-stalled）。
-function checkPluginPair({ root, name }) {
+// 插件身份组：每个已发现 preset 根下的同名文件（未传 roots 则现场发现）。
+// test 任一根存在则整组校验；全无 test → note 跳过（如 opt-in kix-stalled）。
+function checkPluginPair({ root, name, presetRoots }) {
+  const roots = Array.isArray(presetRoots) && presetRoots.length ? presetRoots : discoverPresetRoots(root)
+  const paths = pluginIdentityPaths(name, roots)
   const out = checkIdenticalSet({
-    root, paths: pluginIdentityPaths(name), label: `plugins/${name}`,
+    root, paths, label: `plugins/${name}`,
   })
   const testName = name.replace(/\.(?:js|cjs)$/, '.test.js')
-  const testPaths = pluginIdentityPaths(testName)
+  const testPaths = pluginIdentityPaths(testName, roots)
   const hasTest = testPaths.some((p) => fs.existsSync(path.join(root, p)))
   if (!hasTest) {
     out.notes.push(`plugins/${testName}: absent on all copies (opt-in), skipped`)
@@ -326,9 +377,12 @@ module.exports = {
   extractPersona,
   checkPersonaBudget,
   checkIdenticalSet,
-  EXTRA_IDENTICAL_COPIES,
+  PRESET_MARKERS,
+  discoverPresetRoots,
+  isMultiPresetWorkspace,
+  presetRootOf,
+  identityPathsFor,
   pluginIdentityPaths,
-  extraIdentityMembers,
   checkFilesEqual,
   checkPluginPair,
   checkMemoriesCount,

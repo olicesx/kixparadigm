@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.2.15（待发版）kix-consistency 泛化：自感知边界 + N 份身份组
+
+- **该相同的数份必须相同（N ≥ 2）**：`checkIdenticalSet` 一次比 N 份（缺一份 / 任一份与锚点字节不同都失败）；身份组不再写死 zh/en 一对——按自感知 preset 根展开，加语言 / 加 preset 自然进组
+- **边界自感知**：preset 根 = 同时含 `agent.cordis.yml` + `preset.yml` 的目录（DSH 布局双标记压假阳性），深度 ≤2 扫描（跳过 `.*` / node_modules）。任意仓库发现 ≥2 个 preset 根才引导；单 preset / 普通项目零开销放行——触发不再按 kixparadigm 指纹硬编码，自定义布局（如 `pkgs/zh` + `pkgs/en`）同样被发现
+- **VS Code 导入源出组**：根 `plugins/`（Copilot 参考副本）不是 preset 根，不再要求与 DSH 侧同步（CI 与写时都不再比）——本仓边界 = DSH 双份 preset 本身，不涉及 VS Code 版本
+- **契约层自声明**：persona 预算 / memories 计数 / README 表述 / 版本对 / vision-bridge 对只对自带 `scripts/check-dsh-consistency.cjs` 的仓库开（仓库自己携带契约入口 = 自声明适用 kix 全量契约），外仓不硬套本仓常量——防过拟合；`presetRoots` 配置可显式声明身份组根覆盖扫描
+- 单测：kix-consistency **54 → 80**（外仓自定义布局 / VS Code 导入源边界 / 单根零开销 / 契约分层 / N 份漂移与缺失）；WSL2 安装副本外仓夹具实测（kix-foreign-multi / single / plain / vscode）
+
 ## v1.2.14（2026-08-17）插件化续：P5 两项机制化
 
 - **kix-consistency 新插件**：一致性守护写时拦截——`check-dsh-consistency.cjs` 拆核为 `consistency-lib.cjs` 纯函数核心（CI 脚本与插件共用单一事实源，防「CI 一套、运行时一套」双源漂移）；写 `dsh/preset/`、`en/preset/`、README*、package.json*、vision-bridge 相关文件时按路径跑相关子检查（persona 预算 / 插件对同步 / memories 计数 / README 表述 / 版本对 / 单文件语法），失败 remind（默认）/ ask / block 可配；仅源仓库指纹工作区触发，其余零开销放行；remindOnce 每会话每类别一次
@@ -10,7 +18,6 @@
 - **PR#10 WSL2 E2E 实锤**：`kix-consistency` 误把 `sandboxPolicy.workspaceRoot`（部署回退 = `process.cwd()`）当会话工作区——dsh 从 `/root` 启动时指纹检查永远失败，整插件在任意非启动目录工作区静默失效（plan 门禁不受影响，因它只看 file_path）。改为会话 `header.cwd` → `sandboxPolicy.resolve({session})` → 回退根。单测 kix-consistency **52 → 54**
 - **kix-guards v11 源仓库豁免**：`targetsControlPlane` 见任意 `agent.cordis.yml` 就 deny，把源仓库事实源（`dsh/preset/`、`en/preset/`）当成安装副本误伤——维护者无法在本仓改挂载注释/计数。安装面（`~/.dsh` / `.agent-presets`）仍优先命中，`dsh/preset/../../.dsh/...` 不能绕过
 - **kix-guards v12 控制平面软门禁**：安装副本写从硬 deny 降为 remind（放行 + 注入一次带 id 的提醒）。kix 自迭代 / 用户已授权改 `~/.dsh` 时不再挡正事；源仓库事实源继续豁免不提醒。force push / main / 破坏性 SQL 仍硬 deny
-- **kix-consistency 身份组**：该相同的数份必须相同——`checkIdenticalSet` 一次比 N 份（缺一份 / 任一份与锚点不同都失败）。插件身份组 = dsh + en + `EXTRA_IDENTICAL_COPIES`（根目录 VS Code 参考副本不再只在 CI 两两比）。写时路由认额外副本。加语言/加参考副本 = 表里加一行
 
 ## v1.2.13（2026-08-17）部署复验整改
 

@@ -74,9 +74,12 @@ autoApprove 全开 → 对应 DSH 权限预设（本部署 `danger-full-access`�
 - 与 kix-guards 交互：capability_call/search 已入 KNOWN_SAFE_TOOLS 白名单（防未来正则误伤）；被代理工具的每次子调用仍过 kix-guards 门禁
 - **2026-08-17（决策 A+B，用户原则：简单机械不影响思考的工具常驻，有认知负担的工具机制化自动激活）**：job_*（job_output/job_list/job_kill）**常驻化**——后台任务随时可用（修 tool-jobs 曾 disabled 时 run_in_background 报 "background jobs unavailable: no job controller serves this agent" 的组成矛盾）；subagent 细分档位与 goal **首次使用自动激活**——capability_call 代理未挂载的可激活工具时自动 `ctx.plugin` 挂载并继续执行（激活由**机制**兜底，模型无需记住先 kix_tool_activate；下一轮起可直呼；kix_tool_activate 保留为显式预激活，kix_tool_deactivate 卸载）
 
-**一致性守护写时拦截（kix-consistency，2026-08-17 新增，P5）**：CI 脚本只在测试期校验、改 preset 文件不实时拦截 drift，本插件把「唯一事实源」从自觉变机械（见 `PLUGINIZATION-ROADMAP.md` P5）：
+**一致性守护写时拦截（kix-consistency，2026-08-17 新增 P5；v1.2.15 泛化）**：CI 脚本只在测试期校验、改 preset 文件不实时拦截 drift，本插件把「唯一事实源」从自觉变机械（见 `PLUGINIZATION-ROADMAP.md` P5）：
 - `scripts/check-dsh-consistency.cjs` 拆核为 `plugins/consistency-lib.cjs` 纯函数核心——**CI 脚本与插件共用单一事实源**（root 参数化、返回 `{failures, notes}`、无 console 副作用），防「CI 一套、运行时一套」双源漂移
-- `tools/pre-execute`：写身份组成员时按路径跑**相关子检查**（persona 预算 / **该相同的数份必须相同** / memories 计数 / README 表述 / 版本对 / 单文件语法），失败 → `remind`（默认）/ `ask` / `block`（可配）；插件身份组 = `dsh/preset/plugins/{name}` + `en/preset/plugins/{name}` + `EXTRA_IDENTICAL_COPIES`（如根目录 VS Code 参考副本）。加语言/加参考副本 = 表里加一行，不加 if
+- **边界自感知（v1.2.15）**：preset 根 = 同时含 `agent.cordis.yml` + `preset.yml` 的目录（深度 ≤2 扫描，跳过 `.*`/node_modules）；任意仓库 ≥2 个 preset 根才引导，单 preset / 普通项目零开销——不按仓库名/指纹硬编码，自定义布局（`pkgs/zh`+`pkgs/en`）同样被发现
+- **通用层只做身份组引导**：各根同名 `plugins/*.{js,cjs}` 字节一致（该相同的数份必须相同，N ≥ 2 一次比完）；**VS Code 导入源（根 `plugins/`）不是 preset 根，天然出组**——本仓边界 = DSH 双份 preset，不涉及 VS Code 版本
+- **契约层自声明**：persona 预算 / memories 计数 / README 表述 / 版本对 / vision-bridge 对只对自带 `scripts/check-dsh-consistency.cjs` 的仓库开（仓库携带契约入口 = 自声明），外仓不硬套本仓常量；`presetRoots` 配置可显式声明身份组根
+- 失败 → `remind`（默认，只做启发引导）/ `ask` / `block`（可配）；remindOnce 每会话每类别一次，挂起提醒按 callId 记账（并发多类别写入互不丢提醒）
 - 触发面：仅「源仓库指纹」工作区（dsh/preset + en/preset + scripts 入口齐全）——其余工作区零开销放行；remindOnce 每会话每类别一次，挂起提醒按 callId 记账（并发多类别写入互不丢提醒）
 - 与 CI 关系：插件名清单动态化（`pluginNames()` 读目录），新增插件自动纳入 CI 检查，不再维护硬编码清单
 
