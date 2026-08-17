@@ -668,7 +668,7 @@
 # repo carrying the scripts entry; foreign repos are never forced onto it.
 # Default intensity remind (heuristic guidance only); ask/block need explicit
 # config. remindOnce: once per session per category.
-# Unit tests: node plugins/kix-consistency.test.js (114 assertions).
+# Unit tests: node plugins/kix-consistency.test.js (118 assertions).
 - id: kix-consistency
   name: ./plugins/kix-consistency.js
 
