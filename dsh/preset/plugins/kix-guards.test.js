@@ -67,6 +67,13 @@ function dispatchIn(cwd, name, args) {
   const exec = { name, arguments: args, token: 't', callId: 'c', agent: { id: 'test-agent', session: { header: { cwd } } } }
   return preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
 }
+// 带会话 cwd 的 remind 派发（v13 控制平面 = 安装面验证需要）
+async function dispatchRemindIn(cwd, name, args) {
+  const exec = { name, arguments: args, token: 't', callId: nextCallId(), agent: { id: 'test-agent', session: { header: { cwd } } } }
+  const pre = await preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+  const post = await postExecute[0](exec, { kind: 'success' }, () => Promise.resolve({ kind: 'accept' }))
+  return { pre, post }
+}
 
 let passed = 0
 let failed = 0
@@ -318,26 +325,39 @@ async function softCase(label, name, args) {
   assert.ok(!I.targetsControlPlane('C:/Users/other/.dsh/settings.yaml'), '其他用户 home 不拦')
   passed += 7
 
-  // v11：源仓库事实源豁免（bare agent.cordis.yml 不再误伤维护者）
-  assert.ok(!I.targetsControlPlane('dsh/preset/agent.cordis.yml'), '相对 zh 源路径不拦')
-  assert.ok(!I.targetsControlPlane('en/preset/agent.cordis.yml'), '相对 en 源路径不拦')
-  assert.ok(!I.targetsControlPlane('C:/work/kixparadigm/dsh/preset/agent.cordis.yml'), '绝对 zh 源路径不拦')
-  assert.ok(!I.targetsControlPlane('C:\\work\\kixparadigm\\en\\preset\\agent.cordis.yml'), 'Windows 反斜杠 en 源路径不拦')
-  assert.ok(!I.targetsControlPlane('./dsh/preset/agent.cordis.yml'), './ 前缀源路径不拦')
-  assert.ok(I.targetsControlPlane('C:/Users/x/.dsh/.agent-presets/kixparadigm/agent.cordis.yml'), '安装副本仍拦')
-  assert.ok(I.targetsControlPlane('agent.cordis.yml'), '裸文件名仍拦（无法证明是源仓库）')
-  assert.ok(I.targetsControlPlane('dsh/preset/../../.dsh/.agent-presets/kixparadigm/agent.cordis.yml'), '源路径+.. 不能绕过安装面')
-  passed += 8
-  check('write: 源仓库 zh agent.cordis.yml → allow（v11 事实源豁免）', await dispatch('write', { file_path: 'dsh/preset/agent.cordis.yml' }), false)
-  check('edit: 源仓库 en agent.cordis.yml → allow（v11 事实源豁免）', await dispatch('edit', { file_path: 'C:/work/kixparadigm/en/preset/agent.cordis.yml' }), false)
+  // v13（少即是多）：控制平面 = 安装面，唯此一条定义；无豁免、无谓词。
+  // 源/外仓/裸名是工作区内容，归 kix-consistency 的「该相同的数份」域。
+  assert.ok(I.targetsControlPlane('dsh/preset/agent.cordis.yml') === false, '源仓库 zh preset：非安装面 → 非控制平面')
+  assert.ok(I.targetsControlPlane('en/preset/agent.cordis.yml') === false, '源仓库 en preset：非安装面')
+  assert.ok(I.targetsControlPlane('C:/work/kixparadigm/dsh/preset/agent.cordis.yml') === false, '绝对源路径：非安装面')
+  assert.ok(I.targetsControlPlane('C:\\work\\kixparadigm\\en\\preset\\agent.cordis.yml') === false, 'Windows 反斜杠源路径：非安装面')
+  assert.ok(I.targetsControlPlane('./dsh/preset/agent.cordis.yml') === false, './ 前缀源路径：非安装面')
+  assert.ok(I.targetsControlPlane('pkgs/zh/agent.cordis.yml') === false, '外仓自定义布局 preset：同一规则（无逐路径豁免）')
+  assert.ok(I.targetsControlPlane('agent.cordis.yml') === false, '裸文件名：工作区内容，非安装面')
+  assert.ok(I.targetsControlPlane('C:/Users/x/.dsh/.agent-presets/kixparadigm/agent.cordis.yml') === true, '安装副本：安装面命中')
+  assert.ok(I.targetsControlPlane('dsh/preset/../../.dsh/.agent-presets/kixparadigm/agent.cordis.yml') === true, '穿越到安装面仍拦')
+  passed += 9
+  check('write: 源仓库 zh agent.cordis.yml → allow（非控制平面）', await dispatch('write', { file_path: 'dsh/preset/agent.cordis.yml' }), false)
+  check('edit: 源仓库 en agent.cordis.yml → allow（非控制平面）', await dispatch('edit', { file_path: 'C:/work/kixparadigm/en/preset/agent.cordis.yml' }), false)
+  check('write: 外仓自定义布局 agent.cordis.yml → allow（同一规则）', await dispatch('write', { file_path: 'pkgs/zh/agent.cordis.yml' }), false)
   check('write: 安装副本 agent.cordis.yml → allow（v12 软门禁）', await dispatch('write', { file_path: 'C:\\Users\\x\\.dsh\\.agent-presets\\kixparadigm\\agent.cordis.yml' }), false)
-  check('pwsh: rm 源仓库 agent.cordis.yml → allow（终端写意图也豁免源路径）', await dispatch('pwsh', { command: 'rm dsh/preset/agent.cordis.yml' }), false)
+  check('pwsh: rm 源仓库 agent.cordis.yml → allow（非安装面）', await dispatch('pwsh', { command: 'rm dsh/preset/agent.cordis.yml' }), false)
+  check('pwsh: rm 外仓自定义布局 agent.cordis.yml → allow（同一规则）', await dispatch('pwsh', { command: 'rm pkgs/zh/agent.cordis.yml' }), false)
   check('pwsh: rm 安装副本 agent.cordis.yml → allow（v12 软门禁）', await dispatch('pwsh', { command: `rm ${HOME}/.dsh/.agent-presets/kixparadigm/agent.cordis.yml` }), false)
 
   // v12：安装面写 → 放行 + 注入一次提醒；源路径不提醒；remindOnce
+  // 顺序纪律：源写入断言必须在首次安装面 remind 之前——controlPlaneReminded
+  // 是会话级单标志，先消耗会让源断言恒真（无区分度）。
   {
+    const src = await dispatchRemindIn('/ws/kix-src', 'write', { file_path: 'dsh/preset/agent.cordis.yml' })
+    const srcForeign = await dispatchRemindIn('/ws/foreign', 'write', { file_path: 'pkgs/zh/agent.cordis.yml' })
+    const srcClean = !src.post || !src.post.additionalContexts
+    if (srcClean) { passed++ } else { failed++ }
+    console.log(`${srcClean ? 'PASS' : 'FAIL'}  v12: 源仓库写不注入控制平面 remind（v13：非安装面）`)
+    const srcForeignClean = !srcForeign.post || !srcForeign.post.additionalContexts
+    if (srcForeignClean) { passed++ } else { failed++ }
+    console.log(`${srcForeignClean ? 'PASS' : 'FAIL'}  v13: 外仓自定义布局源写不注入控制平面 remind（同一规则，无逐路径豁免）`)
     const first = await dispatchRemind('write', { file_path: `${HOME}/.dsh/.agent-presets/kixparadigm/agent.cordis.yml` })
-    const src = await dispatchRemind('write', { file_path: 'dsh/preset/agent.cordis.yml' })
     const second = await dispatchRemind('edit', { file_path: `${HOME}/.dsh/settings.yaml` })
     const term = await dispatchRemind('pwsh', { command: `rm ${HOME}/.dsh/agent.cordis.yml` })
     check('v12: 安装副本 write pre → allow', first.pre, false)
@@ -345,9 +365,6 @@ async function softCase(label, name, args) {
     const okInject = Array.isArray(injected) && injected.length === 1 && injected[0].id && String(injected[0].content[0].text).includes('控制平面')
     if (okInject) { passed++ } else { failed++ }
     console.log(`${okInject ? 'PASS' : 'FAIL'}  v12: 首次安装面写注入带 id 的 remind`)
-    const srcClean = !src.post || !src.post.additionalContexts
-    if (srcClean) { passed++ } else { failed++ }
-    console.log(`${srcClean ? 'PASS' : 'FAIL'}  v12: 源仓库写不注入控制平面 remind`)
     const once = !second.post || !second.post.additionalContexts
     if (once) { passed++ } else { failed++ }
     console.log(`${once ? 'PASS' : 'FAIL'}  v12: 同会话第二次安装面写不再注入（remindOnce）`)

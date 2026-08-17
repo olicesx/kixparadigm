@@ -45,7 +45,7 @@
 | `chat.useCustomAgentHooks` | 无开关——监听器按 scope 挂载即生效（scope-filtered：agent-scoped 监听器只收到该 agent 的调用） | 天然支持"不同角色不同 hook"（producer 禁写源码、QA 禁写业务代码…） |
 
 **hooks/*.ps1 的现状（2026-08-16 更新）**：9 个 Copilot hooks 中，
-- ✅ **blast-radius-check.ps1** → `plugins/kix-guards.js`（pre-execute，5 大门禁；v8 自审修复 + v9 确认类软约束 + v11 源仓库豁免 + v12 控制平面写 remind）
+- ✅ **blast-radius-check.ps1** → `plugins/kix-guards.js`（pre-execute，5 大门禁；v8 自审修复 + v9 确认类软约束 + v12 控制平面写 remind + v13 控制平面=安装面）
 - ✅ **validate-handoff.ps1**（核心通用部分：sprint marker/plan/progress/blocker/QA 完成度）→ `plugins/kix-orchestration.js`（pre-execute + subagent/end + producer_closeout + sleep 提醒 + **v11 plan.md 契约写前校验**，96 断言，v8 QA 完成声明负向语义防误报）
 - ⚠️ **validate-handoff 深度部分**（worktree 登记 / plan_snapshot_sha / l2_gate_manifest_sha256 / stash 基线 / reverify marker）**不移植**——绑定 Copilot 的 runSubagent+agentName 分派格式，DSH 是 prompt 注入，过度移植 = 负债（见 PLUGINIZATION-ROADMAP.md §5 P2 决策）
 - ⚠️ **block-source-edit / block-dev-authority-edit / block-source-edit-qa** → 角色边界，DSH subagent 无角色标记，保留为 prompt 硬约束（kix-guards v3 已决策不接）
@@ -74,9 +74,12 @@ autoApprove 全开 → 对应 DSH 权限预设（本部署 `danger-full-access`�
 - 与 kix-guards 交互：capability_call/search 已入 KNOWN_SAFE_TOOLS 白名单（防未来正则误伤）；被代理工具的每次子调用仍过 kix-guards 门禁
 - **2026-08-17（决策 A+B，用户原则：简单机械不影响思考的工具常驻，有认知负担的工具机制化自动激活）**：job_*（job_output/job_list/job_kill）**常驻化**——后台任务随时可用（修 tool-jobs 曾 disabled 时 run_in_background 报 "background jobs unavailable: no job controller serves this agent" 的组成矛盾）；subagent 细分档位与 goal **首次使用自动激活**——capability_call 代理未挂载的可激活工具时自动 `ctx.plugin` 挂载并继续执行（激活由**机制**兜底，模型无需记住先 kix_tool_activate；下一轮起可直呼；kix_tool_activate 保留为显式预激活，kix_tool_deactivate 卸载）
 
-**一致性守护写时拦截（kix-consistency，2026-08-17 新增，P5）**：CI 脚本只在测试期校验、改 preset 文件不实时拦截 drift，本插件把「唯一事实源」从自觉变机械（见 `PLUGINIZATION-ROADMAP.md` P5）：
+**一致性守护写时拦截（kix-consistency，2026-08-17 新增 P5；v1.2.15 泛化）**：CI 脚本只在测试期校验、改 preset 文件不实时拦截 drift，本插件把「唯一事实源」从自觉变机械（见 `PLUGINIZATION-ROADMAP.md` P5）：
 - `scripts/check-dsh-consistency.cjs` 拆核为 `plugins/consistency-lib.cjs` 纯函数核心——**CI 脚本与插件共用单一事实源**（root 参数化、返回 `{failures, notes}`、无 console 副作用），防「CI 一套、运行时一套」双源漂移
-- `tools/pre-execute`：写 `dsh/preset/`、`en/preset/`、README*、package.json*、vision-bridge 相关文件时按路径跑**相关子检查**（persona 预算 / 插件对同步 / memories 计数 / README 表述 / 版本对 / 单文件语法），失败 → `remind`（默认）/ `ask` / `block`（可配）；插件源码匹配含 `.js`/`.cjs`——共享库源码同样受守护，与 CI 动态清单同口径
+- **边界自感知（v1.2.15）**：preset 根 = 同时含 `agent.cordis.yml` + `preset.yml` 的目录（深度 ≤2 扫描，跳过 `.*`/node_modules）；任意仓库 ≥2 个 preset 根才引导，单 preset / 普通项目零开销——不按仓库名/指纹硬编码，自定义布局（`pkgs/zh`+`pkgs/en`）同样被发现
+- **通用层：身份组 + parity hint**：各根同名 `plugins/*.{js,cjs}` 字节一致（该相同的数份必须相同，N ≥ 2 一次比完）；其余根内路径（skills/agents/instructions/prompts 等翻译关系，机械校验必误报——zh/en 结构本就不镜像）只发 **parity hint**：不断言失败，把「其它根对应份是否需要同步/翻译」交给模型判断——没描述到的形态靠提醒感知，每会话一次限噪，block/ask 对 hint 无效（无失败可拦）。**边界即 preset 根：非 preset 根路径天然出组，无需任何逐路径豁免规则**（自感知推论，不是专门条款）。**shell 写入不做机械提取**（命令文本启发式是负债——曾实装后删，见 CHANGELOG）：同步感知靠 parity hint 立起的意识 + CI 全量兜底
+- **契约层自声明**：persona 预算 / memories 计数 / README 表述 / 版本对 / vision-bridge 对只对自带 `scripts/check-dsh-consistency.cjs` 的仓库开（仓库携带契约入口 = 自声明），外仓不硬套本仓常量；`presetRoots` 配置可显式声明身份组根
+- 失败 → `remind`（默认，只做启发引导）/ `ask` / `block`（可配）；remindOnce 每会话每类别一次，挂起提醒按 callId 记账（并发多类别写入互不丢提醒）
 - 触发面：仅「源仓库指纹」工作区（dsh/preset + en/preset + scripts 入口齐全）——其余工作区零开销放行；remindOnce 每会话每类别一次，挂起提醒按 callId 记账（并发多类别写入互不丢提醒）
 - 与 CI 关系：插件名清单动态化（`pluginNames()` 读目录），新增插件自动纳入 CI 检查，不再维护硬编码清单
 

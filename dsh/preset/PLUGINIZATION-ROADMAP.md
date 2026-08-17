@@ -273,10 +273,11 @@ job_*/subagent-control）自动可见、裁不掉；scope 工具也无法经 cap
 
 **P5a — kix-consistency 插件（一致性守护写时拦截）**：
 - `scripts/check-dsh-consistency.cjs` 拆核为 `plugins/consistency-lib.cjs` 纯函数核心（root 参数化、返回 `{failures, notes}`、无 console 副作用）——**CI 脚本与插件共用单一事实源**，防「CI 一套、运行时一套」双源漂移（自己立的「消灭双源」范式不能自己违反）
-- 插件 pre-execute：写 `dsh/preset/`、`en/preset/`、README*、package.json*、vision-bridge 相关文件时按路径跑**相关子检查**（persona 预算 / 插件对同步 / memories 计数 / README 表述 / 版本对 / 单文件语法）
+- 插件 pre-execute：写身份组成员时按路径跑**相关子检查**（persona 预算 / **该相同的数份必须相同** / memories 计数 / README 表述 / 版本对 / 单文件语法）。身份组 = dsh + en + `EXTRA_IDENTICAL_COPIES`（加语言/加参考副本 = 表里加一行）
 - 触发面：仅「源仓库指纹」工作区（dsh/preset + en/preset + scripts 入口齐全）；其余工作区零开销放行
 - 强度：默认 remind（文档可回滚不 deny）；ask/block 可配；remindOnce 每会话每类别一次
 - 插件名清单动态化：`pluginNames()` 读目录，新增插件自动纳入 CI 检查（不再维护硬编码清单）
+- **v1.2.15 泛化（自感知边界）**：触发面从「kixparadigm 指纹」改为自感知——preset 根 = `agent.cordis.yml` + `preset.yml` 双标记目录（深度 ≤2 扫描），任意仓库 ≥2 根才引导，单 preset / 普通项目零开销；身份组 = 各根同名 plugins（N ≥ 2 一次比完）；其余根内路径（skills/agents 等翻译关系）发 **parity hint**——不断言失败，「其它根对应份是否同步」交给模型判断（没说到的形态靠提醒感知，每会话一次）；非 preset 根路径天然出组（自感知推论，不设逐路径豁免）；kix 全量契约（预算/计数/表述/版本对）由 `scripts/check-dsh-consistency.cjs` 入口自声明，外仓只引导身份组——规则是负债，只做启发引导。**shell 写入不做机械提取**（曾实装命令路径提取通道，实弹暴露字符类 bug 后按负债判据整体删除——软启发 + CI 兜底）
 
 **P5b — kix-orchestration v11（plan.md 契约写前校验）**：
 - 落地边界注释「task_dag / verifiable_gates 结构校验做轻量版（存在性）」：只校验 kix-guards 预算链**真正消费**的字段（`task_sizing.derived_commit_budget` / `blast_radius.max_commits`，缺则预算静默落冷启动 3——sprint-9 事故形态）+ 任务清单存在性

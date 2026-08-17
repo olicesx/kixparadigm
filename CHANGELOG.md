@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.2.15（待发版）kix-consistency 泛化：自感知边界 + N 份身份组
+
+- **该相同的数份必须相同（N ≥ 2）**：`checkIdenticalSet` 一次比 N 份（缺一份 / 任一份与锚点字节不同都失败）；身份组不再写死 zh/en 一对——按自感知 preset 根展开，加语言 / 加 preset 自然进组
+- **边界即 preset 根**：preset 根 = 同时含 `agent.cordis.yml` + `preset.yml` 的目录（DSH 布局双标记压假阳性），深度 ≤2 扫描（跳过 `.*` / node_modules）。任意仓库发现 ≥2 个 preset 根才引导；单 preset / 普通项目零开销放行——触发不再按 kixparadigm 指纹硬编码，自定义布局（如 `pkgs/zh` + `pkgs/en`）同样被发现。**非 preset 根路径天然出组（CI 与写时都不比）——边界是自感知推论，不设任何逐路径豁免规则**
+- **契约层自声明**：persona 预算 / memories 计数 / README 表述 / 版本对 / vision-bridge 对只对自带 `scripts/check-dsh-consistency.cjs` 的仓库开（仓库自己携带契约入口 = 自声明适用 kix 全量契约），外仓不硬套本仓常量——防过拟合；`presetRoots` 配置可显式声明身份组根覆盖扫描
+- **kix-guards v13 控制平面 = 安装面（少即是多）**：v3 的裸 `agent.cordis.yml` 兜底分支删除——它误伤源仓库（v11 硬编码豁免、v13 谓词注入两轮补丁皆是给它打的），而「源 vs 安装副本」本是「该相同的数份」的领域：源/外仓 preset 写归 kix-consistency（身份组 + parity hint + 契约层）管，guards 只管安装面（`~/.dsh` / `.agent-presets`）。无豁免、无谓词、无逐路径规则——上一版（PR 内）的谓词注入机制整体移除。诚实边界：cwd 在安装目录内的相对路径写不提醒（那本就是 v12 已放行的显式自迭代）。单测 kix-guards **239 → 243**
+- **parity hint（未描述形态靠提醒感知）**：根内非 plugins 路径（skills/agents/instructions/prompts/memories（无契约时）/persona（无契约时）等）写时发一次启发提醒——不断言失败，只把「其它根对应份是否需要同步/翻译」交给模型判断（翻译关系机械校验必误报，zh/en 结构本就不镜像）；remindOnce 每会话一次限噪；block/ask 强度不作用于 hint（无失败可拦）
+- **shell 写入不做机械提取（评审否决）**：曾实装 pwsh/bash 命令路径提取通道（pre 登记 / post 复验），WSL2 实弹暴露连字符字符类 bug 后按「规则是负债」复审——命令文本启发式提取覆盖差（间接写不触发）、误提取风险真实、细节 bug 靠实弹才暴露，**整体删除**。shell 通道的同步感知交给软启发（write/edit 的 parity hint 已立起「其它根对应份」维度，模型在 shell 任务同样带着意识）+ CI 全量兜底。该机制从加到删的完整闭环是范式自我应用的记录
+- **首派发兜底（WSL2 实弹实锤修复）**：live 会话**首次**工具派发可能解析不出会话 cwd（agent 无 session）——首写提醒永久丢失、第二写才靠状态自愈触发（复现探针 variant B/C 实证）。修复：工作区根不可解析时，从写入目标绝对路径反推「含 ≥2 preset 根」的最近祖先（同一 `discoverPresetRoots` 判定，不猜 cwd），找到即固化进会话状态。同时漂移消息去重（曾三连 missing）、pre-write 对不存在目标跳过语法检查（missing 噪音）
+- **post-execute 注入合并（WSL2 实弹实锤修复，系统性）**：4 个插件 8 个注入点裸返回 accept-decision **短路瀑布**——先挂载的注入器饿死后挂载的监听器（实证：kix-discipline 首编辑注入后，kix-consistency 的 post 永远收不到同一调用，首写 hint 丢失；第二写 discipline 无待注入才放行）。修复：`consistency-lib.appendContexts`——注入点先 `await next()` 拿下游 decision 再合并自己的 contexts；非 accept 下游（block 等更强决定）原样放行。kix-guards / kix-discipline / kix-orchestration / kix-consistency 全部注入点统一走合并。单测 kix-consistency **107 → 118**（堆叠监听器首写双投递回归 + appendContexts 纯函数）
+- 单测：kix-consistency **54 → 111**（外仓自定义布局 / 边界外路径 / 单根零开销 / 契约分层 / N 份漂移与缺失 / parity hint 与 remindOnce / edit 工具 / shell 零开销边界（无机械提取）/ block+ask 强度免疫 / N=3 根点名 / 双 agent 独立 / 深路径与扩展名形态 / 类别隔离 / 堆叠监听器双投递 / 首派发兜底）；kix-guards **239 → 243**；WSL2 安装副本外仓夹具实测 + 5 轮真会话实弹（3 个 mock 全漏 bug 修复后全过 + 会话恢复验证）
+
 ## v1.2.14（2026-08-17）插件化续：P5 两项机制化
 
 - **kix-consistency 新插件**：一致性守护写时拦截——`check-dsh-consistency.cjs` 拆核为 `consistency-lib.cjs` 纯函数核心（CI 脚本与插件共用单一事实源，防「CI 一套、运行时一套」双源漂移）；写 `dsh/preset/`、`en/preset/`、README*、package.json*、vision-bridge 相关文件时按路径跑相关子检查（persona 预算 / 插件对同步 / memories 计数 / README 表述 / 版本对 / 单文件语法），失败 remind（默认）/ ask / block 可配；仅源仓库指纹工作区触发，其余零开销放行；remindOnce 每会话每类别一次
