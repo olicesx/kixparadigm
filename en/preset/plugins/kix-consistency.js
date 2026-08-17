@@ -44,10 +44,12 @@ function isRepoRoot(root) {
 }
 
 // 写入路径 → 提醒类别（remindOnce 粒度；非 preset 区域返回 null，零开销放行）
+// 插件文件匹配 .js/.cjs——与 lib.pluginNames() 的 CI 动态清单同口径：
+// consistency-lib.cjs 这类共享库源码同样受写时守护（否则「唯一事实源」自身裸奔）
 function classifyWrite(rel) {
   const p = String(rel || '').replace(/\\/g, '/')
   if (p === 'dsh/preset/agent.cordis.yml' || p === 'en/preset/agent.cordis.yml') return 'persona'
-  if (/^(?:dsh\/preset|en\/preset)\/plugins\/[^/]+\.js$/.test(p)) return 'plugins'
+  if (/^(?:dsh\/preset|en\/preset)\/plugins\/[^/]+\.(?:js|cjs)$/.test(p)) return 'plugins'
   if (/^(?:dsh\/preset|en\/preset)\/memories\//.test(p)) return 'memories'
   if (p === 'README.md' || p === 'README.en.md') return 'readme'
   if (p === 'package.json' || p === 'en/package.json') return 'package'
@@ -65,7 +67,7 @@ function pickChecks(root, rel) {
   if (p === 'en/preset/agent.cordis.yml') {
     checks.push(() => lib.checkPersonaBudget({ root, rel: 'en/preset/agent.cordis.yml', ...PERSONA_BUDGET.en }))
   }
-  const pluginRel = /^(?:dsh\/preset|en\/preset)\/plugins\/([^/]+\.js)$/.exec(p)
+  const pluginRel = /^(?:dsh\/preset|en\/preset)\/plugins\/([^/]+\.(?:js|cjs))$/.exec(p)
   if (pluginRel) {
     const name = pluginRel[1]
     checks.push(() => lib.checkPluginPair({ root, name }))
@@ -125,7 +127,7 @@ module.exports = {
           workspaceRoot: (sandboxPolicy !== undefined && sandboxPolicy.workspaceRoot) ||
             (header && header.cwd) || undefined,
           reminded: new Set(),
-          pendingRemind: null,
+          pendingRemind: new Map(),
         }
         states.set(key, st)
       }
@@ -194,21 +196,25 @@ module.exports = {
         if (ok === void 0) return { kind: 'deny', reason: 'kix-consistency: 无法向用户提问（无提问通道），已自动拒绝。' }
         return next()
       }
-      // remind：放行 + 注入提醒（每会话每类别一次；投递成功才消耗，同 kix-orchestration）
+      // remind：放行 + 注入提醒（每会话每类别一次；投递成功才消耗，同 kix-orchestration）。
+      // pendingRemind 为 Map<callId, …>：同一 agent 并发写不同类别（如一次块内
+      // zh 插件 + README）时单槽会互相覆盖丢提醒，按 callId 各自挂起、post 按号消费。
       if (st.reminded.has(category)) return next()
-      st.pendingRemind = { callId: exec.callId, category, reason }
+      st.pendingRemind.set(exec.callId, { category, reason })
       return next()
     })
 
     // ── post-execute：注入 remind（按 callId 匹配消费，防错位注入）────────
     ctx.on('tools/post-execute', async (exec, result, next) => {
       const st = stateFor(exec && exec.agent)
-      if (!st.enabled || !st.pendingRemind) return next()
-      if (st.pendingRemind.callId !== (exec && exec.callId)) return next()
-      const { category, reason } = st.pendingRemind
-      st.pendingRemind = null
-      st.reminded.add(category)
-      return { kind: 'accept', additionalContexts: [makeUserMessage(reason)] }
+      if (!st.enabled || st.pendingRemind.size === 0) return next()
+      const pending = st.pendingRemind.get(exec && exec.callId)
+      if (!pending) return next()
+      st.pendingRemind.delete(exec.callId)
+      // 并发同类别双写：首条投递已消耗该类别，后续挂起条目静默丢弃（remindOnce）
+      if (st.reminded.has(pending.category)) return next()
+      st.reminded.add(pending.category)
+      return { kind: 'accept', additionalContexts: [makeUserMessage(pending.reason)] }
     })
 
     ctx.logger?.info?.('[kix-consistency] 一致性写时拦截已挂载（preset 区域增量校验 + remind；与 CI 共用 consistency-lib 单一事实源）')

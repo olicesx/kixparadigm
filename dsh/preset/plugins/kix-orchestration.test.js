@@ -658,6 +658,35 @@ await ok('block 强度：残缺 plan → deny', (async () => {
   return r && r.kind === 'deny' && typeof r.reason === 'string'
 })())
 
+// ── PR#10 审查修复回归（左边界 / `*` bullet / enabled 门控）──────────────
+section('v11 审查修复回归（PR#10）')
+await ok('* bullet 任务清单同样接受', (() => {
+  const r = I.checkPlanContract('---\ntask_sizing:\n  derived_commit_budget: 4\n---\n* [ ] t1\n')
+  return r.length === 0
+})())
+await ok('mydocs/ 同后缀路径不误命中（左边界）', (async () => {
+  const exec = { name: 'write', arguments: { file_path: 'mydocs/sprint-1/plan.md', content: '随便写' }, token: 't', callId: 'plan-c10', agent: { id: 'orch-plan10', session: { header: sessionHeader } } }
+  await preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+  const post = await postExecute[0]({ name: 'write', callId: 'plan-c10', agent: { id: 'orch-plan10', session: { header: sessionHeader } } }, {}, () => 'NEXT')
+  return post === 'NEXT' || post === undefined
+})())
+await ok('嵌套 docs/ 路径仍命中（正例不回归）', (async () => {
+  const exec = { name: 'write', arguments: { file_path: '/abs/root/docs/sprint-2/plan.md', content: 'no budget\n' }, token: 't', callId: 'plan-c11', agent: { id: 'orch-plan11', session: { header: sessionHeader } } }
+  await preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+  const post = await postExecute[0]({ name: 'write', callId: 'plan-c11', agent: { id: 'orch-plan11', session: { header: sessionHeader } } }, {}, () => 'NEXT')
+  return post && post.additionalContexts && post.additionalContexts.length === 1
+})())
+await ok('/kix-orchestration off 后 plan 门禁不再拦（enabled 门控，block 实例）', (async () => {
+  const agent = { id: 'orch-plan12', session: { header: sessionHeader } }
+  // block 实例的命令是第二次注册（与 remind 主实例共用 registeredCommands 数组）
+  const cmds = registeredCommands.filter((c) => c.name === 'kix-orchestration')
+  cmds[cmds.length - 1].handler({ agent, rawInput: 'off' })
+  const exec = { name: 'write', arguments: { file_path: 'docs/sprint-3/plan.md', content: 'bad' }, token: 't', callId: 'plan-c12', agent }
+  const pre = await blockListeners['tools/pre-execute'][0](exec, () => Promise.resolve({ kind: 'allow' }))
+  // off 后必须放行：deny = 门禁绕过了关闭开关
+  return pre === 'NEXT' || pre === undefined || (pre && pre.kind === 'allow')
+})())
+
 // ── 清理临时工作区（2026-08-17：曾泄漏 /tmp/kix-orch-test-* 593 个目录）──
 for (const ws of createdWorkspaces) fs.rmSync(ws, { recursive: true, force: true })
 

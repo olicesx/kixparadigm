@@ -200,6 +200,43 @@ function makePostExec(callId) {
   const pre6 = await blockListeners['tools/pre-execute'][0](e6, () => 'NEXT')
   await ok('block 强度 → deny 且带原因', pre6 && pre6.kind === 'deny' && typeof pre6.reason === 'string')
 
+  // ── PR#10 审查修复回归（.cjs 路由 / 未覆盖分支 / 并发投递）──────────────
+  section('__internals: .cjs 路由与未覆盖分支（PR#10）')
+  await ok('classifyWrite zh .cjs 共享库 → plugins', I.classifyWrite('dsh/preset/plugins/consistency-lib.cjs') === 'plugins')
+  await ok('classifyWrite en .cjs 共享库 → plugins', I.classifyWrite('en/preset/plugins/consistency-lib.cjs') === 'plugins')
+  await ok('pickChecks .cjs → pair + 语法 2 检查', I.pickChecks(repo, 'dsh/preset/plugins/consistency-lib.cjs').length === 2)
+  await ok('pickChecks README.md → 1 检查', I.pickChecks(repo, 'README.md').length === 1)
+  await ok('pickChecks package.json → 1 检查', I.pickChecks(repo, 'package.json').length === 1)
+  await ok('pickChecks vision-bridge → 2 检查', I.pickChecks(repo, 'dsh/vision-bridge/index.js').length === 2)
+
+  section('pre/post: 并发多类别写（Map 挂起不互相覆盖）')
+  const repo3 = makeRepoRoot()
+  workspaceRootMock = repo3
+  const mkConc = (tool, rel, callId, agentId) => ({
+    name: tool, callId,
+    arguments: { file_path: rel },
+    agent: { id: agentId },
+  })
+  // 同一 agent 一次块内并发两写（不同类别）：两条 pre 都挂起，post 各自按 callId 消费
+  const wA = mkConc('write', 'dsh/preset/plugins/foo.js', 'conc-a', 'cons-conc1')
+  const wB = mkConc('write', 'README.md', 'conc-b', 'cons-conc1')
+  await preExecute[0](wA, () => 'NEXT')
+  await preExecute[0](wB, () => 'NEXT')
+  const postA = await postExecute[0]({ name: 'write', callId: 'conc-a', agent: { id: 'cons-conc1' } }, {}, () => 'NEXT')
+  const postB = await postExecute[0]({ name: 'write', callId: 'conc-b', agent: { id: 'cons-conc1' } }, {}, () => 'NEXT')
+  await ok('并发双类别：两条提醒都投递（callId 各自消费）',
+    !!(postA && postA.additionalContexts && postA.additionalContexts.length === 1) &&
+    !!(postB && postB.additionalContexts && postB.additionalContexts.length === 1))
+  // 并发同类别双写：首条投递消耗类别，第二条静默丢弃（remindOnce 不被并发击穿）
+  const wC = mkConc('write', 'dsh/preset/plugins/bar.js', 'conc-c', 'cons-conc2')
+  const wD = mkConc('write', 'en/preset/plugins/bar.js', 'conc-d', 'cons-conc2')
+  await preExecute[0](wC, () => 'NEXT')
+  await preExecute[0](wD, () => 'NEXT')
+  const postC = await postExecute[0]({ name: 'write', callId: 'conc-c', agent: { id: 'cons-conc2' } }, {}, () => 'NEXT')
+  const postD = await postExecute[0]({ name: 'write', callId: 'conc-d', agent: { id: 'cons-conc2' } }, {}, () => 'NEXT')
+  await ok('并发同类别：仅首条投递（remindOnce 保持）',
+    !!(postC && postC.additionalContexts && postC.additionalContexts.length === 1) && postD === 'NEXT')
+
   // ── 收尾：清理夹具 ─────────────────────────────────────────────────────
   for (const dir of created) {
     try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* 忽略清理失败 */ }

@@ -94,7 +94,7 @@ function checkPluginPair({ root, name }) {
   const out = checkFilesEqual({
     root, a: `dsh/preset/plugins/${name}`, b: `en/preset/plugins/${name}`, label: `plugins/${name}`,
   })
-  const testName = name.replace(/\.js$/, '.test.js')
+  const testName = name.replace(/\.(?:js|cjs)$/, '.test.js')
   const hasTest = fs.existsSync(path.join(root, 'dsh/preset/plugins', testName)) ||
     fs.existsSync(path.join(root, 'en/preset/plugins', testName))
   if (!hasTest) {

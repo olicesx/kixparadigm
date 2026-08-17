@@ -380,7 +380,7 @@ function isSleepWaitForSubagent({ command, description }) {
 // 任务清单存在性——机械可枚举、0 误报（合法 plan 必然具备）：
 //   - 预算链有源：task_sizing.derived_commit_budget 或 blast_radius.max_commits
 //     （缺则 resolveCommitBudget 静默落冷启动 3——sprint-9 事故形态，guards v7 修过）
-//   - 任务清单：至少一条 - [ ] / - [x]
+//   - 任务清单：至少一条 - [ ] / - [x]（`*` bullet 同样接受——GitHub 任务列表两种写法）
 // 不做 manifest SHA 数学、不校验任务内容（认知层留给模型）。
 function checkPlanContract(text) {
   const s = String(text || '')
@@ -390,7 +390,7 @@ function checkPlanContract(text) {
   if (!hasBudgetSource) {
     reasons.push('plan.md 缺少 commit 预算来源（task_sizing.derived_commit_budget 或 blast_radius.max_commits）——预算兜底链将静默落冷启动 3')
   }
-  if (!/-\s*\[[ xX]\]/.test(s)) {
+  if (!/[-*]\s*\[[ xX]\]/.test(s)) {
     reasons.push('plan.md 缺少任务清单（- [ ] 条目）')
   }
   return reasons
@@ -484,10 +484,13 @@ module.exports = {
         // v11（P5）：plan.md 契约写前校验。只对 write 全量写入校验
         // （args.content 可拿完整新内容——DSH write 工具契约）；edit 拿不到
         // 完整新内容，0 误报纪律不猜测（说明性注释，非机制缺陷）。
-        if (tool === 'write' || tool === 'edit') {
+        // 受 st.enabled 门控（/kix-orchestration off 后不再拦——与 handoff/sleep
+        // 分支同口径，off 必须对全部检查生效）。
+        if (st.enabled && (tool === 'write' || tool === 'edit')) {
           const args = exec && (exec.arguments ?? exec.args)
           const p = args && (args.file_path || args.path)
-          if (typeof p === 'string' && /docs\/sprint-\d+\/plan\.md$/i.test(p.replace(/\\/g, '/'))) {
+          // 左边界 (?:^|/)：防 mydocs/sprint-1/plan.md 这类同后缀无关路径误命中（0 误报纪律）
+          if (typeof p === 'string' && /(?:^|\/)docs\/sprint-\d+\/plan\.md$/i.test(p.replace(/\\/g, '/'))) {
             if (tool === 'write' && typeof args.content === 'string') {
               const planReasons = checkPlanContract(args.content)
               if (planReasons.length > 0) {
