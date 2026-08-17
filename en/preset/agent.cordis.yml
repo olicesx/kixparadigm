@@ -656,8 +656,8 @@
 # root is a directory with both agent.cordis.yml + preset.yml (depth ≤2 scan);
 # any workspace with ≥2 roots gets guidance — the universal layer only guides
 # same-named plugins byte-identical across roots (N ≥ 2 copies must match);
-# shell writes (pwsh/bash commands mentioning preset-root paths) re-verify
-# identity sets at post-execute; other in-root paths (skills/agents/prompts
+# shell writes get no mechanical extraction (command-text heuristics are debt
+# — soft guidance + CI backstop); other in-root paths (skills/agents/prompts
 # — translation relations) get a parity hint only — no failure asserted,
 # whether other roots' counterparts need syncing is left to model judgment
 # (undescribed forms sensed via the reminder). The boundary is the preset
@@ -668,7 +668,7 @@
 # repo carrying the scripts entry; foreign repos are never forced onto it.
 # Default intensity remind (heuristic guidance only); ask/block need explicit
 # config. remindOnce: once per session per category.
-# Unit tests: node plugins/kix-consistency.test.js (120 assertions).
+# Unit tests: node plugins/kix-consistency.test.js (111 assertions).
 - id: kix-consistency
   name: ./plugins/kix-consistency.js
 
