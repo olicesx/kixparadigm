@@ -42,7 +42,7 @@
     "test:installer": "node --test scripts/install-lib.test.js",
     "test:consistency": "node scripts/check-dsh-consistency.cjs",
     "test:vision": "node --test dsh/vision-bridge/test.js",
-    "test": "npm run test:installer && node scripts/check-dsh-consistency.cjs && node --test dsh/vision-bridge/test.js && node dsh/preset/plugins/kix-guards.test.js && node dsh/preset/plugins/kix-commands.test.js && node dsh/preset/plugins/kix-cost.test.js && node dsh/preset/plugins/kix-route.test.js && node dsh/preset/plugins/kix-discipline.test.js && node dsh/preset/plugins/kix-orchestration.test.js && node dsh/preset/plugins/kix-focus.test.js",
+    "test": "npm run test:installer && node scripts/check-dsh-consistency.cjs && node --test dsh/vision-bridge/test.js && node dsh/preset/plugins/kix-guards.test.js && node dsh/preset/plugins/kix-commands.test.js && node dsh/preset/plugins/kix-cost.test.js && node dsh/preset/plugins/kix-route.test.js && node dsh/preset/plugins/kix-discipline.test.js && node dsh/preset/plugins/kix-orchestration.test.js && node dsh/preset/plugins/kix-focus.test.js && node dsh/preset/plugins/kix-consistency.test.js",
     "verify:vision": "node scripts/verify-vision-bridge-resolution.cjs",
     "verify:guards": "node scripts/verify-guards.js"
   },

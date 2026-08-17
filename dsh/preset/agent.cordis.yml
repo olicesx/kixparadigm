@@ -607,9 +607,22 @@
 #   - v3 producer_closeout 收尾证据链：spec「验收标准」在档 / 任务全完成 /
 #     测试文件自 l2_verified_sha 有变更要求重验（替代 Copilot qa-signoff 深度校验
 #     中可机械的部分；worktree/SHA 数学/stash 绑定 Copilot 特有流程不移植）。
-# 单元测试：node plugins/kix-orchestration.test.js（77 断言；v10.1 Tri-Block [CONTEXT] Sprint N 容错）。
+# 单元测试：node plugins/kix-orchestration.test.js（77 断言；v10.1 Tri-Block [CONTEXT] Sprint N 容错；v11 plan 契约 +12）。
 - id: kix-orchestration
   name: ./plugins/kix-orchestration.js
+
+# ── kix-consistency（P5，2026-08-17）：一致性守护写时拦截 ──────────────
+# CI 脚本（scripts/check-dsh-consistency.cjs）只在测试期校验，改 preset 文件时
+# 不实时拦截 drift。本插件把「唯一事实源」从自觉变机械：写 dsh/preset/、
+# en/preset/、README*、package.json*、vision-bridge 相关文件时跑**相关子检查**
+# （persona 预算 / 插件对同步 / memories 计数 / README 表述 / 版本对 / 单文件语法），
+# 与 CI 共用 consistency-lib.cjs 单一事实源（防「CI 一套、运行时一套」双源漂移）。
+# 仅「kixparadigm 源仓库指纹」工作区（含 dsh/preset + en/preset + scripts 入口）
+# 触发；其余工作区零开销放行。强度默认 remind（文档可回滚不 deny）；
+# ask/block 需显式配置。remindOnce：每会话每类别一次。
+# 单元测试：node plugins/kix-consistency.test.js（36 断言）。
+- id: kix-consistency
+  name: ./plugins/kix-consistency.js
 
 # ── kix-cost（v5.8 成本纪律）：机械档自动选型 + 子代理思考强度分层 ─────────
 # agent/request waterfall 上：

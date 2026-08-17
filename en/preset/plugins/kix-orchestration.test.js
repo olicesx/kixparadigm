@@ -594,6 +594,124 @@ await ok('checkHandoff 集成：Tri-Block [CONTEXT] Sprint N 与 marker 不一�
   return r.ok === false && r.reasons.some((x) => x.includes('不一致'))
 })())
 
+// ── checkPlanContract（v11，P5：plan.md 契约写前校验）────────────────────
+section('checkPlanContract（v11 plan 契约）')
+await ok('合法 plan（task_sizing + 任务清单）→ 0 reasons', (() => {
+  const r = I.checkPlanContract('---\ntask_sizing:\n  derived_commit_budget: 4\n---\n- [ ] t1\n- [ ] t2\n')
+  return r.length === 0
+})())
+await ok('blast_radius.max_commits 形式 → 0 reasons', (() => {
+  const r = I.checkPlanContract('---\nblast_radius:\n  max_commits: 8\n---\n- [x] t1\n')
+  return r.length === 0
+})())
+await ok('缺预算源 → 1 reason（预算链落冷启动）', (() => {
+  const r = I.checkPlanContract('- [ ] t1\n')
+  return r.length === 1 && r[0].includes('预算')
+})())
+await ok('缺任务清单 → 1 reason', (() => {
+  const r = I.checkPlanContract('task_sizing:\n  derived_commit_budget: 4\n')
+  return r.length === 1 && r[0].includes('任务清单')
+})())
+await ok('全缺 → 2 reasons', (() => {
+  const r = I.checkPlanContract('随便写点什么\n')
+  return r.length === 2
+})())
+await ok('空字符串 → 2 reasons', I.checkPlanContract('').length === 2)
+
+section('pre-execute: plan.md 契约写时提醒（v11）')
+await ok('write 残缺 plan → 注入提醒', (async () => {
+  const exec = { name: 'write', arguments: { file_path: 'docs/sprint-1/plan.md', content: '- [ ] 任务\n' }, token: 't', callId: 'plan-c1', agent: { id: 'orch-plan1', session: { header: sessionHeader } } }
+  await preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+  const post = await postExecute[0]({ name: 'write', callId: 'plan-c1', agent: { id: 'orch-plan1', session: { header: sessionHeader } } }, {}, () => 'NEXT')
+  return post && Array.isArray(post.additionalContexts) && post.additionalContexts.length === 1
+})())
+await ok('write 合法 plan → 无提醒', (async () => {
+  const exec = { name: 'write', arguments: { file_path: 'docs/sprint-1/plan.md', content: 'task_sizing:\n  derived_commit_budget: 4\n- [ ] t1\n' }, token: 't', callId: 'plan-c2', agent: { id: 'orch-plan2', session: { header: sessionHeader } } }
+  await preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+  const post = await postExecute[0]({ name: 'write', callId: 'plan-c2', agent: { id: 'orch-plan2', session: { header: sessionHeader } } }, {}, () => 'NEXT')
+  return post === 'NEXT' || post === undefined
+})())
+await ok('edit plan.md → 不校验（0 误报纪律）', (async () => {
+  const exec = { name: 'edit', arguments: { file_path: 'docs/sprint-1/plan.md', content: 'x' }, token: 't', callId: 'plan-c3', agent: { id: 'orch-plan3', session: { header: sessionHeader } } }
+  await preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+  const post = await postExecute[0]({ name: 'edit', callId: 'plan-c3', agent: { id: 'orch-plan3', session: { header: sessionHeader } } }, {}, () => 'NEXT')
+  return post === 'NEXT' || post === undefined
+})())
+await ok('非 plan 路径 write → 无提醒', (async () => {
+  const exec = { name: 'write', arguments: { file_path: 'src/main.js', content: 'x' }, token: 't', callId: 'plan-c4', agent: { id: 'orch-plan4', session: { header: sessionHeader } } }
+  await preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+  const post = await postExecute[0]({ name: 'write', callId: 'plan-c4', agent: { id: 'orch-plan4', session: { header: sessionHeader } } }, {}, () => 'NEXT')
+  return post === 'NEXT' || post === undefined
+})())
+await ok('remindOnce：同 agent 第二次残缺 plan → 不重复提醒', (async () => {
+  const exec1 = { name: 'write', arguments: { file_path: 'docs/sprint-1/plan.md', content: 'x' }, token: 't', callId: 'plan-c5', agent: { id: 'orch-plan5', session: { header: sessionHeader } } }
+  await preExecute[0](exec1, () => Promise.resolve({ kind: 'allow' }))
+  await postExecute[0]({ name: 'write', callId: 'plan-c5', agent: { id: 'orch-plan5', session: { header: sessionHeader } } }, {}, () => 'NEXT')
+  const exec2 = { name: 'write', arguments: { file_path: 'docs/sprint-1/plan.md', content: 'y' }, token: 't', callId: 'plan-c6', agent: { id: 'orch-plan5', session: { header: sessionHeader } } }
+  await preExecute[0](exec2, () => Promise.resolve({ kind: 'allow' }))
+  const post2 = await postExecute[0]({ name: 'write', callId: 'plan-c6', agent: { id: 'orch-plan5', session: { header: sessionHeader } } }, {}, () => 'NEXT')
+  return post2 === 'NEXT' || post2 === undefined
+})())
+await ok('block 强度：残缺 plan → deny', (async () => {
+  const exec = { name: 'write', arguments: { file_path: 'docs/sprint-1/plan.md', content: 'x' }, token: 't', callId: 'plan-c7', agent: { id: 'orch-plan7', session: { header: sessionHeader } } }
+  const r = await blockListeners['tools/pre-execute'][0](exec, () => Promise.resolve({ kind: 'allow' }))
+  return r && r.kind === 'deny' && typeof r.reason === 'string'
+})())
+
+// ── PR#10 审查修复回归（左边界 / `*` bullet / enabled 门控）──────────────
+section('v11 审查修复回归（PR#10）')
+await ok('* bullet 任务清单同样接受', (() => {
+  const r = I.checkPlanContract('---\ntask_sizing:\n  derived_commit_budget: 4\n---\n* [ ] t1\n')
+  return r.length === 0
+})())
+await ok('mydocs/ 同后缀路径不误命中（左边界）', (async () => {
+  const exec = { name: 'write', arguments: { file_path: 'mydocs/sprint-1/plan.md', content: '随便写' }, token: 't', callId: 'plan-c10', agent: { id: 'orch-plan10', session: { header: sessionHeader } } }
+  await preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+  const post = await postExecute[0]({ name: 'write', callId: 'plan-c10', agent: { id: 'orch-plan10', session: { header: sessionHeader } } }, {}, () => 'NEXT')
+  return post === 'NEXT' || post === undefined
+})())
+await ok('嵌套 docs/ 路径仍命中（正例不回归）', (async () => {
+  const exec = { name: 'write', arguments: { file_path: '/abs/root/docs/sprint-2/plan.md', content: 'no budget\n' }, token: 't', callId: 'plan-c11', agent: { id: 'orch-plan11', session: { header: sessionHeader } } }
+  await preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+  const post = await postExecute[0]({ name: 'write', callId: 'plan-c11', agent: { id: 'orch-plan11', session: { header: sessionHeader } } }, {}, () => 'NEXT')
+  return post && post.additionalContexts && post.additionalContexts.length === 1
+})())
+await ok('/kix-orchestration off 后 plan 门禁不再拦（enabled 门控，block 实例）', (async () => {
+  const agent = { id: 'orch-plan12', session: { header: sessionHeader } }
+  // block 实例的命令是第二次注册（与 remind 主实例共用 registeredCommands 数组）
+  const cmds = registeredCommands.filter((c) => c.name === 'kix-orchestration')
+  cmds[cmds.length - 1].handler({ agent, rawInput: 'off' })
+  const exec = { name: 'write', arguments: { file_path: 'docs/sprint-3/plan.md', content: 'bad' }, token: 't', callId: 'plan-c12', agent }
+  const pre = await blockListeners['tools/pre-execute'][0](exec, () => Promise.resolve({ kind: 'allow' }))
+  // off 后必须放行：deny = 门禁绕过了关闭开关
+  return pre === 'NEXT' || pre === undefined || (pre && pre.kind === 'allow')
+})())
+await ok('+ bullet 任务清单同样接受', (() => {
+  const r = I.checkPlanContract('---\ntask_sizing:\n  derived_commit_budget: 4\n---\n+ [ ] t1\n')
+  return r.length === 0
+})())
+await ok('Windows 反斜杠路径触发 plan 门禁', (async () => {
+  const agent = { id: 'orch-plan13', session: { header: sessionHeader } }
+  const exec = { name: 'write', arguments: { file_path: 'docs\\sprint-1\\plan.md', content: 'no budget\n' }, token: 't', callId: 'plan-c13', agent }
+  await preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+  const post = await postExecute[0]({ name: 'write', callId: 'plan-c13', agent }, {}, () => 'NEXT')
+  return post && post.additionalContexts && post.additionalContexts.length === 1
+})())
+await ok('plan 提醒不烧 sleep 槽（同 agent 链式：plan 后 sleep 各自投递）', (async () => {
+  const agentId = 'orch-plan14'
+  const mkAgent = () => ({ id: agentId, session: { header: sessionHeader } })
+  // 先触发 plan 提醒（write 残缺 plan）
+  const wExec = { name: 'write', arguments: { file_path: 'docs/sprint-4/plan.md', content: 'bad' }, token: 't', callId: 'plan-c14', agent: mkAgent() }
+  await preExecute[0](wExec, () => Promise.resolve({ kind: 'allow' }))
+  const wPost = await postExecute[0]({ name: 'write', callId: 'plan-c14', agent: mkAgent() }, {}, () => 'NEXT')
+  // 同 agent 再触发 sleep 空转（bash + subagent description）
+  const sExec = { name: 'bash', arguments: { command: 'sleep 45 && echo done', description: 'Wait for subagents to progress' }, token: 't', callId: 'plan-c14s', agent: mkAgent() }
+  await preExecute[0](sExec, () => Promise.resolve({ kind: 'allow' }))
+  const sPost = await postExecute[0]({ name: 'bash', callId: 'plan-c14s', agent: mkAgent() }, { isError: false }, () => 'NEXT')
+  return !!(wPost && wPost.additionalContexts && wPost.additionalContexts.length === 1) &&
+    !!(sPost && sPost.additionalContexts && sPost.additionalContexts.length === 1)
+})())
+
 // ── 清理临时工作区（2026-08-17：曾泄漏 /tmp/kix-orch-test-* 593 个目录）──
 for (const ws of createdWorkspaces) fs.rmSync(ws, { recursive: true, force: true })
 
