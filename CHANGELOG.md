@@ -8,7 +8,8 @@
 - **PR#10 审查修复（三通道交叉验证）**：①kix-consistency 插件源码路由补 `.cjs`（`consistency-lib.cjs` 共享库此前不受写时守护，与 CI 动态清单口径不一致）；②挂起提醒 `pendingRemind` 单槽改 `Map<callId>`——并发多类别写入互不覆盖（投递成功才消耗的契约在并发下成立）；③kix-orchestration v11 plan 门禁补 `st.enabled` 门控（`/kix-orchestration off` 后 block/ask 不再拦）；④plan 路径正则补左边界（`mydocs/sprint-1/plan.md` 误命中）+ 任务清单接受 `*`/`+` bullet；⑤en 侧 DSH-ADAPTATION 补 P5 kix-consistency 缺失段落（PR body 声称 zh/en 同步，en 实缺）+ 断言计数修正（en 侧 69 基数漂移）；⑥补观察者点名测试缺口：Windows 反斜杠路径触发、plan 提醒不烧 sleep 槽（PR 明示 claim 此前无测试）。单测 kix-consistency **36 → 44** / kix-orchestration **89 → 96**，行为修复断言在旧代码上实证失败（区分度验证）
 - **PR#10 合并前阻塞修复**：`makeUserMessage` 补非空 `id`（与 kix-discipline / kix-orchestration / kix-focus 同契约）——无 id 的 `additionalContexts` 会写入 `user/message`，DSH session restore 报 `lacks an identified message`，任意一致性提醒都可能使会话重启后无法恢复；`toRepoRel` 把绝对路径 / `./` 相对路径 / Windows 盘符路径归一成仓库相对路径后再分类，堵住「路径写法绕过守护」。单测 kix-consistency **44 → 52**
 - **PR#10 WSL2 E2E 实锤**：`kix-consistency` 误把 `sandboxPolicy.workspaceRoot`（部署回退 = `process.cwd()`）当会话工作区——dsh 从 `/root` 启动时指纹检查永远失败，整插件在任意非启动目录工作区静默失效（plan 门禁不受影响，因它只看 file_path）。改为会话 `header.cwd` → `sandboxPolicy.resolve({session})` → 回退根。单测 kix-consistency **52 → 54**
-- **kix-guards v11 源仓库豁免**：`targetsControlPlane` 见任意 `agent.cordis.yml` 就 deny，把源仓库事实源（`dsh/preset/`、`en/preset/`）当成安装副本误伤——维护者无法在本仓改挂载注释/计数。安装面（`~/.dsh` / `.agent-presets`）仍优先命中，`dsh/preset/../../.dsh/...` 不能绕过。单测 kix-guards 补 8 组判定 + 5 组派发
+- **kix-guards v11 源仓库豁免**：`targetsControlPlane` 见任意 `agent.cordis.yml` 就 deny，把源仓库事实源（`dsh/preset/`、`en/preset/`）当成安装副本误伤——维护者无法在本仓改挂载注释/计数。安装面（`~/.dsh` / `.agent-presets`）仍优先命中，`dsh/preset/../../.dsh/...` 不能绕过
+- **kix-guards v12 控制平面软门禁**：安装副本写从硬 deny 降为 remind（放行 + 注入一次带 id 的提醒）。kix 自迭代 / 用户已授权改 `~/.dsh` 时不再挡正事；源仓库事实源继续豁免不提醒。force push / main / 破坏性 SQL 仍硬 deny
 
 ## v1.2.13（2026-08-17）部署复验整改
 

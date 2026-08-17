@@ -35,7 +35,9 @@ const plugin = require(path.join(__dirname, 'kix-guards.js'))
 assert.strictEqual(plugin.name, 'kix-guards')
 plugin.apply(ctx)
 const preExecute = listeners['tools/pre-execute']
+const postExecute = listeners['tools/post-execute']
 assert.ok(Array.isArray(preExecute) && preExecute.length === 1, 'pre-execute 监听器已注册')
+assert.ok(Array.isArray(postExecute) && postExecute.length === 1, 'post-execute 监听器已注册')
 
 // ── 模拟 DSH 派发 ─────────────────────────────────────────────────────────
 // 带 agent（真实执行必有 agent）；无 agent → checkGitCommit 走「无法解析
@@ -48,6 +50,17 @@ function dispatch(name, args) {
 function dispatchNoAgent(name, args) {
   const exec = { name, arguments: args, token: 't', callId: 'c' }
   return preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+}
+let callSeq = 0
+function nextCallId() {
+  callSeq += 1
+  return 'c' + callSeq
+}
+async function dispatchRemind(name, args) {
+  const exec = { name, arguments: args, token: 't', callId: nextCallId(), agent: { id: 'test-agent' } }
+  const pre = await preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+  const post = await postExecute[0](exec, { kind: 'success' }, () => Promise.resolve({ kind: 'accept' }))
+  return { pre, post }
 }
 // 带会话 cwd 派发（checkGitCommit 的仓库根 fallback / v10 cd 提取验证需要）
 function dispatchIn(cwd, name, args) {
@@ -161,17 +174,17 @@ async function softCase(label, name, args) {
   const HOME = (process.env.USERPROFILE || os.homedir()).replace(/\\/g, '/')
   check(`pwsh: 读 ${HOME}/.dsh/settings.yaml → allow（v8 只读放行）`, await dispatch('pwsh', { command: `Get-Content ${HOME}\\.dsh\\settings.yaml` }), false)
   check('pwsh: grep/cat/ls 控制平面路径 → allow（v8 只读放行）', await dispatch('pwsh', { command: `grep -R kix ${HOME}/.dsh && cat ${HOME}/.dsh/agent.cordis.yml && ls ${HOME}/.dsh` }), false)
-  check('pwsh: rm 控制平面文件 → deny（v8 写意图）', await dispatch('pwsh', { command: `rm ${HOME}/.dsh/agent.cordis.yml` }), true)
-  check('pwsh: 重定向写控制平面 → deny（v8 写意图）', await dispatch('pwsh', { command: `echo x > ${HOME}/.dsh/settings.yaml` }), true)
+  check('pwsh: rm 控制平面文件 → allow（v12 remind）', await dispatch('pwsh', { command: `rm ${HOME}/.dsh/agent.cordis.yml` }), false)
+  check('pwsh: 重定向写控制平面 → allow（v12 remind）', await dispatch('pwsh', { command: `echo x > ${HOME}/.dsh/settings.yaml` }), false)
   check('pwsh: cp 控制平面 → 外部备份 → allow（v8 目标非控制平面）', await dispatch('pwsh', { command: `cp ${HOME}/.dsh/settings.yaml /tmp/settings.bak` }), false)
-  check('pwsh: cp 外部 → 控制平面 → deny（v8 目标命中）', await dispatch('pwsh', { command: `cp /tmp/settings.yaml ${HOME}/.dsh/settings.yaml` }), true)
-  check(`pwsh: curl -o ${HOME}/.dsh/settings.yaml URL → deny（v8 下载目标）`, await dispatch('pwsh', { command: `curl -o ${HOME}/.dsh/settings.yaml https://example.com/x` }), true)
+  check('pwsh: cp 外部 → 控制平面 → allow（v12 remind）', await dispatch('pwsh', { command: `cp /tmp/settings.yaml ${HOME}/.dsh/settings.yaml` }), false)
+  check(`pwsh: curl -o ${HOME}/.dsh/settings.yaml URL → allow（v12 remind）`, await dispatch('pwsh', { command: `curl -o ${HOME}/.dsh/settings.yaml https://example.com/x` }), false)
   check(`pwsh: curl -o /tmp/x URL → allow（v8 下载目标非控制平面）`, await dispatch('pwsh', { command: 'curl -o /tmp/x https://example.com/x' }), false)
   check('pwsh: 其他用户 home 的 .dsh → allow (v3)', await dispatch('pwsh', { command: 'Get-Content C:\\Users\\other\\.dsh\\settings.yaml' }), false)
-  check('write: 编辑 preset 文件 → deny', await dispatch('write', { file_path: 'C:\\Users\\x\\.dsh\\.agent-presets\\kixparadigm\\agent.cordis.yml' }), true)
+  check('write: 编辑 preset 文件 → allow（v12 remind）', await dispatch('write', { file_path: 'C:\\Users\\x\\.dsh\\.agent-presets\\kixparadigm\\agent.cordis.yml' }), false)
   check('edit: 项目 settings.yaml → allow (v3)', await dispatch('edit', { file_path: 'C:\\work\\project\\settings.yaml' }), false)
   check('edit: 项目 .credentials.yaml → allow (v3)', await dispatch('edit', { file_path: 'C:\\work\\project\\.credentials.yaml' }), false)
-  check(`edit: ${HOME}/.dsh/profiles/web/plugins/x.js → deny`, await dispatch('edit', { file_path: `${HOME}\\.dsh\\profiles\\web\\plugins\\x.js` }), true)
+  check(`edit: ${HOME}/.dsh/profiles/web/plugins/x.js → allow（v12 remind）`, await dispatch('edit', { file_path: `${HOME}\\.dsh\\profiles\\web\\plugins\\x.js` }), false)
 
   // ══ 4. run_code 代码体受限能力（v3 补 fs 直写）════════════════════════
   check('run_code: import("node:child_process") → deny', await dispatch('run_code', { code: 'const cp = await import("node:child_process"); return 1' }), true)
@@ -317,9 +330,34 @@ async function softCase(label, name, args) {
   passed += 8
   check('write: 源仓库 zh agent.cordis.yml → allow（v11 事实源豁免）', await dispatch('write', { file_path: 'dsh/preset/agent.cordis.yml' }), false)
   check('edit: 源仓库 en agent.cordis.yml → allow（v11 事实源豁免）', await dispatch('edit', { file_path: 'C:/work/kixparadigm/en/preset/agent.cordis.yml' }), false)
-  check('write: 安装副本 agent.cordis.yml → deny（v11 豁免不放松安装面）', await dispatch('write', { file_path: 'C:\\Users\\x\\.dsh\\.agent-presets\\kixparadigm\\agent.cordis.yml' }), true)
+  check('write: 安装副本 agent.cordis.yml → allow（v12 软门禁）', await dispatch('write', { file_path: 'C:\\Users\\x\\.dsh\\.agent-presets\\kixparadigm\\agent.cordis.yml' }), false)
   check('pwsh: rm 源仓库 agent.cordis.yml → allow（终端写意图也豁免源路径）', await dispatch('pwsh', { command: 'rm dsh/preset/agent.cordis.yml' }), false)
-  check('pwsh: rm 安装副本 agent.cordis.yml → deny', await dispatch('pwsh', { command: `rm ${HOME}/.dsh/.agent-presets/kixparadigm/agent.cordis.yml` }), true)
+  check('pwsh: rm 安装副本 agent.cordis.yml → allow（v12 软门禁）', await dispatch('pwsh', { command: `rm ${HOME}/.dsh/.agent-presets/kixparadigm/agent.cordis.yml` }), false)
+
+  // v12：安装面写 → 放行 + 注入一次提醒；源路径不提醒；remindOnce
+  {
+    const first = await dispatchRemind('write', { file_path: `${HOME}/.dsh/.agent-presets/kixparadigm/agent.cordis.yml` })
+    const src = await dispatchRemind('write', { file_path: 'dsh/preset/agent.cordis.yml' })
+    const second = await dispatchRemind('edit', { file_path: `${HOME}/.dsh/settings.yaml` })
+    const term = await dispatchRemind('pwsh', { command: `rm ${HOME}/.dsh/agent.cordis.yml` })
+    check('v12: 安装副本 write pre → allow', first.pre, false)
+    const injected = first.post && first.post.additionalContexts
+    const okInject = Array.isArray(injected) && injected.length === 1 && injected[0].id && String(injected[0].content[0].text).includes('控制平面')
+    if (okInject) { passed++ } else { failed++ }
+    console.log(`${okInject ? 'PASS' : 'FAIL'}  v12: 首次安装面写注入带 id 的 remind`)
+    const srcClean = !src.post || !src.post.additionalContexts
+    if (srcClean) { passed++ } else { failed++ }
+    console.log(`${srcClean ? 'PASS' : 'FAIL'}  v12: 源仓库写不注入控制平面 remind`)
+    const once = !second.post || !second.post.additionalContexts
+    if (once) { passed++ } else { failed++ }
+    console.log(`${once ? 'PASS' : 'FAIL'}  v12: 同会话第二次安装面写不再注入（remindOnce）`)
+    check('v12: 终端写安装面 pre 仍 allow', term.pre, false)
+    const termOnce = !term.post || !term.post.additionalContexts
+    if (termOnce) { passed++ } else { failed++ }
+    console.log(`${termOnce ? 'PASS' : 'FAIL'}  v12: 终端写安装面也不再二次注入`)
+    assert.ok(I.makeUserMessage(I.CONTROL_PLANE_REMIND).id, 'remind 消息带非空 id')
+    passed += 1
+  }
 
   // ══ 8. v6：gh CLI 写保护 + 重复尝试记忆 ═════════════════════════════════
   // 8a. gh CLI 纯判定（__internals）
@@ -354,10 +392,10 @@ async function softCase(label, name, args) {
   check('v9: 普通 git push 软约束 → allow 且不记录', await dispatch('pwsh', { command: 'git push origin v9-repeat' }), false)
   check('v9: gh pr create 软约束 → allow 且不记录', await dispatch('pwsh', { command: 'gh pr create --title v9-repeat' }), false)
   check('v9: GitHub merge_pull_request 软约束 → allow', await dispatch('mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 99 }), false)
-  // 硬 deny 路径重复记忆仍然有效（edit 控制平面 / force push）
+  // 硬 deny 路径重复记忆仍然有效（force push）；控制平面 v12 已不记 denyMemo
   const v9Cp = 'C:\\Users\\v9\\.dsh\\.agent-presets\\kixparadigm\\agent.cordis.yml'
-  check('v9: edit 控制平面首次 → deny + 记录', await dispatch('edit', { file_path: v9Cp }), true)
-  check('v9: edit 同路径重复 → deny（memo）', await dispatch('edit', { file_path: v9Cp }), true)
+  check('v12: edit 控制平面首次 → allow（不记 denyMemo）', await dispatch('edit', { file_path: v9Cp }), false)
+  check('v12: edit 同路径重复 → allow（软门禁无 memo）', await dispatch('edit', { file_path: v9Cp }), false)
   check('v9: force push 首次 → deny + 记录', await dispatch('pwsh', { command: 'git push --force origin v9-force' }), true)
   check('v9: 同 force push 重复 → deny（memo，不再重复检查）', await dispatch('pwsh', { command: 'git   push --force origin v9-force' }), true)
   check('v9: 不同命令不受 memo 影响 → allow', await dispatch('pwsh', { command: 'git status' }), false)
