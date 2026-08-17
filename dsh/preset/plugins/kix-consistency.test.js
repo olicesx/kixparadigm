@@ -237,6 +237,37 @@ function makePostExec(callId) {
   await ok('并发同类别：仅首条投递（remindOnce 保持）',
     !!(postC && postC.additionalContexts && postC.additionalContexts.length === 1) && postD === 'NEXT')
 
+  section('审查修复：消息身份 + 路径归一（session restore / 绝对路径绕过）')
+  const msg = I.makeUserMessage('kix-consistency: test')
+  await ok('makeUserMessage 带非空 id（session restore 契约）',
+    typeof msg.id === 'string' && msg.id.length > 0 && msg.role === 'user')
+  await ok('两次 makeUserMessage id 不重复', I.makeUserMessage('a').id !== I.makeUserMessage('b').id)
+  const repo4 = makeRepoRoot()
+  await ok('toRepoRel 绝对路径 → 仓库相对', I.toRepoRel(repo4, path.join(repo4, 'dsh/preset/plugins/foo.js')) === 'dsh/preset/plugins/foo.js')
+  await ok('toRepoRel ./ 前缀 → 仓库相对', I.toRepoRel(repo4, './dsh/preset/plugins/foo.js') === 'dsh/preset/plugins/foo.js')
+  await ok('toRepoRel 仓库外绝对路径不伪造成相对', I.toRepoRel(repo4, path.join(os.tmpdir(), 'elsewhere.js')) !== 'dsh/preset/plugins/foo.js')
+  workspaceRootMock = repo4
+  const absExec = {
+    name: 'write',
+    callId: 'abs-path',
+    arguments: { file_path: path.join(repo4, 'dsh', 'preset', 'plugins', 'foo.js') },
+    agent: { id: 'cons-abs' },
+  }
+  await preExecute[0](absExec, () => 'NEXT')
+  const absPost = await postExecute[0]({ name: 'write', callId: 'abs-path', agent: { id: 'cons-abs' } }, {}, () => 'NEXT')
+  await ok('绝对路径写入仍触发守护', !!(absPost && absPost.additionalContexts && absPost.additionalContexts.length === 1))
+  await ok('注入提醒带非空 id',
+    typeof absPost.additionalContexts[0].id === 'string' && absPost.additionalContexts[0].id.length > 0)
+  const dotExec = {
+    name: 'write',
+    callId: 'dot-path',
+    arguments: { file_path: './README.md' },
+    agent: { id: 'cons-dot' },
+  }
+  await preExecute[0](dotExec, () => 'NEXT')
+  const dotPost = await postExecute[0]({ name: 'write', callId: 'dot-path', agent: { id: 'cons-dot' } }, {}, () => 'NEXT')
+  await ok('./ 相对路径写入仍触发守护', !!(dotPost && dotPost.additionalContexts && dotPost.additionalContexts.length === 1))
+
   // ── 收尾：清理夹具 ─────────────────────────────────────────────────────
   for (const dir of created) {
     try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* 忽略清理失败 */ }

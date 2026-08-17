@@ -24,6 +24,7 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
+const { randomUUID } = require('node:crypto')
 const lib = require('./consistency-lib.cjs')
 
 const MUTATION_TOOLS = new Set(['edit', 'write'])
@@ -41,6 +42,19 @@ function isRepoRoot(root) {
   return fs.existsSync(path.join(root, 'dsh/preset/agent.cordis.yml')) &&
     fs.existsSync(path.join(root, 'en/preset/agent.cordis.yml')) &&
     fs.existsSync(path.join(root, 'scripts/check-dsh-consistency.cjs'))
+}
+
+// write/edit 的 file_path 可能是绝对路径、带 ./ 的相对路径、或 Windows 盘符路径。
+// 先相对 workspaceRoot 归一成仓库相对正斜杠路径，classifyWrite 才不会因写法静默失效。
+function toRepoRel(root, filePath) {
+  if (typeof filePath !== 'string' || filePath.length === 0) return ''
+  const raw = filePath.replace(/\\/g, '/')
+  if (!root) return raw.replace(/^\.\//, '')
+  const abs = path.isAbsolute(filePath) ? path.normalize(filePath) : path.resolve(root, filePath)
+  const rootAbs = path.resolve(root)
+  const rel = path.relative(rootAbs, abs)
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return raw.replace(/^\.\//, '')
+  return rel.replace(/\\/g, '/')
 }
 
 // 写入路径 → 提醒类别（remindOnce 粒度；非 preset 区域返回 null，零开销放行）
@@ -101,6 +115,7 @@ function pickChecks(root, rel) {
 
 function makeUserMessage(text) {
   return {
+    id: randomUUID(),
     role: 'user',
     content: [{ type: 'text', text }],
     source: { kind: 'plugin', plugin: 'kix-consistency', form: 'notice', summary: text.slice(0, 100) },
@@ -165,13 +180,14 @@ module.exports = {
       if (!MUTATION_TOOLS.has(tool)) return next()
 
       const args = exec && (exec.arguments ?? exec.args)
-      const relPath = args && (args.file_path || args.path)
-      if (typeof relPath !== 'string' || relPath.length === 0) return next()
+      const rawPath = args && (args.file_path || args.path)
+      if (typeof rawPath !== 'string' || rawPath.length === 0) return next()
 
       const st = stateFor(exec && exec.agent)
       if (!st.enabled) return next()
       if (!st.workspaceRoot || !isRepoRoot(st.workspaceRoot)) return next()
 
+      const relPath = toRepoRel(st.workspaceRoot, rawPath)
       const category = classifyWrite(relPath)
       if (!category) return next()
 
@@ -223,6 +239,7 @@ module.exports = {
 
 module.exports.__internals = {
   isRepoRoot,
+  toRepoRel,
   classifyWrite,
   pickChecks,
   MUTATION_TOOLS,
