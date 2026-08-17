@@ -21,7 +21,15 @@ const ctx = {
   config: configMock,
   logger: { info() {}, warn() {}, error() {} },
   get(name) {
-    if (name === 'sandboxPolicy') return { workspaceRoot: workspaceRootMock }
+    if (name === 'sandboxPolicy') {
+      return {
+        workspaceRoot: workspaceRootMock,
+        resolve(req) {
+          const cwd = req && req.session && req.session.header && req.session.header.cwd
+          return { workspaceRoot: cwd || workspaceRootMock }
+        },
+      }
+    }
     return undefined
   },
   on(event, cb) {
@@ -50,7 +58,15 @@ const ctxBlock = {
   config: { intensity: 'block' },
   logger: { info() {}, warn() {}, error() {} },
   get(name) {
-    if (name === 'sandboxPolicy') return { workspaceRoot: workspaceRootMock }
+    if (name === 'sandboxPolicy') {
+      return {
+        workspaceRoot: workspaceRootMock,
+        resolve(req) {
+          const cwd = req && req.session && req.session.header && req.session.header.cwd
+          return { workspaceRoot: cwd || workspaceRootMock }
+        },
+      }
+    }
     return undefined
   },
   on(event, cb) {
@@ -267,6 +283,23 @@ function makePostExec(callId) {
   await preExecute[0](dotExec, () => 'NEXT')
   const dotPost = await postExecute[0]({ name: 'write', callId: 'dot-path', agent: { id: 'cons-dot' } }, {}, () => 'NEXT')
   await ok('./ 相对路径写入仍触发守护', !!(dotPost && dotPost.additionalContexts && dotPost.additionalContexts.length === 1))
+
+  section('审查修复：会话 cwd 优先于 sandboxPolicy 回退根（WSL2 E2E 实锤）')
+  const fallbackCwd = mkdtemp('kix-cons-fallback-cwd-')
+  const sessionRepo = makeRepoRoot()
+  workspaceRootMock = fallbackCwd // 模拟 dsh 从 /root 启动：回退根无源仓库指纹
+  const sessExec = {
+    name: 'write',
+    callId: 'sess-cwd',
+    arguments: { file_path: 'dsh/preset/plugins/foo.js' },
+    agent: { id: 'cons-sess-cwd', session: { header: { cwd: sessionRepo } } },
+  }
+  await preExecute[0](sessExec, () => 'NEXT')
+  const sessPost = await postExecute[0]({ name: 'write', callId: 'sess-cwd', agent: sessExec.agent }, {}, () => 'NEXT')
+  await ok('会话 cwd 是源仓库、回退根不是 → 仍触发守护',
+    !!(sessPost && sessPost.additionalContexts && sessPost.additionalContexts.length === 1))
+  await ok('会话 cwd 路径下的提醒带非空 id',
+    typeof sessPost.additionalContexts[0].id === 'string' && sessPost.additionalContexts[0].id.length > 0)
 
   // ── 收尾：清理夹具 ─────────────────────────────────────────────────────
   for (const dir of created) {
