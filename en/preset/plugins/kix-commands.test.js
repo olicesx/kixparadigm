@@ -3,7 +3,7 @@
 // 单元级验证：加载 kix-commands.js，mock DSH ctx.commands 表面，
 // 覆盖：注册 5 个命令、handler 读取 prompt 文件并剥离 frontmatter、
 // {{input}} 替换、steer 注入消息形状、错误路径。
-// 运行：node skills/kixpower/scripts/kix-commands.test.js（源仓库）
+// 运行（仓库根）：node <preset>/plugins/kix-commands.test.js
 // 提示：测试以源仓库布局运行，须把 KIX_COMMANDS_PROMPTS_DIR 指向源仓库
 // prompts/（插件默认按安装副本布局解析 ../prompts）。
 

@@ -1,7 +1,7 @@
 // kix-consistency — 一致性守护写时拦截（2026-08-17，PLUGINIZATION-ROADMAP P5 落地）
 //
 // 背景：check-dsh-consistency.cjs 只在 CI/npm test 期校验——改 dsh/preset/ 文件时
-// 不实时拦截，drift（zh/en 不同步、persona 超预算、计数失同步）要等下次测试才暴露。
+// 不实时拦截，drift（zh/en 不同步、persona 超预算、分发镜像漂移）要等下次测试才暴露。
 // 本插件把「唯一事实源」约定从自觉变机械：写 preset 相关文件时跑**相关子检查**，
 // 失败 → remind（放行 + 注入提醒，文档可回滚不 deny）。
 //
@@ -13,12 +13,12 @@
 // 该相同的数份必须相同（各根下同名 plugins/*.{js,cjs} 字节一致，语言中立代码）。
 // 单 preset / 普通仓库零开销放行（边界 = preset 根；边界外路径天然不触发，
 // 无需任何逐路径豁免规则）。
-// kix 全量契约（persona 预算 / memories 计数 / README 表述 / 版本对 / vision-bridge）
+// kix 全量契约（persona 预算 / 版本对 / distribution mirror Interfaces）
 // 由仓库自带 scripts/check-dsh-consistency.cjs **自声明**触发——仓库自己携带契约
 // 入口才算契约仓，不是按仓库名硬编码（防外仓误伤 = 防过拟合）。
 //
 // 强度：默认 remind（只做启发引导）；ask/block 需 agent.cordis.yml 显式配置。remindOnce：
-// 每会话每类别一次（persona/plugins/memories/readme/package/vision/misc/parity-hint）。
+// 每会话每类别一次（persona/plugins/package/vision/misc/parity-hint）。
 //
 // 挂载：agent.cordis.yml 一行：
 //   - id: kix-consistency
@@ -73,8 +73,8 @@ function toRepoRel(root, filePath) {
 //   - 其余根内路径 → 'parity'：**启发 hint**（不断言失败）——skills/agents/prompts 等
 //     是翻译关系不是字节关系，机械校验必误报（zh/en 结构本就不镜像）；提醒把
 //     「其它根对应份是否需要同步」这个维度交给模型判断，正是「没说到的形态靠提醒感知」
-// 契约层（自带 scripts/check-dsh-consistency.cjs）：persona / memories / README /
-// package / vision——本仓自声明契约，外仓不套用。
+// 契约层（自带 scripts/check-dsh-consistency.cjs）：persona / package / vision——
+// 本仓自声明契约，外仓不套用；memories/README 只走通用 parity hint。
 function classifyWrite(rel, presetRoots, withContract) {
   const p = String(rel || '').replace(/\\/g, '/')
   const roots = Array.isArray(presetRoots) ? presetRoots : []
@@ -82,14 +82,10 @@ function classifyWrite(rel, presetRoots, withContract) {
   if (home) {
     const suffix = p.slice(home.length + 1)
     if (/^plugins\/[^/]+\.(?:js|cjs)$/.test(suffix)) return 'plugins'
-    if (withContract) {
-      if (suffix === 'agent.cordis.yml') return 'persona'
-      if (/^memories\//.test(suffix)) return 'memories'
-    }
+    if (withContract && suffix === 'agent.cordis.yml') return 'persona'
     return 'parity'
   }
   if (withContract) {
-    if (p === 'README.md' || p === 'README.en.md') return 'readme'
     if (p === 'package.json' || p === 'en/package.json') return 'package'
     if (/^dsh\/vision-bridge\//.test(p) || /^en\/bridge\//.test(p)) return 'vision'
   }
@@ -123,19 +119,14 @@ function pickChecks(root, rel, presetRoots, withContract) {
       checks.push(() => lib.checkFileSyntax({ root, rel: p, label: `plugins/${name}` }))
     }
   }
-  if (category === 'memories') {
-    checks.push(() => lib.checkMemoriesCount({ root, rel: home + '/memories', expected: 5 }))
-  }
-  if (category === 'readme') {
-    const phrase = p === 'README.md' ? '+ 5 记忆' : '+ 5 memories'
-    checks.push(() => lib.checkReadmePhrase({ root, rel: p, phrase }))
-  }
   if (category === 'package') {
     checks.push(() => lib.checkVersionPair({ root }))
   }
   if (category === 'vision') {
-    checks.push(() => lib.checkIdenticalSet({ root, paths: ['dsh/vision-bridge/index.js', 'en/bridge/index.js'], label: 'vision-bridge/index.js' }))
-    checks.push(() => lib.checkIdenticalSet({ root, paths: ['dsh/vision-bridge/test.js', 'en/bridge/test.js'], label: 'vision-bridge/test.js' }))
+    checks.push(() => lib.checkMirrorTree({ root, left: 'dsh/vision-bridge', right: 'en/bridge', label: 'vision-bridge' }))
+    if (/\.(?:js|cjs|mjs)$/.test(p) && fs.existsSync(path.join(root, p))) {
+      checks.push(() => lib.checkFileSyntax({ root, rel: p, label: p }))
+    }
   }
   return checks
 }
@@ -311,7 +302,7 @@ module.exports = {
       }
       // remind：放行 + 注入提醒（每会话每类别一次；投递成功才消耗，同 kix-orchestration）。
       // pendingRemind 为 Map<callId, …>：同一 agent 并发写不同类别（如一次块内
-      // zh 插件 + README）时单槽会互相覆盖丢提醒，按 callId 各自挂起、post 按号消费。
+      // zh 插件 + vision）时单槽会互相覆盖丢提醒，按 callId 各自挂起、post 按号消费。
       if (st.reminded.has(category)) return next()
       st.pendingRemind.set(exec.callId, { category, reason })
       return next()

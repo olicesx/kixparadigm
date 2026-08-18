@@ -1,4 +1,4 @@
-// kix-cost — 子代理成本层：机械档自动选型 + 思考强度分层 + 复杂度感知 effort（v5.11，2026-08-18；能力门控跨厂商适配；v5.11.1，2026-08-19 否定感知信号）
+// kix-cost — 子代理成本层：机械档自动选型 + 思考强度分层 + 有界 lite 取证（v5.12，2026-08-18）
 //
 // 解决的问题（源码 + 日志双重实测确认的机制）：
 //   A. 子代理思考强度失控：deepseek 子代理经 resolveChildAgentOptions 创建，
@@ -19,11 +19,10 @@
 //        默认路由（agentDefaultModel.currentSelection()，任何部署都有），
 //        并继续走档位注入（回退后通常是 deepseek → high）。
 //        探测结果按 agent 缓存（WeakMap，无泄漏），每子代理只探测一次。
-//   C.（v5.10，2026-08-17）子代理再分派：账本实测 40/107 个子代理尝试过
-//      spawn 孙代（50 次调用）——每个孙代再付一次全额固定开销，且违反
-//      「编排留主线程」地板。→ tools.guard 对 child 发起的 subagent*/workflow
-//      调用 deny（yml 静态 toolFilter.deny 管恒注册名的 schema 面收窄，
-//      本 guard 兜底条件挂载名 + 语义层）。
+//   C.（v5.12）子代理再分派：账本实测 40/107 个 child 尝试派孙代；全开放会
+//      重复付固定开销，全禁止又损失局部机械取证。→ 静态 toolFilter 继续隐藏
+//      regular/cross 控制面；tools.guard 只放行 depth-1 → subagent_lite，拒绝
+//      workflow、其余 tier 与 depth>=2，协调仍回主线程。
 //   D.（v5.11，2026-08-18）复杂度感知 effort：预算帽只看「配了多大」，不看
 //      「活有多重」——机械小活仍按默认档烧思考。→ agent/pre-step 在子代理
 //      首个**被接受**的 pre-step 上对初始 prompt 的叶子文本做零 token 分类
@@ -342,21 +341,29 @@ function adaptiveEffort(entry, provider, maxTokens, supportedEfforts) {
   return base
 }
 
-// v5.10（2026-08-17 子代理账本实测）：40/107 个子代理尝试过再分派（50 次
-// subagent/subagent_cross 调用）——「编排留主线程」（kix 地板②）此前只有
-// persona 说教。静态 toolFilter.deny 覆盖恒注册名；本 guard 兜底**条件挂载**
-// 的名字（subagent_dev/qa/reviewer/lite/thinker/vision/fork、workflow——主
-// 线程激活后对子代理可见）。判定纯机械（subagentDepth ≥ 1 + 名字模式），
-// 0% 误报；kix_capability_call 从子代理代理调用细分档位时，内部 tools.execute
-// 携同一 child agent → 同样被拦，代理结果诚实带回 deny 理由。
-const CHILD_ORCHESTRATION_RE = /^(?:subagent(?:_|$)|workflow$)/
+// v5.12：编排决策仍留主线程，但 depth-1 child 可按需派 subagent_lite 做
+// 机械取证。regular/cross/goal/workflow 继续拒绝；代理调用在外层先解出真实目标，
+// depth >= 2 再次拒绝，形成有界的单层 evidence delegation。
+const CHILD_ORCHESTRATION_RE = /^(?:subagent(?:_|$)|workflow$|create_goal$|goal$)/
 const CHILD_ORCHESTRATION_DENY_REASON =
-  'kix-cost: 编排留主线程（kix 地板②）——子代理不得再分派子代理或起 workflow。需要编排/并行分派的部分写进你的 report 交主线程决策。'
+  'kix-cost: 编排留主线程——depth-1 子代理只可派 subagent_lite 做机械取证；regular/cross/goal/workflow 与 depth>=2 再分派均拒绝。需要更多编排请写进 report 交主线程。'
 
-/** 子代理发起的编排类调用（再分派/workflow）→ 应拒绝。 */
-function isChildOrchestrationCall(name, opts) {
+function childOrchestrationTarget(name, args) {
   const n = String(name || '')
-  return isSubagentChild(opts) && CHILD_ORCHESTRATION_RE.test(n)
+  if (n !== 'kix_capability_call') return n
+  let parsed = args
+  if (typeof parsed === 'string') {
+    try { parsed = JSON.parse(parsed) } catch { parsed = undefined }
+  }
+  return parsed && typeof parsed === 'object' ? String(parsed.tool || '') : ''
+}
+
+/** 子代理编排调用中，仅 depth-1 → subagent_lite 属于允许的机械取证。 */
+function isChildOrchestrationCall(name, opts, args) {
+  const target = childOrchestrationTarget(name, args)
+  const depth = Number(opts && opts.subagentDepth)
+  if (!Number.isFinite(depth) || depth < 1 || !CHILD_ORCHESTRATION_RE.test(target)) return false
+  return !(depth === 1 && target === 'subagent_lite')
 }
 
 /**
@@ -392,7 +399,8 @@ module.exports = {
       toolsSvc.guard((exec) => {
         const name = exec && exec.name
         const opts = exec && exec.agent && exec.agent.options
-        if (isChildOrchestrationCall(name, opts)) return CHILD_ORCHESTRATION_DENY_REASON
+        const args = exec && (exec.arguments ?? exec.args)
+        if (isChildOrchestrationCall(name, opts, args)) return CHILD_ORCHESTRATION_DENY_REASON
         return undefined
       })
     }
@@ -540,4 +548,4 @@ module.exports = {
   },
 }
 
-module.exports.__internals = { KIX_ROUTE_SENTINEL_PREFIX, decideEffort, effortIdsOf, isSubagentChild, isLiteTier, probeRoute, isChildOrchestrationCall, CHILD_ORCHESTRATION_DENY_REASON, leafTextOf, classifyComplexity, adaptiveEffort, hasActiveSignal }
+module.exports.__internals = { KIX_ROUTE_SENTINEL_PREFIX, decideEffort, effortIdsOf, isSubagentChild, isLiteTier, probeRoute, childOrchestrationTarget, isChildOrchestrationCall, CHILD_ORCHESTRATION_DENY_REASON, leafTextOf, classifyComplexity, adaptiveEffort, hasActiveSignal }

@@ -11,7 +11,7 @@ const lib = require('../preset/plugins/consistency-lib.cjs')
 
 const ROOT = path.join(__dirname, '..')
 
-const { failures, notes } = lib.runAllEn(ROOT, '1.2.22')
+const { failures, notes } = lib.runAllEn(ROOT, '1.2.23')
 for (const n of notes) console.log('  ✔ ' + n)
 
 if (failures.length) {

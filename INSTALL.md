@@ -62,6 +62,8 @@ chmod +x install.sh
 | prompts | `%APPDATA%\Code\User\prompts\` | `~/.config/Code/User/prompts/`（macOS: `~/Library/Application Support/...`） |
 | memories | `%APPDATA%\Code\User\globalStorage\github.copilot-chat\memory-tool\memories\` | 同结构，换 base |
 
+Skills 按 `skills/*/SKILL.md` 自动发现并全部安装。Memories 是精选集合；DSH capability map 与 legacy notes 只作为仓库参考资料，不导入 user memory。
+
 > **环境变量覆盖**：`COPILOT_HOME`、`VSCODE_PROMPTS_DIR`、`VSCODE_MEMORY_DIR` 可分别覆盖三个目标路径。
 
 ---

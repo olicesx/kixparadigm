@@ -1,13 +1,27 @@
 # Changelog
 
 
-## v1.2.22（2026-08-18）编排纪律候选：任务面冻结 + run_code 取舍
+## v1.2.23（2026-08-18）kix-browser 原生浏览器自动化（按需激活）+ E2E 方法论沉淀
 
-> 快速迭代候选集（试验期）。反馈不好直接 revert 本版本即可，无迁移成本。
+- **kix-browser 插件**：原生 `browser{action}` 单工具 17 动作（open/snapshot/text/click/type/press/select/hover/back/forward/reload/wait/screenshot/upload/tabs/dialog/close）——playwright-core 直驱替代 MCP 五跳链路（本宿主 MCP 解析层损坏实证：navigate/click ToolNotFound）。CDP attach 优先（`KIX_BROWSER_CDP` 接管真实浏览器，登录态保留）+ launch headless 兜底；会话跨调用持久（插件态句柄 + 串行队列）；URL 门禁（仅 http/https/about:blank）；弹窗默认驳回 + `dialog{auto}` 策略 + lastDialog 回报；playwright-core 懒 require（缺装不阻塞装载，错误带跨平台安装指引）。
+- **渐进披露合规**：yml 挂载行默认注释（零常驻 schema 税）——kix-focus `ACTIVATABLE_TOOLS.browser`（新增 `pkgPath` 本地解析路径）+ browser-native 目录组，`kix_capability_call` 首用自动挂载、下一轮直呼、`kix_tool_deactivate` 卸载。源码定谳：**restrict 裁不掉本层自有注册**（dsh-tools：restriction 只过滤继承面）——preset 层插件渐进披露必须走 ACTIVATABLE 路径。
+- **故意排除**（范式红线/低频）：页内任意 JS evaluate（blast-radius 红线，需要时 pwsh 直驱脚本=代码级可审查）；网络拦截/cookie/PDF/拖拽（脚本路径）。
+- **质量链**：kix-browser 单测 12/12（zh/en）；E2E 真浏览器 11 步全绿（含 click 真实跳转→导航闭环→file:// 拒绝）；kix-focus 111/111（含 pkgPath 激活路径集成断言）；枚举防线先拦住一次描述漂移后同步；全插件套件 0 fail；CONSISTENCY OK；zh/en 字节镜像。
+- **E2E 方法论（memories 沉淀）**：编排对照 ⑥/§5.4/① 三条量化证据——**微小子任务扇出/包链反而更慢更贵**（载体固定开销需子任务时长摊薄；稳赢项=主线程步数与 cache）；**部署卫生铁律**：E2E 对照结论仅在 preset 同步部署（diff=0）后有效（旧部署伪影 4×墙钟差实证）；wsl.exe 驱动纪律：`$(...)` 赋值与嵌套引号必坑，探针一律脚本文件经 `/mnt/c` 执行。
+- **坑实录入档**：`$$eval` 字符串函数体在该版 playwright-core 返回 undefined（必须真实函数引用）；重构 open 分支误置会话门禁后被自己拦死（单测盲区=只测校验路径，E2E 补成功路径断言）。
+- **仓库卫生**：`.kix-tmp/`（本地 E2E 脚本，含机器绝对路径）入 .gitignore；README 三份（zh/en/preset）补 kix-browser 行。
 
-- **任务面冻结（⑤）**：观察者在飞时，其任务书圈定的对象面（文件/量测/结论）整体冻结至结算——主线程等待期自选工作前先对照任务面，重叠即换题。实证：persona 审计在飞时主线程重复量测 persona 尺寸。persona「被验证文件冻结」措辞同步升格（zh/en）。
-- **run_code 与直呼工具取舍（候选）**：扇出+容错 / 跨工具数据变换 / 依赖前步值的分支循环 → run_code；可回放证据链 / ≤4 操作 / 行号引用支撑精确编辑 → 直呼。附习惯梯度警告（per-tool 锚定强度会把判断滑向直呼侧）与交付时自抽查。实证：16 连发 edit 被读前检查拦 4 个的两回合补救。
-- **lesson 计数修复**：orchestration-lessons「三条:」brittle 计数（实为四条）改「条目（实证追加）」。
+## v1.2.22（2026-08-18）编排纪律自迭代 + workspace/distribution 收敛
+
+- **宽冻结回收为 exact claim**：后台观察者在飞时只冻结 `(claim, evidence cursor/measurement)`；同文件的正交 claim 与主线程综合可继续。发布依赖的最后验证改 foreground，final 前关键观察者必须结算。
+- **交接与回流语义修正**：41-step gate 仅由 foreground `subagent_lite` 或 `create_goal` 完成交接，background spawn 不解锁；小结果 final-only，只有大结果落 artifact 并回路径/结论/状态。`run_code`/native 取舍压成 task-shape 一行常驻锚，删除重复候选规则。
+- **门禁降噪**：正常动态窗口 + usage/tokenMeter 路径只由 token 预算 hard gate，step 41 降为计量缺失 fallback；handoff 成败改读完整 JSON envelope，报告正文引用 {"ok":false} 不再误锁。
+- **工具能力恢复**：run_code 受限能力检查改为 executable-surface 扫描；字符串/注释/非 tagged template raw 可承载补丁文本，regex/division/tagged-template 歧义保留原文 fail-closed，真实 Node/network/fs/codegen 能力继续拒绝。depth-1 child 仅恢复 lite，maxDepth=2 + 静态/动态 toolFilter + proxy-target guard 拒绝 depth≥2/regular/cross/goal/workflow。
+- **Escalation 调用纪律**：宿主成对校验保持不变；首次调用省略 sandbox_permissions/justification，仅真实 denial 后成对重试，approval disabled 时永不设置。
+- **workspace 与 discipline 正确性**：discipline/orchestration 统一复用 session-cwd-first resolver；discipline 按 source/test/documentation/artifact 分类，只对 source 做 spec/green gate；`loadSpec()` 仅在 in-flight 期间共享 Promise，完成后释放并保持 save-after-load cache 一致。
+- **验证链修复**：`kix-discipline.test.js` 异步断言由 Promise 假绿改为真实 await，并修正 pre/post/turn agent identity；补 cwd precedence、mutation classifier、foreground handoff 与 mirror-tree 回归。
+- **分发单源**：`dsh/preset/plugins` 成为 commands/guards 唯一实现；Copilot installers 按 `SKILL.md` 动态发现全部 skills、只导入精选 memories；在 plugin 目录执行零参数 Node `--test`（Node 20+）动态发现插件测试；consistency 守 vision bridge 整树与 install-lib 实现镜像，删除 README/memory 易变计数契约。
+- **反方门禁审查**：修复 `git --work-tree <path> commit` / `--exec-path` 等长 option 吞掉子命令的绕过，以及任意短 flag 错吞下一 token；改为 shell segment + leading command + Git option arity 解析。`verify-guards.js` 改为带 expected 的语义矩阵，可明确报告已安装 preset 与 canonical source 漂移。
 
 ## v1.2.21（2026-08-18）预算完全动态化 + 分档上调 + persona 压缩
 

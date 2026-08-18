@@ -1,4 +1,4 @@
-﻿// kix-focus 回归测试（2026-08-16）
+// kix-focus 回归测试（2026-08-16）
 //
 // 单元级验证：加载 kix-focus.js，mock DSH tools 服务（register/restrict/schemas/execute），
 // 覆盖：
@@ -374,6 +374,17 @@ await ok('ACTIVATABLE_TOOLS 含 workflow/goal/细分档位/reviewer/qa/dev(ralph
     .every((n) => I.ACTIVATABLE_TOOLS[n] && I.ACTIVATABLE_TOOLS[n].package)
     && I.ACTIVATABLE_TOOLS.ralph === undefined
     && I.ACTIVATABLE_TOOLS.jobs === undefined
+})())
+await ok('所有动态 subagent 档位 maxDepth=2', (() => {
+  return ['subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork', 'subagent_reviewer', 'subagent_qa', 'subagent_dev']
+    .every((n) => I.ACTIVATABLE_TOOLS[n].config.maxDepth === 2)
+})())
+await ok('动态非 lite 档位携静态 9-name toolFilter deny', (() => {
+  const expected = ['exit_plan_mode', 'subagent', 'subagent_cross', 'interrupt_agent', 'send_message', 'list_agents', 'ask_user_question', 'kix_tool_activate', 'kix_tool_deactivate']
+  return ['subagent_thinker', 'subagent_vision', 'subagent_fork', 'subagent_reviewer', 'subagent_qa', 'subagent_dev']
+    .every((n) => JSON.stringify(I.ACTIVATABLE_TOOLS[n].config.toolFilter && I.ACTIVATABLE_TOOLS[n].config.toolFilter.deny) === JSON.stringify(expected))
+    && I.ACTIVATABLE_TOOLS.subagent_lite.config.toolFilter.allow.length === 4
+    && I.ACTIVATABLE_TOOLS.subagent_lite.config.toolFilter.deny === undefined
 })())
 await ok('subagent_reviewer 激活配置含反方辩护三层 persona', (() => {
   const c = I.ACTIVATABLE_TOOLS.subagent_reviewer.config
@@ -786,6 +797,28 @@ await ok('lite 档（8192）代理 subagent_lite → 拒（档位判断路径）
     { tool: 'subagent_lite', arguments: { prompt: 'test' } },
     { agent: { id: 'agent-lite', options: { maxTokens: 8192 } } })
   return r.ok === false && r.error && r.error.includes('maxTokens > 8192') && executeCalls.length === 0
+})())
+
+// ── 渐进披露：browser 本地插件激活条目（2026-08-18）───────────────────
+section('渐进披露：browser 本地插件激活条目')
+await ok('ACTIVATABLE_TOOLS.browser 存在且 pkgPath 指向可装载的本地插件', (async () => {
+  const entry = I.ACTIVATABLE_TOOLS.browser
+  if (!entry || entry.pkgPath !== 'kix-browser.js') return false
+  const local = require(path.resolve(__dirname, 'kix-browser.js'))
+  return typeof local.apply === 'function' && typeof local._test?.urlRejection === 'function'
+})())
+await ok('CAPABILITY_GROUPS 含 browser-native 发现组（未挂载也可见 hint）', (async () => {
+  const g = I.CAPABILITY_GROUPS.find((x) => x.id === 'browser-native')
+  return !!g && g.tools.includes('browser') && g.hint.includes('首次使用自动激活')
+})())
+await ok('激活 browser → pkgPath 本地 require 走 ctx.plugin 挂载', (async () => {
+  pluginCalls.length = 0
+  const r = await activateTool.execute({ tool: 'browser' })
+  const calledWithModule = pluginCalls.length === 1 && typeof pluginCalls[0].pkg === 'object'
+    && typeof pluginCalls[0].pkg.apply === 'function'
+  // 复位（卸载）避免污染后续断言的 activated 集合
+  if (r.ok) await deactivateTool.execute({ tool: 'browser' })
+  return r.ok === true && calledWithModule
 })())
 
 // ── 清理临时工作区（2026-08-17：与 kix-orchestration.test 同款纪律）──────
