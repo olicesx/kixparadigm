@@ -23,12 +23,15 @@
 
 //   - agent/turn-stopping：纯散文回合也会收到一次 gate steer，交接完成后状态解除。
 
-//   - 预算 = min(budgetRatio×窗口, absoluteCapTokens)，默认 absoluteCapTokens=150K；窗口经
+//   - 预算 = budgetRatioTiers 按窗口分档取比例（v1.2.21 完全动态化：有效窗口不套默认帽）；
+//     无窗口/无效窗口回退 absoluteCapTokens（默认 150K）；窗口经
 //     llm.resolveModelInfo 解析并按 provider/model 缓存；解析失败不缓存，下一次继续感知。
 //
 // 参数从实测派生（反过拟合①，不做论文默认值）：
-//   - absoluteCapTokens=150K：与主线程原始契约和 WSL2 gate 验收线一致；
-//     luna 会话 ~200K/步即进入燃烧区；deepseek 马拉松 150K 后还有 290 步。
+//   - absoluteCapTokens=150K：无窗口时的回退值 + 用户可选硬顶（显式配置才截断
+//     分档值，默认值不再截断有效窗口的分档结果）；数值与主线程原始契约和
+//     WSL2 gate 验收线一致；luna 会话 ~200K/步即进入燃烧区；deepseek 马拉松
+//     150K 后还有 290 步。
 //   - streakReadOnly=8：正常回合只读步 ≤3-4；马拉松出现 10-20+ 连读。
 //   - resultThresholdChars：从宿主 pruner.config.thresholdChars 读取，默认 2K；
 //   - turnStepLimit=40：第 41 步进入交接 gate。
@@ -38,6 +41,8 @@
 //   - 交接成功状态按回合/水位隔离，避免同一阈值在同一回合重锁。
 //   - 事件按 agent scope 过滤，子代理会话天然不在覆盖面（kix-discipline
 //     同款边界）；子代理预算由各工具行 maxTokens 兜底（v5.8 ⑰）。
+//   - 600K 断崖已随默认帽废止消失（v1.2.21 完全动态化）；absoluteCapTokens
+//     现为可选配置：仅无窗口回退或用户显式配置硬顶时生效。
 //   - 本插件必须挂在 compaction 组 realm 内（isolate: toolResultPruner）：
 //     ctx.get('toolResultPruner') 只在同 realm 可见（compaction-basic 同款
 //     约束）；tokenMeter/llm 留在宿主面，realm 内照常解析。
@@ -56,17 +61,16 @@ const lib = require('./consistency-lib.cjs')
 const DEFAULTS = {
   enabled: true,
   budgetRatio: 0.35,
-  absoluteCapTokens: 150000,
+  absoluteCapTokens: 150000, // 无窗口回退值 + 用户可选硬顶（显式配置才截断分档值）
   streakReadOnly: 8,
   turnStepLimit: 40,
   resultThresholdChars: 2048,
   pruneRatio: 0.5,
   hardHandoff: true,
-  // 预算比例分档（budgetRatioTiers）：按上下文窗口动态降低比例
-  //   - W ≤ 131072（128K）：0.35（小窗口保留更多工作空间）
-  //   - 131072 < W ≤ 409600（400K）：0.30（中等窗口适度衰减）
-  //   - 409600 < W ≤ 1048576（1M）：0.25（大窗口长尾衰减+重读成本）
-  //   - W > 1M 或无窗口：由 absoluteCapTokens=150000 兜底
+  // 预算比例分档（budgetRatioTiers，v1.2.21 完全动态化）：按上下文窗口动态取比例
+  //   - W ≤ 128K（131072）→ 0.85；W ≤ 400K（409600）→ 0.65；
+  //     W ≤ 1M（1048576）→ 0.40；W > 1M → 0.35；无窗口 → 回退 absoluteCapTokens
+  //   - 斜率语义：小窗尽量用满（handoff 固定开销占比高）、比例随窗口递减、超长档防线性外推
   // 兼容性：若 cfg.budgetRatio 显式存在，则整条曲线走该值（老配置不破坏）
 }
 
@@ -126,23 +130,30 @@ function resolveBudgetTokens(contextWindow, cfg) {
     if (!Number.isFinite(contextWindow) || contextWindow <= 0) return cap
     return Math.floor(contextWindow * ratio) // 显式配置不截断（用户可设置更高预算）
   }
-  // 预算比例分档（按上下文窗口动态降低比例）
-  //   - W ≤ 131072（128K）：0.35（小窗口保留更多工作空间）
-  //   - 131072 < W ≤ 409600（400K）：0.30（中等窗口适度衰减）
-  //   - 409600 < W ≤ 1048576（1M）：0.25（大窗口长尾衰减+重读成本）
-  //   - W > 1M 或无窗口：由 absoluteCapTokens=150000 兜底
+  // v1.2.21 完全动态化：有效窗口走纯分档，不再套默认帽；absoluteCapTokens
+  // 仅作无窗口回退；显式配置的非默认 absoluteCapTokens 作为用户可选硬顶
+  const explicitCap =
+    c !== DEFAULTS && c.absoluteCapTokens !== DEFAULTS.absoluteCapTokens &&
+    Number.isFinite(c.absoluteCapTokens) && c.absoluteCapTokens > 0
+      ? cap
+      : Infinity
   if (!Number.isFinite(contextWindow) || contextWindow <= 0) return cap
+  // 预算比例分档（按上下文窗口动态取比例）
+  //   - W ≤ 131072（128K）：0.85（小窗口 handoff 固定开销占比高，尽量用满）
+  //   - 131072 < W ≤ 409600（400K）：0.65（中档回落）
+  //   - 409600 < W ≤ 1048576（1M）：0.40（大档利用率回升）
+  //   - W > 1M：0.35（超长档防线性外推）
   let ratio
   if (contextWindow <= 131072) {
-    ratio = 0.35
+    ratio = 0.85
   } else if (contextWindow <= 409600) {
-    ratio = 0.30
+    ratio = 0.65
   } else if (contextWindow <= 1048576) {
-    ratio = 0.25
+    ratio = 0.40
   } else {
-    ratio = 0.25 // > 1M：仍按 0.25 计算，但会被 absoluteCapTokens 兜底截断
+    ratio = 0.35
   }
-  return Math.min(Math.floor(contextWindow * ratio), cap)
+  return Math.min(Math.floor(contextWindow * ratio), explicitCap)
 }
 
 function usageContextTokens(usage) {

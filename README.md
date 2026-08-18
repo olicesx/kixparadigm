@@ -49,7 +49,7 @@ chmod +x install.sh && ./install.sh
 | 成本路由 | `kix-cost` · `kix-route` | 子代理思考强度归一化；哨兵模型名 → 运行时可用路由 |
 | 补足 | `kix-commands` · `dsh-vision-bridge` · `kix-stalled`（opt-in） | `/kixpower-*` 原生命令；无视觉主模型识图；停滞 Sprint 检测 |
 
-preset 全量：persona + 18 技能 + 6 角色 + 5 命令 + 4 记忆。各插件机制与版本演进见 [DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md) 与 [CHANGELOG.md](CHANGELOG.md)。
+preset 全量：persona + 18 技能 + 6 角色 + 5 命令 + 5 记忆。各插件机制与版本演进见 [DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md) 与 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 仓库结构
 

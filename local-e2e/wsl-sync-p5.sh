@@ -2,7 +2,7 @@
 # Sync current Windows kix-bundle preset trees into WSL2 DSH installs.
 set -euo pipefail
 export HOME=/root
-SRC=/mnt/c/Users/37112/Desktop/kix-bundle
+SRC=$(cd "$(dirname "$0")/.." && pwd)
 ZH=/root/.dsh/.agent-presets/kixparadigm
 EN=/root/.dsh/.agent-presets/kixparadigm-en
 
