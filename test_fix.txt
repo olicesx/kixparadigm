@@ -1,0 +1,29 @@
+  check('tokenMeter 缺失 → 不抛错（跨环境不挂）', pre === 'NEXT4' && pruned === 3)
+  services.tokenMeter = { measure() { return { totalTokens: 100000 } } }
+  const boundaryAgent = makeAgent('s-boundary-oversize', 'zai-coding-cn', 'glm-5.3')
+  listeners['session/event'][0](boundaryAgent.session, { type: 'turn/start', data: { turn: 1 } })
+  listeners['session/event'][0](boundaryAgent.session, { type: 'tool/result', data: { message: { content: [{ content: [{ type: 'text', text: 'y'.repeat(3000) }] }] } } })
+  listeners['session/event'][0](boundaryAgent.session, { type: 'turn/start', data: { turn: 2 } })
+  await preStep(boundaryAgent, 1)
+  check('oversize result survives turn boundary', pruned === 4)
+  // { landed } 返回形态兼容（宿主 pruner 变体）：计入 charsRemoved 才触发日志分支
+  services.toolResultPruner = {
+    config: { thresholdChars: 2048 },
+    pruneSession() { pruned++; return { landed: [{ seq: 9 }], charsRemoved: 5000 } },
+  }
+  services.tokenMeter = { measure() { return { totalTokens: 100000 } } }
+  listeners['session/event'][0](mainAgent.session, { type: 'tool/result', data: {} })
+  pre = await listeners['agent/pre-step'][0]({ agent: mainAgent, signal: undefined }, async () => 'NEXT5')
+  check('{ landed } 形态 → pruneSession 被调且不抛错', pre === 'NEXT5' && pruned === 5)
+  // 宿主无 config.thresholdChars → 回退默认 resultThresholdChars=2048，3K 结果仍剪
+  services.toolResultPruner = {
+    pruneSession() { pruned++; return { pruned: [{ seq: 10 }] } },
+  }
+  const defaultThresholdAgent = makeAgent('s-default-threshold', 'zai-coding-cn', 'glm-5.3')
+  listeners['session/event'][0](defaultThresholdAgent.session, {
+    type: 'tool/result',
+    data: { message: { content: [{ content: [{ type: 'text', text: 'x'.repeat(3000) }] }] } },
+  })
+  await listeners['agent/pre-step'][0]({ agent: defaultThresholdAgent, signal: undefined }, async () => 'NEXT6')
+  check('缺 config.thresholdChars → 默认 2K 阈值仍剪 3K 结果', pruned === 6)
+  delete services.tokenMeter

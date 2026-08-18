@@ -1,7 +1,7 @@
 # kixparadigm — Agent Preset（kix 范式导入）
 
 > 从桌面 `kix-bundle`（VS Code Copilot 定制包）完整导入 DeepSeek Harness 的 agent preset。
-> 本目录 = kix 全家桶的 Harness 落地：认知层常驻 persona + 5 个技能 + 团队角色 + kixpower 流程 + 方法论记忆。
+> 本目录 = kix 全家桶的 Harness 落地：认知层常驻 persona + 6 个技能 + 团队角色 + kixpower 流程 + 方法论记忆。
 > **DSH 适配权威文档：`DSH-ADAPTATION.md`**（工具名映射 / 机械门禁 / 团队编排 / 原生特性 / 已知限制）。
 
 ## 目录结构
@@ -23,13 +23,14 @@ kixparadigm/                      ← 本 preset
 │   └── kix-stalled.js            ← 停滞检测（opt-in）
 ├── instructions/
 │   └── kixparadigm-core.instructions.md   ← 常驻认知层原件
-├── skills/                       ← 17 个技能（挂到本 preset 的 skill 目录）
+├── skills/                       ← 18 个技能（挂到本 preset 的 skill 目录）
 │   ├── kixparadigm/              ← 认知范式机制细节（SKILL.md + AUDIT.md）
 │   ├── kixpower/                 ← 多智能体编排 v5.7（SKILL + README + USAGE_MANUAL
 │   │                                + TEAM_CONVENTIONS + hooks + scripts + templates + tests）
 │   ├── handoff/                  ← 会话交接
 │   ├── write-a-skill/            ← 创建新技能
 │   ├── improve-codebase-architecture/ ← 架构改进机会发现
+│   ├── pwsh-reliable/            ← Windows 命令可靠性（native 参数/引号/退出码/WSL/清理，2026-08-17 吸收）
 │   ├── tdd / teach / grill-me / grill-with-docs / diagnose / prototype
 │   ├── triage / to-issues / to-prd / zoom-out / migrate-to-shoehorn / caveman
 ├── agents/                       ← 6 个角色定义（子代理分派模板）
