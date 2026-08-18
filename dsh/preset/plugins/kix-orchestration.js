@@ -415,29 +415,17 @@ module.exports = {
     const cfg = config || {}
     const intensity = cfg.intensity || 'remind'
     const sandboxPolicy = ctx.get('sandboxPolicy')
-    const defaultRoot = sandboxPolicy !== undefined && sandboxPolicy.workspaceRoot ? sandboxPolicy.workspaceRoot : undefined
 
     const states = new Map()
     function stateFor(agent) {
       const key = agent && agent.id ? String(agent.id) : 'anonymous'
       let st = states.get(key)
       if (!st) {
-        const session = agent && agent.session
-        const header = session && session.header
-        const cwd = header && header.cwd && typeof header.cwd === 'string' ? header.cwd : undefined
-        st = { enabled: true, reminded: false, returnReminded: false, sleepReminded: false, planReminded: false, pendingPlanRemind: null, workspaceRoot: defaultRoot || cwd || undefined }
+        const workspaceRoot = lib.resolveWorkspaceRoot(agent, sandboxPolicy) || undefined
+        st = { enabled: true, reminded: false, returnReminded: false, sleepReminded: false, planReminded: false, pendingPlanRemind: null, workspaceRoot }
         states.set(key, st)
       }
       return st
-    }
-
-    function agentCwd(exec) {
-      try {
-        const cwd = exec && exec.agent && exec.agent.session && exec.agent.session.header && exec.agent.session.header.cwd
-        return typeof cwd === 'string' && cwd.length > 0 ? cwd : undefined
-      } catch {
-        return undefined
-      }
     }
 
     async function askUser(exec, reason) {
@@ -524,7 +512,7 @@ module.exports = {
       const prompt = args && (args.prompt || args.content)
       if (typeof prompt !== 'string' || prompt.length === 0) return next()
 
-      const workspaceRoot = st.workspaceRoot || agentCwd(exec)
+      const workspaceRoot = lib.resolveWorkspaceRoot(agent, sandboxPolicy) || st.workspaceRoot
       const result = checkHandoff({ prompt, workspaceRoot })
       if (!result.ok) {
         const reason = 'kix-orchestration: ' + result.reasons.join(' ')
@@ -635,11 +623,8 @@ module.exports = {
         if (!st.enabled || st.returnReminded) return
         const text = lastAssistantText(info && info.lastAssistantMessage)
         if (!text) return
-        // parent agent 自身的 cwd 是权威工作区根（subagent/end 的 parent 即发起方）；
-        // sandbox 默认根仅作兜底（与 pre-execute 的 agentCwd 优先级相反：这里是
-        // 父代理视角，不是工具执行视角）。
-        const parentCwd = (agent.session && agent.session.header && agent.session.header.cwd) || undefined
-        const workspaceRoot = parentCwd || st.workspaceRoot || undefined
+        // parent agent 的 session cwd 优先；共享 resolver 统一部署回退语义。
+        const workspaceRoot = lib.resolveWorkspaceRoot(agent, sandboxPolicy) || st.workspaceRoot
         if (!workspaceRoot) return
         // 读 active sprint 的 progress.md（与 checkHandoff 同源；读失败 fail-open）
         let progressMd = undefined

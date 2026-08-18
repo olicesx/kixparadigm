@@ -195,6 +195,20 @@ async function softCase(label, name, args) {
   check('run_code: import("fs") → deny (v3)', await dispatch('run_code', { code: 'const fs = await import("fs"); return fs' }), true)
   check('run_code: writeFileSync( → deny (v3)', await dispatch('run_code', { code: 'const fs = require("node:fs"); fs.writeFileSync("a","b")' }), true)
   check('run_code: 纯 tools.* 编排 → allow', await dispatch('run_code', { code: 'const a = await tools.read({file_path:"a.ts"}); return a' }), false)
+  check('run_code: 受限词作为字符串数据 → allow', await dispatch('run_code', { code: "const patch = \"child_process process.env fs.writeFileSync(\\\"x\\\",\\\"y\\\")\"; return patch" }), false)
+  check('run_code: 受限词仅在注释 → allow', await dispatch('run_code', { code: "// child_process process.env\nreturn 1" }), false)
+  check('run_code: template raw text → allow', await dispatch('run_code', { code: "const patch = `process.env writeFileSync()`; return patch" }), false)
+  check('run_code: template expression 真实访问 → deny', await dispatch('run_code', { code: "return `value ${process.env.HOME}`" }), true)
+  check('run_code: regex quote ambiguity fails closed → deny', await dispatch('run_code', { code: "const re = /[\"']/; require('child_process'); return 1" }), true)
+  check('run_code: regex comment ambiguity fails closed → deny', await dispatch('run_code', { code: "const re = /[/*]/; fetch('http://x.example'); return 1" }), true)
+  check('run_code: regex plus restricted string fails closed → deny', await dispatch('run_code', { code: "const re = /x/; const patch = \"process.env\"; return patch" }), true)
+  check('run_code: division plus restricted string fails closed → deny', await dispatch('run_code', { code: "const n = 4 / 2; const patch = \"process.env\"; return patch" }), true)
+  check('run_code: U+2028 terminates line comment before real call → deny', await dispatch('run_code', { code: "// note require('child_process'); return 1" }), true)
+  check('run_code: optional chaining access denied → deny', await dispatch('run_code', { code: "return process?.env.HOME" }), true)
+  check('run_code: eval code generation denied → deny', await dispatch('run_code', { code: "return eval(\"process.env.HOME\")" }), true)
+  check('run_code: Function code generation denied → deny', await dispatch('run_code', { code: "return Function(\"return process.env.HOME\")()" }), true)
+  check('run_code: constructor code generation denied → deny', await dispatch('run_code', { code: "return (async()=>{}).constructor(\"return process.env.HOME\")()" }), true)
+  check('run_code: tagged template ambiguity fails closed → deny', await dispatch('run_code', { code: "return String.raw`process.env`" }), true)
 
   // ══ 5. 未知执行工具 ══════════════════════════════════════════════════
   check('python3 直呼（未登记）→ deny', await dispatch('python3', { code: 'print(1)' }), true)
@@ -257,7 +271,12 @@ async function softCase(label, name, args) {
   assert.deepStrictEqual([...I.gitSubcommands('git commit -am x && git push origin main')], ['commit', 'push'])
   assert.deepStrictEqual([...I.gitSubcommands('git status')], ['status'])
   assert.deepStrictEqual([...I.gitSubcommands('git.exe push origin f')], ['push'])
-  passed += 6
+  assert.deepStrictEqual([...I.gitSubcommands('git --work-tree C:/repo commit -am x')], ['commit'])
+  assert.deepStrictEqual([...I.gitSubcommands('git --exec-path "C:/git core" commit -am x')], ['commit'])
+  assert.deepStrictEqual([...I.gitSubcommands('git --work-tree=C:/repo commit -am x')], ['commit'])
+  assert.deepStrictEqual([...I.gitSubcommands('git -p commit -am x')], ['commit'])
+  assert.deepStrictEqual([...I.gitSubcommands('git -ccore.hooksPath=/tmp commit -am x')], ['commit'])
+  passed += 11
 
   // pushTargetsProtectedRef
   assert.ok(I.pushTargetsProtectedRef('git push origin main'))
@@ -490,6 +509,7 @@ async function softCase(label, name, args) {
     check('commit：会话 cwd=仓库根（main 分支）git commit → deny（分支检查）', await dispatchIn(gitRepo, 'pwsh', { command: 'git commit -am "test"' }), true)
     check('commit：会话 cwd≠仓库根 + cd 进入（无 -C）→ deny（v10 cd 解析 + 分支检查）', await dispatchIn(nonRepo, 'pwsh', { command: `cd ${gitRepo} && git commit -am "test"` }), true)
     check('commit：git -C 显式仓库 + main → deny（-C 解析路径不变）', await dispatchIn(nonRepo, 'pwsh', { command: `git -C ${gitRepo} commit -am "test"` }), true)
+    check('commit：--work-tree 长 option 不吞掉子命令 → deny', await dispatchIn(gitRepo, 'pwsh', { command: `git --work-tree "${gitRepo}" commit -am "test"` }), true)
     check('commit：feature 分支 → allow（分支检查通过，预算冷启动 3 未超）', (async () => {
       git(['checkout', '-q', '-b', 'feature'], gitRepo)
       return dispatchIn(gitRepo, 'pwsh', { command: 'git commit -am "test"' })

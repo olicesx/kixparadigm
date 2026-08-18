@@ -11,12 +11,10 @@
 #   1. Detects COPILOT_HOME (default $HOME\.copilot)
 #   2. Detects VS Code prompts folder ($env:APPDATA\Code\User\prompts)
 #   3. Detects VS Code memory folder ($env:APPDATA\Code\User\globalStorage\github.copilot-chat\memory-tool\memories)
-#   4. Copies bundle\skills\*    -> $COPILOT_HOME\skills\
-#   5. Copies bundle\agents\*    -> $COPILOT_HOME\agents\
-#   6. Copies bundle\instructions\* -> $COPILOT_HOME\instructions\
-#   7. Copies bundle\prompts\*   -> $VSCODE_PROMPTS_DIR\
-#   8. Copies bundle\memories\*  -> $VSCODE_MEMORY_DIR\  (unless -SkipMemories)
-#   9. Replaces placeholders in *.agent.md:
+#   4. Copies every bundle skill containing SKILL.md -> $COPILOT_HOME\skills\
+#   5. Copies the curated agent/instruction/prompt manifests
+#   6. Copies curated user memories -> $VSCODE_MEMORY_DIR\ (unless -SkipMemories)
+#   7. Replaces placeholders in *.agent.md:
 #        {{COPILOT_HOME}}  -> $COPILOT_HOME (forward slashes)
 #        {{HOOK_LAUNCHER}} -> pwsh -NoProfile -File
 #        {{HOOK_EXT}}      -> ps1
@@ -52,11 +50,19 @@ function Show-OK([string]$msg)   { Write-Host "[v] $msg" -ForegroundColor Green 
 function Show-Warn([string]$msg) { Write-Host "[!] $msg" -ForegroundColor Yellow }
 function Show-Err([string]$msg)  { Write-Host "[x] $msg" -ForegroundColor Red }
 
-# --- Asset manifest (for uninstall + plan display) ---
-$Skills = @('kixparadigm', 'kixpower', 'handoff', 'write-a-skill', 'improve-codebase-architecture')
+# --- Asset policy (for install, uninstall, and plan display) ---
+# Skills are convention-based: every directory containing SKILL.md is public.
+$Skills = @(
+    Get-ChildItem -Path (Join-Path $BundleRoot 'skills') -Directory |
+        Where-Object { Test-Path (Join-Path $_.FullName 'SKILL.md') } |
+        Sort-Object Name |
+        ForEach-Object { $_.Name }
+)
+if ($Skills.Count -eq 0) { throw 'No installable skills found under bundle skills/' }
 $Agents = @('kixparadigm', 'kixpower-dev', 'kixpower-orchestrator', 'kixpower-producer', 'kixpower-qa', 'kixpower-reviewer')
 $Instructions = @('kixparadigm-core')
 $Prompts = @('kixpower', 'kixpower-continue', 'kixpower-import', 'kixpower-new', 'kixpower-review')
+# Memories are deliberately curated: DSH capability data and legacy notes are not user-memory defaults.
 $Memories = @('ai-agent-practices', 'vscode-copilot-customization', 'ai-test-pruning')
 
 # --- Uninstall ---

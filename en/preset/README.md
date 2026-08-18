@@ -6,18 +6,18 @@
 
 ```
 preset/
-├── agent.cordis.yml            ← composition: EN resident cognition layer + full toolset + 7 plugins
+├── agent.cordis.yml            ← composition: EN resident cognition layer + full toolset + enabled plugins
 ├── preset.yml                  ← mode-picker metadata (name: kixparadigm-en)
 ├── DSH-ADAPTATION.md           ← authoritative mechanism mapping (EN, condensed)
 ├── PLUGINIZATION-ROADMAP.md    ← pluginization roadmap (EN condensed; CN full edition in CN preset)
 ├── instructions/
 │   ├── kixparadigm-core.instructions.md   ← resident cognition layer (EN)
 │   └── glossary.md             ← canonical terminology table (EN)
-├── agents/                     ← 6 role definitions (entry EN; team roles CN, pending)
-├── skills/                     ← 18 skills (CN originals pending translation; `pwsh-reliable` ships English-native)
-├── prompts/                    ← 5 /kixpower-* flows (CN, pending)
-├── memories/                   ← 5 methodology memories (CN, pending)
-└── plugins/                    ← kix-guards + kix-discipline + kix-orchestration + kix-focus + kix-cost + kix-route + kix-commands + kix-stalled (opt-in) + tests (language-neutral)
+├── agents/                     ← role definitions (entry EN; team roles CN, pending)
+├── skills/                     ← skills (CN originals pending translation; `pwsh-reliable` ships English-native)
+├── prompts/                    ← /kixpower-* flows (CN, pending)
+├── memories/                   ← methodology memories (CN, pending)
+└── plugins/                    ← kix-guards + kix-discipline + kix-orchestration + kix-focus + kix-browser (17-action native browser automation, on-demand activation) + kix-cost + kix-route + kix-commands + kix-stalled (opt-in) + tests (language-neutral)
 ```
 
 ## Install
@@ -33,8 +33,6 @@ After install: `kixparadigm-en doctor` self-checks. `kixparadigm-en uninstall` r
 
 ```bash
 node scripts/check-consistency.cjs    # persona budget / doc-link / syntax guard (v1.2.11)
-node scripts/run-plugin-tests.cjs     # all plugin tests (auto-discovers *.test.js, runs one file per
-                                      #   process: guards 210 / commands 6 / cost 28 / route 68 /
-                                      #   discipline 68 / orchestration 69 / focus 83 assertions;
-                                      #   single files still run directly via `node plugins/<name>.test.js`)
+(cd preset/plugins && node --test) # all plugin tests (Node 20+ auto-discovery;
+                                  #   single files still run via `node preset/plugins/<name>.test.js`)
 ```

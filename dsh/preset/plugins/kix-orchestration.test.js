@@ -211,6 +211,18 @@ function dispatchPre(name, args, agentId) {
   const exec = { name, arguments: args, token: 't', callId: 'c', agent: { id: agentId || 'orch-t', session: { header: sessionHeader } } }
   return preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
 }
+await ok('session cwd 覆盖 sandbox fallback', (async () => {
+  const root = makeWorkspace({ markerValue: 1 })
+  const exec = {
+    name: 'subagent',
+    arguments: { prompt: 'current_sprint: 1' },
+    token: 't',
+    callId: 'cwd-priority',
+    agent: { id: 'orch-cwd-priority', session: { header: { cwd: root } } },
+  }
+  const decision = await blockListeners['tools/pre-execute'][0](exec, () => Promise.resolve({ kind: 'allow' }))
+  return decision.kind === 'allow'
+})())
 await ok('非 subagent 工具 → 放行', (async () => {
   const d = await dispatchPre('edit', { file_path: 'x.ts' })
   return d.kind === 'allow'

@@ -86,17 +86,18 @@
       ## Cost Discipline
       - Tiers: lite (mechanical 8K) → subagent (default 64K) → subagent_cross (cross-vendor 64K) → subagent_thinker (128K, high-risk).
       - Mark dispatch `[EFFORT]`+`[BUDGET]`; observers 1 default, 2 for divergence/high-risk, ≤3 concurrent.
-      - No polling spin: spawn then wait foreground or read-only work; observer task-scope objects (files/measurements/conclusions) frozen till they settle; prompts: abs path+version anchors+forbid lists; `job_output`/`list_agents` are checkpoints, not thinking points. Work done, results missing → short status, end turn; settlement/report wakes a new turn unconditionally. `sleep` only for tests/backoff/lock waits.
-      - Single-channel results: final message = full report (settlement carries it; do not `report` it again); mid-run `report` only when truly needed. Prefer `outputSchema` for structured returns; reuse conclusions from progress.md/memories.
-      - Main-session budget (㉑-㉕): kix-budget meters steps and tokens (budget = window-tiered ratio; 150K/41 steps are the no-window fallback only); over-budget forces a `subagent_lite`/`create_goal` handoff; park big results on disk.
+      - No polling spin: use background only while independent work remains; the final verification required for publication must run foreground, and every critical observer must settle before final. While an observer runs, freeze only its exact claim + evidence cursor/measurement; other claims in the same file and main-thread synthesis remain readable. Prompts carry absolute paths, version anchors, and forbid lists; `sleep` is only for tests/backoff/locks.
+      - Single-channel results: small results return one complete final message and never duplicate it via `report`; large results write one complete artifact, then final returns only its absolute path, conclusion, and status. Prefer `outputSchema`; reuse conclusions from progress.md/memories.
+      - Main-session budget (㉑-㉕): when both the dynamic model window and usage/tokenMeter are available, only the tiered token budget is a hard gate; 150K/41 steps are fallback boundaries when either measurement plane is missing. A breach requires foreground subagent_lite/create_goal handoff; background spawn does not complete it.
       - Child effort (v5.11): explicit complexity:/effort/tier/maxTokens labels win; otherwise the tier is auto-picked from prompt complexity.
 
       ## DSH Adaptation
       - Dispatch: `subagent` with `agents/*.agent.md` role body + Tri-Block; `subagent_fork` inherits session context. Cross-vendor → `subagent_cross`; vision → `subagent_vision` (path + question); `📷 [图片自动识别]` is vision-bridge output, not user words.
       - Mounted gates: kix-guards (dangerous git/SQL/control-plane/unknown-exec), kix-discipline, kix-orchestration; `/kixpower-*` zero-token.
       - Tool surface: see the host tool list; on-demand tiers auto-activate on first use via `kix_capability_call`; workflow needs `disabled` removed + restart.
-      - Child orchestration plane (v5.10): children cannot re-delegate or orchestrate — further delegation belongs in the report to the main thread.
-      - Native first: workflow for multi-stage, goal for long-horizon, plan mode for planning, run_in_background + job_output for long tasks. Verification/observation stay native (evidence replayable); on deny, stop.
+      - Child orchestration plane (v5.12): a depth-1 child may use kix_capability_call only for subagent_lite mechanical evidence; in-process maxDepth=2 plus static/dynamic toolFilter and the guard reject depth>=2, regular/cross/goal/workflow.
+      - Sandbox escalation arguments: omit sandbox_permissions and justification on the first call; pair them only for one exact retry after a real sandbox denial; never set them when approval is disabled.
+      - Native first: use run_code for mechanical multi-step/concurrent/cross-tool transforms; call native tools directly for one-step, replayable verification, and approval actions. Use workflow for multi-stage, goal for long-horizon, plan mode for planning, and run_in_background + job_output for long tasks; on deny, stop.
 
       ## Resources
       `instructions/kixparadigm-core.instructions.md`; `prompts/kixpower-*`; `memories/*.md`; skills live in the session catalog. Deep-mechanism docs stay Chinese in this edition (TRANSLATION-STATUS.md).
@@ -308,13 +309,14 @@
         provider: spawn
         toolName: subagent
         backgroundMode: continuable
+        maxDepth: 2
         # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
         # bash/read/grep/glob; exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call all ZERO uses) — child
         # orchestration-surface trim. The deny list holds 9 permanently
         # mounted orchestration names only (restrict throws on unknown
-        # names); conditionally-mounted tiers/workflow are covered by the
-        # kix-cost child guard. Denied names vanish from both the tools
+        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # guards every other conditional tier/goal/workflow. Denied names vanish
         # array and the system TypeScript mirror. run_code is NOT in the
         # deny list: it is the reserved Code Mode transport — restrict
         # cannot name it (WSL2 live-fire finding) — and as a legitimate
@@ -359,6 +361,7 @@
         provider: spawn
         toolName: subagent_lite
         backgroundMode: continuable
+        maxDepth: 2
         persona: |-
           You are a fast mechanical subagent for strictly mechanical subtasks:
           reading files, searching, simple checks and verification. Do exactly
@@ -389,13 +392,14 @@
         provider: spawn
         toolName: subagent_thinker
         backgroundMode: continuable
+        maxDepth: 2
         # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
         # bash/read/grep/glob; exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call all ZERO uses) — child
         # orchestration-surface trim. The deny list holds 9 permanently
         # mounted orchestration names only (restrict throws on unknown
-        # names); conditionally-mounted tiers/workflow are covered by the
-        # kix-cost child guard. Denied names vanish from both the tools
+        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # guards every other conditional tier/goal/workflow. Denied names vanish
         # array and the system TypeScript mirror. run_code is NOT in the
         # deny list: it is the reserved Code Mode transport — restrict
         # cannot name it (WSL2 live-fire finding) — and as a legitimate
@@ -435,13 +439,14 @@
         provider: spawn
         toolName: subagent_cross
         backgroundMode: continuable
+        maxDepth: 2
         # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
         # bash/read/grep/glob; exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call all ZERO uses) — child
         # orchestration-surface trim. The deny list holds 9 permanently
         # mounted orchestration names only (restrict throws on unknown
-        # names); conditionally-mounted tiers/workflow are covered by the
-        # kix-cost child guard. Denied names vanish from both the tools
+        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # guards every other conditional tier/goal/workflow. Denied names vanish
         # array and the system TypeScript mirror. run_code is NOT in the
         # deny list: it is the reserved Code Mode transport — restrict
         # cannot name it (WSL2 live-fire finding) — and as a legitimate
@@ -476,13 +481,14 @@
         provider: spawn
         toolName: subagent_vision
         backgroundMode: continuable
+        maxDepth: 2
         # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
         # bash/read/grep/glob; exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call all ZERO uses) — child
         # orchestration-surface trim. The deny list holds 9 permanently
         # mounted orchestration names only (restrict throws on unknown
-        # names); conditionally-mounted tiers/workflow are covered by the
-        # kix-cost child guard. Denied names vanish from both the tools
+        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # guards every other conditional tier/goal/workflow. Denied names vanish
         # array and the system TypeScript mirror. run_code is NOT in the
         # deny list: it is the reserved Code Mode transport — restrict
         # cannot name it (WSL2 live-fire finding) — and as a legitimate
@@ -507,13 +513,14 @@
         provider: fork
         toolName: subagent_fork
         backgroundMode: continuable
+        maxDepth: 2
         # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
         # bash/read/grep/glob; exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call all ZERO uses) — child
         # orchestration-surface trim. The deny list holds 9 permanently
         # mounted orchestration names only (restrict throws on unknown
-        # names); conditionally-mounted tiers/workflow are covered by the
-        # kix-cost child guard. Denied names vanish from both the tools
+        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # guards every other conditional tier/goal/workflow. Denied names vanish
         # array and the system TypeScript mirror. run_code is NOT in the
         # deny list: it is the reserved Code Mode transport — restrict
         # cannot name it (WSL2 live-fire finding) — and as a legitimate
@@ -545,13 +552,14 @@
         provider: spawn
         toolName: subagent_reviewer
         backgroundMode: continuable
+        maxDepth: 2
         # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
         # bash/read/grep/glob; exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call all ZERO uses) — child
         # orchestration-surface trim. The deny list holds 9 permanently
         # mounted orchestration names only (restrict throws on unknown
-        # names); conditionally-mounted tiers/workflow are covered by the
-        # kix-cost child guard. Denied names vanish from both the tools
+        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # guards every other conditional tier/goal/workflow. Denied names vanish
         # array and the system TypeScript mirror. run_code is NOT in the
         # deny list: it is the reserved Code Mode transport — restrict
         # cannot name it (WSL2 live-fire finding) — and as a legitimate
@@ -613,13 +621,14 @@
         provider: spawn
         toolName: subagent_qa
         backgroundMode: continuable
+        maxDepth: 2
         # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
         # bash/read/grep/glob; exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call all ZERO uses) — child
         # orchestration-surface trim. The deny list holds 9 permanently
         # mounted orchestration names only (restrict throws on unknown
-        # names); conditionally-mounted tiers/workflow are covered by the
-        # kix-cost child guard. Denied names vanish from both the tools
+        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # guards every other conditional tier/goal/workflow. Denied names vanish
         # array and the system TypeScript mirror. run_code is NOT in the
         # deny list: it is the reserved Code Mode transport — restrict
         # cannot name it (WSL2 live-fire finding) — and as a legitimate
@@ -660,13 +669,14 @@
         provider: spawn
         toolName: subagent_dev
         backgroundMode: continuable
+        maxDepth: 2
         # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
         # bash/read/grep/glob; exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call all ZERO uses) — child
         # orchestration-surface trim. The deny list holds 9 permanently
         # mounted orchestration names only (restrict throws on unknown
-        # names); conditionally-mounted tiers/workflow are covered by the
-        # kix-cost child guard. Denied names vanish from both the tools
+        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # guards every other conditional tier/goal/workflow. Denied names vanish
         # array and the system TypeScript mirror. run_code is NOT in the
         # deny list: it is the reserved Code Mode transport — restrict
         # cannot name it (WSL2 live-fire finding) — and as a legitimate
@@ -919,6 +929,41 @@
 # Unit tests: node plugins/kix-focus.test.js (49 assertions).
 - id: kix-focus
   name: ./plugins/kix-focus.js
+
+# ── kix-browser (native browser automation, 2026-08-18) ─────────────────
+# Context: the MCP five-hop chain has a broken host resolution layer here
+#   (navigate/click ToolNotFound, root cause unproven) and the wrong shape
+#   (--headless bundled Chromium, not the user's browser); direct
+#   playwright-core scripting is probe-verified (dsh-capability-map.md
+#   "Browser automation" row). High-frequency capability → go native.
+# Single tool browser{action} (17 actions, all necessary operations):
+#   open/snapshot/text/click/type/press/select/hover/back/forward/reload/wait/
+#   screenshot/upload/tabs/dialog/close; CDP attach first (take over the real
+#   Edge/Chrome started with --remote-debugging-port=9222, login state
+#   preserved), launch headless as fallback; session persists across calls;
+#   URL gate (http/https/about:blank only); dialogs auto-dismissed by default,
+#   dialog{auto} changes the policy, results carry lastDialog; playwright-core
+#   lazy-require (missing install never blocks plugin load; the error carries
+#   install guidance). **Deliberately excluded**: arbitrary in-page JS
+#   (evaluate — kix blast-radius red line; use a pwsh direct-drive script when
+#   truly needed = code-level reviewable), network interception / cookies /
+#   PDF / drag-drop (low frequency, script path covers them). env:
+#   KIX_BROWSER_CDP (default
+#   http://127.0.0.1:9222, empty string disables attach) / KIX_BROWSER_HEADLESS
+#   (default true) / KIX_BROWSER_CORE (explicit path) / KIX_BROWSER_TIMEOUT
+#   (default 15000ms).
+# Unit tests: node plugins/kix-browser.test.js (12 assertion groups:
+#   URL gate / shape / queue semantics / new-action validation / dialog policy).
+# Progressive disclosure (2026-08-18, compliance shape agreed with the user):
+# NOT loaded by default — the browser tool costs zero schema tokens in
+# non-browser sessions. Discovery and activation go through kix-focus:
+# capability_search shows the browser-native group; kix_capability_call
+# { tool:"browser" } auto-mounts on first use (ACTIVATABLE_TOOLS.browser →
+# pkgPath local resolution), directly callable from the next round,
+# kix_tool_deactivate to unload. Uncomment the two lines below and restart
+# the host only if you want it always resident.
+# - id: kix-browser
+#   name: ./plugins/kix-browser.js
 
 # ── kix-stalled (L3 tier A: stalled mechanical detection, 2026-08-15, opt-in) ──
 # Read-only, stateless, non-resident: /kixst-check <project root> command

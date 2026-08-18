@@ -89,11 +89,19 @@ check('isLiteTier: 无预算 → true（默认机械档）', isLiteTier({}) === 
 // ── v5.10 child guard（编排留主线程）────────────────────────────────────────
 console.log('== child guard ==')
 const childOpts = { subagentDepth: 1, maxTokens: 65536 }
+const grandchildOpts = { subagentDepth: 2, maxTokens: 8192 }
 const mainOpts = { subagentDepth: 0 }
 check('child 调 subagent → 拒绝', isChildOrchestrationCall('subagent', childOpts) === true)
 check('child 调 subagent_cross → 拒绝', isChildOrchestrationCall('subagent_cross', childOpts) === true)
 check('child 调 subagent_dev（条件挂载名）→ 拒绝', isChildOrchestrationCall('subagent_dev', childOpts) === true)
+check('child 调 create_goal → 拒绝', isChildOrchestrationCall('create_goal', childOpts) === true)
+check('depth-1 child 调 subagent_lite → 放行机械取证', isChildOrchestrationCall('subagent_lite', childOpts) === false)
+check('depth-2 child 调 subagent_lite → 拒绝继续递归', isChildOrchestrationCall('subagent_lite', grandchildOpts) === true)
 check('child 调 workflow → 拒绝', isChildOrchestrationCall('workflow', childOpts) === true)
+check('child proxy → create_goal 外层即拒绝', isChildOrchestrationCall('kix_capability_call', childOpts, { tool: 'create_goal', arguments: {} }) === true)
+check('depth-1 child proxy → lite 放行', isChildOrchestrationCall('kix_capability_call', childOpts, { tool: 'subagent_lite', arguments: {} }) === false)
+check('depth-2 child proxy → lite 拒绝', isChildOrchestrationCall('kix_capability_call', grandchildOpts, { tool: 'subagent_lite', arguments: {} }) === true)
+check('child proxy → 非编排 MCP 放行', isChildOrchestrationCall('kix_capability_call', childOpts, { tool: 'mcp__docs__search', arguments: {} }) === false)
 check('child 调 read → 放行', isChildOrchestrationCall('read', childOpts) === false)
 check('child 调 bash → 放行', isChildOrchestrationCall('bash', childOpts) === false)
 check('child 调 report → 放行（结算通道）', isChildOrchestrationCall('report', childOpts) === false)
@@ -103,6 +111,10 @@ check('guard 谓词注册且只 deny child 编排调用', (() => {
   const g = guards[0]
   return g({ name: 'subagent', agent: { options: childOpts } }) !== undefined
     && g({ name: 'subagent', agent: { options: mainOpts } }) === undefined
+    && g({ name: 'subagent_lite', agent: { options: childOpts } }) === undefined
+    && g({ name: 'subagent_lite', agent: { options: grandchildOpts } }) !== undefined
+    && g({ name: 'kix_capability_call', arguments: { tool: 'create_goal' }, agent: { options: childOpts } }) !== undefined
+    && g({ name: 'kix_capability_call', arguments: { tool: 'subagent_lite' }, agent: { options: childOpts } }) === undefined
     && g({ name: 'read', agent: { options: childOpts } }) === undefined
     && g({ name: 'subagent', agent: undefined }) === undefined
 })())

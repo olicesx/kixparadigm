@@ -175,6 +175,31 @@ function checkIdenticalSet({ root, paths, label }) {
   return { failures, notes }
 }
 
+// 两个目录声明为同一分发 Interface 时，文件集合和每个文件字节都必须一致。
+function checkMirrorTree({ root, left, right, label }) {
+  const failures = []
+  const notes = []
+  const leftDir = path.join(root, left)
+  const rightDir = path.join(root, right)
+  if (!fs.existsSync(leftDir) || !fs.existsSync(rightDir)) {
+    return { failures: [`${label}: mirror directory missing`], notes }
+  }
+  const relativeFiles = (dir) => walk(dir)
+    .map((file) => path.relative(dir, file).replace(/\\/g, '/'))
+    .sort()
+  const leftFiles = relativeFiles(leftDir)
+  const rightFiles = relativeFiles(rightDir)
+  const all = [...new Set([...leftFiles, ...rightFiles])].sort()
+  for (const rel of all) {
+    if (!leftFiles.includes(rel)) { failures.push(`${left}/${rel} missing`); continue }
+    if (!rightFiles.includes(rel)) { failures.push(`${right}/${rel} missing`); continue }
+    const result = checkIdenticalSet({ root, paths: [`${left}/${rel}`, `${right}/${rel}`], label: `${label}/${rel}` })
+    failures.push(...result.failures)
+  }
+  if (failures.length === 0) notes.push(`${label}: ${all.length} mirrored files byte-identical`)
+  return { failures, notes }
+}
+
 // 两文件是 N=2 的特例；保留给既有调用方。
 function checkFilesEqual({ root, a, b, label }) {
   return checkIdenticalSet({ root, paths: [a, b], label })
@@ -227,29 +252,6 @@ function checkPluginPair({ root, name, presetRoots }) {
   out.failures.push(...t.failures)
   out.notes.push(...t.notes)
   return out
-}
-
-// memories 目录计数（README 计数同步的事实源）
-function checkMemoriesCount({ root, rel, expected }) {
-  const failures = []
-  const notes = []
-  const dir = path.join(root, rel)
-  if (!fs.existsSync(dir)) return { failures: [`${rel} missing`], notes }
-  const count = fs.readdirSync(dir).filter((f) => f.endsWith('.md')).length
-  if (count !== expected) failures.push(`${rel}: expected ${expected} memories, got ${count}`)
-  else notes.push(`${rel} = ${count} (README count in sync)`)
-  return { failures, notes }
-}
-
-// README 固定表述（如「+ 4 记忆」——易变计数自报约定的一部分）
-function checkReadmePhrase({ root, rel, phrase }) {
-  const failures = []
-  const notes = []
-  const text = read(root, rel)
-  if (text === null) return { failures: [`${rel}: unreadable`], notes }
-  if (!text.includes(phrase)) failures.push(`${rel}: missing phrase "${phrase}"`)
-  else notes.push(`${rel}: contains "${phrase}"`)
-  return { failures, notes }
 }
 
 // zh/en 包版本 + engines 一致（仓库级）
@@ -381,13 +383,10 @@ function runAllZh(root) {
   return merge(
     checkPersonaBudget({ root, rel: 'dsh/preset/agent.cordis.yml', maxChars: 4500, maxEstTokens: 2600 }),
     checkPersonaBudget({ root, rel: 'en/preset/agent.cordis.yml', maxChars: 9500, maxEstTokens: 2600 }),
-    checkMemoriesCount({ root, rel: 'dsh/preset/memories', expected: 5 }),
-    checkReadmePhrase({ root, rel: 'README.md', phrase: '+ 5 记忆' }),
-    checkReadmePhrase({ root, rel: 'README.en.md', phrase: '+ 5 memories' }),
     ...pluginNames(root).map((name) => checkPluginPair({ root, name })),
     checkVersionPair({ root }),
-    checkIdenticalSet({ root, paths: ['dsh/vision-bridge/index.js', 'en/bridge/index.js'], label: 'vision-bridge/index.js' }),
-    checkIdenticalSet({ root, paths: ['dsh/vision-bridge/test.js', 'en/bridge/test.js'], label: 'vision-bridge/test.js' }),
+    checkMirrorTree({ root, left: 'dsh/vision-bridge', right: 'en/bridge', label: 'vision-bridge' }),
+    checkIdenticalSet({ root, paths: ['scripts/install-lib.js', 'en/scripts/install-lib.js'], label: 'install-lib.js' }),
     checkMarkdownLinks({ root, rel: 'dsh/preset' }),
     checkMarkdownLinks({ root, rel: 'en/preset' }),
     checkSyntax({ root, rel: 'dsh/preset', label: 'dsh/preset' }),
@@ -415,6 +414,7 @@ module.exports = {
   extractPersona,
   checkPersonaBudget,
   checkIdenticalSet,
+  checkMirrorTree,
   PRESET_MARKERS,
   discoverPresetRoots,
   isMultiPresetWorkspace,
@@ -425,8 +425,6 @@ module.exports = {
   pluginIdentityPaths,
   checkFilesEqual,
   checkPluginPair,
-  checkMemoriesCount,
-  checkReadmePhrase,
   checkVersionPair,
   checkEnPkgVersion,
   checkMarkdownLinks,

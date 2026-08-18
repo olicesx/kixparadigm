@@ -71,6 +71,13 @@ const TEST_FILE_PATTERNS = [
   /\.(test|spec)\.[a-z0-9]+$/i,
   /\.(test|spec)\.(py|rs|go|java|rb)$/i,
 ]
+const OPERATIONAL_ARTIFACT_PATTERNS = [
+  /(^|\/)tmp-analyze(\/|$)/i,
+  /(^|\/)kix-discipline\/spec\.md$/i,
+  /(^|\/)docs\/sprint-\d+\/(?:plan|progress|done|blockers?|qa-signoff)\.md$/i,
+  /(^|\/)docs\/\.kixpower-current-sprint$/i,
+]
+const DOCUMENTATION_FILE_PATTERN = /\.(?:md|mdx|rst|adoc)$/i
 
 // ── v2：回合结束「拒绝/转交」弹问（2026-08-16 用户反馈）────────────────────
 // 模型把直接请求判为「不处理 / 在别处处理 / 系统信息不足」时，回合结束弹问
@@ -109,9 +116,21 @@ function isTestCommand(text) {
   return TEST_COMMAND_PATTERNS.some((re) => re.test(String(text || '')))
 }
 
+function normalizeFilePath(path) {
+  return String(path || '').replace(/\\/g, '/')
+}
+
 function isTestFile(path) {
-  const p = String(path || '').replace(/\\/g, '/')
+  const p = normalizeFilePath(path)
   return TEST_FILE_PATTERNS.some((re) => re.test(p))
+}
+
+function classifyMutationPath(path) {
+  const p = normalizeFilePath(path)
+  if (isTestFile(p)) return 'test'
+  if (OPERATIONAL_ARTIFACT_PATTERNS.some((re) => re.test(p))) return 'artifact'
+  if (DOCUMENTATION_FILE_PATTERN.test(p)) return 'documentation'
+  return 'source'
 }
 
 function isMutationTool(name) {
@@ -210,23 +229,25 @@ function makeState({ sessionKey, workspaceRoot, io }) {
       // 在 eager 未完成时即置位，门禁随后调用 loadSpec 立即返回 cached
       // （undefined），首编辑被「假性无 spec」误判（remind 烧掉唯一提醒 /
       // ask、block 误拒绝）。
-      if (specLoaded) return cached
+      if (specLoaded) return loadPromise || cached
       specLoaded = true
-      if (loadPromise === undefined) {
-        loadPromise = (async () => {
-          if (specFile) {
-            try {
-              const text = io && io.readText ? await io.readText(specFile) : readFileSync(specFile, 'utf8')
-              const parsed = parseSpec(text)
-              if (parsed && specComplete(parsed)) cached = parsed
-            } catch { cached = undefined }
-          }
-          return cached
-        })()
-      }
-      return loadPromise
+      loadPromise = (async () => {
+        if (specFile) {
+          try {
+            const text = io && io.readText ? await io.readText(specFile) : readFileSync(specFile, 'utf8')
+            const parsed = parseSpec(text)
+            if (parsed && specComplete(parsed)) cached = parsed
+          } catch { cached = undefined }
+        }
+        return cached
+      })()
+      try { return await loadPromise }
+      finally { loadPromise = undefined }
     },
     async saveSpec(spec) {
+      if (loadPromise !== undefined) {
+        try { await loadPromise } catch {}
+      }
       cached = spec
       if (!specFile) return false
       try {
@@ -262,7 +283,6 @@ module.exports = {
     const cfg = config || {}
     const intensity = cfg.intensity || 'remind'
     const sandboxPolicy = ctx.get('sandboxPolicy')
-    const defaultRoot = sandboxPolicy !== undefined && sandboxPolicy.workspaceRoot ? sandboxPolicy.workspaceRoot : undefined
 
     // ctx.fs 是 DSH 文件系统服务（经沙箱策略 + fs/write-intent 门禁）。可用时 spec 读写
     // 走 ctx.fs（深度融合，写入路径受沙箱约束）；缺失时降级 node:fs（跨环境不挂）。
@@ -286,24 +306,12 @@ module.exports = {
       const key = agent && agent.id ? String(agent.id) : 'anonymous'
       let st = states.get(key)
       if (!st) {
-        const session = agent && agent.session
-        const header = session && session.header
-        const cwd = header && header.cwd && typeof header.cwd === 'string' ? header.cwd : undefined
-        const workspaceRoot = defaultRoot || cwd || undefined
+        const workspaceRoot = lib.resolveWorkspaceRoot(agent, sandboxPolicy) || undefined
         st = makeState({ sessionKey: key, workspaceRoot, io: fsIo })
         st.loadSpec().catch(() => { /* 缓存填充失败静默：后续 loadSpec 重试或降级 */ })
         states.set(key, st)
       }
       return st
-    }
-
-    function agentCwd(exec) {
-      try {
-        const cwd = exec && exec.agent && exec.agent.session && exec.agent.session.header && exec.agent.session.header.cwd
-        return typeof cwd === 'string' && cwd.length > 0 ? cwd : undefined
-      } catch {
-        return undefined
-      }
     }
 
     // 聊天内提问（同 kix-guards v5：userQuestions.ask，fail-safe 拒绝）
@@ -395,11 +403,11 @@ module.exports = {
       const st = stateFor(agent)
       if (!st.enabled) return next()
 
-      // 测试文件永远放行（写测试是需求三检/red 步骤）
+      // 只有 source 编辑进入需求三检和 green gate。测试、文档与操作性工件
+      // 各有自己的验证语义，不能伪装成“实现编辑未测试”。
       const path = args && (args.file_path || args.path)
-      if (typeof path === 'string' && isTestFile(path)) return next()
+      if (classifyMutationPath(path) !== 'source') return next()
 
-      // 实现编辑：记录 red 证据缺失
       st.turnEdits++
 
       // spec 契约检查：无 spec + 首次实现编辑 → intensity 决定
@@ -531,6 +539,7 @@ module.exports = {
 module.exports.__internals = {
   isTestCommand,
   isTestFile,
+  classifyMutationPath,
   isMutationTool,
   specComplete,
   renderSpec,
@@ -542,6 +551,8 @@ module.exports.__internals = {
   DEFLECTION_MARKERS,
   TEST_COMMAND_PATTERNS,
   TEST_FILE_PATTERNS,
+  OPERATIONAL_ARTIFACT_PATTERNS,
+  DOCUMENTATION_FILE_PATTERN,
   SPEC_FILENAME,
   SPEC_DIRNAME,
 }

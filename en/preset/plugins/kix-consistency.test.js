@@ -2,7 +2,7 @@
 //
 // 单元级验证：加载 kix-consistency.js，mock DSH pre-execute / post-execute 派发，覆盖：
 //   - 纯逻辑（__internals）：isRepoRoot / classifyWrite / pickChecks
-//   - lib 判定：estimateTokens / checkFilesEqual / checkPluginPair（临时文件夹具）
+//   - lib 判定：estimateTokens / checkFilesEqual / checkPluginPair / checkMirrorTree
 //   - pre-execute 写时拦截：remind（放行+待注入）/ block（deny）/ 非 preset 路径放行 /
 //     非源仓库放行
 //   - post-execute：remind 注入 + remindOnce 每类别一次
@@ -161,14 +161,14 @@ function makePostExec(callId) {
   await ok('无契约时 persona → parity hint（不硬套预算，给注意力不给结论）', I.classifyWrite('dsh/preset/agent.cordis.yml', KIX, false) === 'parity')
   await ok('zh 插件源码 → plugins（通用层）', I.classifyWrite('dsh/preset/plugins/kix-x.js', KIX, false) === 'plugins')
   await ok('en 插件测试 → plugins（通用层）', I.classifyWrite('en/preset/plugins/kix-x.test.js', KIX, false) === 'plugins')
-  await ok('memories → memories（契约层）', I.classifyWrite('dsh/preset/memories/ai-agent-practices.md', KIX, true) === 'memories')
+  await ok('memories → parity hint（不维护易变计数）', I.classifyWrite('dsh/preset/memories/ai-agent-practices.md', KIX, true) === 'parity')
   await ok('无契约时 memories → parity hint', I.classifyWrite('dsh/preset/memories/x.md', KIX, false) === 'parity')
   await ok('skills → parity hint（翻译关系不字节校验，启发感知）', I.classifyWrite('dsh/preset/skills/kixpower/foo.md', KIX, true) === 'parity')
   await ok('agents → parity hint', I.classifyWrite('en/preset/agents/orchestrator.agent.md', KIX, false) === 'parity')
   await ok('外仓任意根内路径 → parity hint', I.classifyWrite('pkgs/zh/docs/readme-zh.md', ['pkgs/zh', 'pkgs/en'], false) === 'parity')
-  await ok('README.md → readme（契约层）', I.classifyWrite('README.md', KIX, true) === 'readme')
-  await ok('无契约时 README → null（外仓不硬套短语）', I.classifyWrite('README.md', KIX, false) === null)
-  await ok('README.en.md → readme', I.classifyWrite('README.en.md', KIX, true) === 'readme')
+  await ok('README.md → null（不维护易变计数短语）', I.classifyWrite('README.md', KIX, true) === null)
+  await ok('无契约时 README → null', I.classifyWrite('README.md', KIX, false) === null)
+  await ok('README.en.md → null', I.classifyWrite('README.en.md', KIX, true) === null)
   await ok('package.json → package', I.classifyWrite('package.json', KIX, true) === 'package')
   await ok('vision-bridge → vision', I.classifyWrite('dsh/vision-bridge/index.js', KIX, true) === 'vision')
   await ok('根 plugins/（非 preset 根）→ null（边界外）', I.classifyWrite('plugins/kix-guards.js', KIX, true) === null)
@@ -221,6 +221,19 @@ function makePostExec(callId) {
   fs.writeFileSync(path.join(pairRoot, 'en/preset/plugins/a.js'), 'B', 'utf8')
   const diff = lib.checkFilesEqual({ root: pairRoot, a: 'dsh/preset/plugins/a.js', b: 'en/preset/plugins/a.js', label: 'a.js' })
   await ok('字节不一致 → failure', diff.failures.length === 1)
+  const mirrorRoot = mkdtemp('kix-cons-test-mirror-')
+  fs.mkdirSync(path.join(mirrorRoot, 'left/nested'), { recursive: true })
+  fs.mkdirSync(path.join(mirrorRoot, 'right/nested'), { recursive: true })
+  fs.writeFileSync(path.join(mirrorRoot, 'left/a.js'), 'A', 'utf8')
+  fs.writeFileSync(path.join(mirrorRoot, 'right/a.js'), 'A', 'utf8')
+  fs.writeFileSync(path.join(mirrorRoot, 'left/nested/b.json'), '{}', 'utf8')
+  fs.writeFileSync(path.join(mirrorRoot, 'right/nested/b.json'), '{}', 'utf8')
+  await ok('mirror tree 文件集与字节一致 → 无 failure', lib.checkMirrorTree({ root: mirrorRoot, left: 'left', right: 'right', label: 'mirror' }).failures.length === 0)
+  fs.writeFileSync(path.join(mirrorRoot, 'right/a.js'), 'B', 'utf8')
+  await ok('mirror tree 内容漂移 → failure', lib.checkMirrorTree({ root: mirrorRoot, left: 'left', right: 'right', label: 'mirror' }).failures.length === 1)
+  fs.writeFileSync(path.join(mirrorRoot, 'right/a.js'), 'A', 'utf8')
+  fs.writeFileSync(path.join(mirrorRoot, 'left/only.js'), 'X', 'utf8')
+  await ok('mirror tree 文件集合漂移 → failure', lib.checkMirrorTree({ root: mirrorRoot, left: 'left', right: 'right', label: 'mirror' }).failures.length === 1)
   const PAIR_ROOTS = ['dsh/preset', 'en/preset']
   const pair1 = lib.checkPluginPair({ root: pairRoot, name: 'a.js', presetRoots: PAIR_ROOTS })
   await ok('插件对不一致 → failure', pair1.failures.length === 1)
@@ -294,9 +307,9 @@ function makePostExec(callId) {
   await ok('classifyWrite zh .cjs 共享库 → plugins', I.classifyWrite('dsh/preset/plugins/consistency-lib.cjs', KIX, true) === 'plugins')
   await ok('classifyWrite en .cjs 共享库 → plugins', I.classifyWrite('en/preset/plugins/consistency-lib.cjs', KIX, true) === 'plugins')
   await ok('pickChecks .cjs（缺失目标）→ 仅 pair 1 检查', I.pickChecks(repo, 'dsh/preset/plugins/consistency-lib.cjs').length === 1)
-  await ok('pickChecks README.md → 1 检查', I.pickChecks(repo, 'README.md').length === 1)
+  await ok('pickChecks README.md → 0 检查（无易变短语契约）', I.pickChecks(repo, 'README.md').length === 0)
   await ok('pickChecks package.json → 1 检查', I.pickChecks(repo, 'package.json').length === 1)
-  await ok('pickChecks vision-bridge → 2 检查', I.pickChecks(repo, 'dsh/vision-bridge/index.js').length === 2)
+  await ok('pickChecks vision-bridge 缺失目标 → 仅整树镜像检查', I.pickChecks(repo, 'dsh/vision-bridge/index.js').length === 1)
   await ok('根 plugins/ classify → null（非 preset 根）', I.classifyWrite('plugins/kix-guards.test.js', KIX, true) === null)
 
   section('pre/post: 并发多类别写（Map 挂起不互相覆盖）')
@@ -309,7 +322,7 @@ function makePostExec(callId) {
   })
   // 同一 agent 一次块内并发两写（不同类别）：两条 pre 都挂起，post 各自按 callId 消费
   const wA = mkConc('write', 'dsh/preset/plugins/foo.js', 'conc-a', 'cons-conc1')
-  const wB = mkConc('write', 'README.md', 'conc-b', 'cons-conc1')
+  const wB = mkConc('write', 'package.json', 'conc-b', 'cons-conc1')
   await preExecute[0](wA, () => 'NEXT')
   await preExecute[0](wB, () => 'NEXT')
   const postA = await postExecute[0]({ name: 'write', callId: 'conc-a', agent: { id: 'cons-conc1' } }, {}, () => 'NEXT')
@@ -351,12 +364,12 @@ function makePostExec(callId) {
   const dotExec = {
     name: 'write',
     callId: 'dot-path',
-    arguments: { file_path: './README.md' },
+    arguments: { file_path: './dsh/preset/plugins/foo.js' },
     agent: { id: 'cons-dot' },
   }
   await preExecute[0](dotExec, () => 'NEXT')
   const dotPost = await postExecute[0]({ name: 'write', callId: 'dot-path', agent: { id: 'cons-dot' } }, {}, () => 'NEXT')
-  await ok('./ 相对路径写入仍触发守护', !!(dotPost && dotPost.additionalContexts && dotPost.additionalContexts.length === 1))
+  await ok('./ 相对插件路径写入仍触发守护', !!(dotPost && dotPost.additionalContexts && dotPost.additionalContexts.length === 1))
 
   section('审查修复：会话 cwd 优先于 sandboxPolicy 回退根（WSL2 E2E 实锤）')
   const fallbackCwd = mkdtemp('kix-cons-fallback-cwd-')
@@ -560,7 +573,7 @@ function makePostExec(callId) {
     const repoStack = makeRepoRoot()
     workspaceRootMock = repoStack
     const sAgent = { id: 'cons-stack' }
-    const sExec = { name: 'write', callId: 'stack-1', arguments: { file_path: 'dsh/preset/skills/stacked.md' }, agent: sAgent }
+    const sExec = { name: 'write', callId: 'stack-1', arguments: { file_path: 'dsh/preset/plugins/stacked.js' }, agent: sAgent }
     await stackL['tools/pre-execute'][0](sExec, () => 'NEXT')
     await stackL['tools/pre-execute'][1](sExec, () => 'NEXT')
     // 真瀑布语义：next() 链到下一监听器，终结返回 {kind:'accept'}
@@ -570,7 +583,7 @@ function makePostExec(callId) {
     const sPost = await postChain(0)
     const texts = sPost && Array.isArray(sPost.additionalContexts) ? sPost.additionalContexts.map((m) => m.content[0].text) : []
     await ok('首写双投递：discipline 与 consistency 都送达（不再短路）',
-      texts.length === 2 && texts.some((t) => t.includes('kix-discipline')) && texts.some((t) => t.includes('由你判断')))
+      texts.length === 2 && texts.some((t) => t.includes('kix-discipline')) && texts.some((t) => t.includes('kix-consistency')))
     await ok('合并 decision 保留 accept kind 与消息 id',
       sPost.kind === 'accept' && texts.length === 2 && sPost.additionalContexts.every((m) => typeof m.id === 'string' && m.id.length > 0))
     await ok('appendContexts 纯函数：非 accept 下游原样放行',

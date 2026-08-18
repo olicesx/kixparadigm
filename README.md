@@ -46,10 +46,11 @@ chmod +x install.sh && ./install.sh
 | 机械门禁 | `kix-guards` · `kix-consistency` | commit 预算、feature branch、force push、危险 SQL、控制面保护（硬 deny 仅不可逆破坏）；preset 一致性写时拦截（防 zh/en 漂移） |
 | 交接纪律 | `kix-orchestration` · `kix-discipline` | subagent 交接证据链校验；spec 契约 gate + 验证 gate |
 | 聚焦 | `kix-focus` | 工具面 85→18 常驻裁剪 + 按需目录与代理执行——渐进披露的运行时形态 |
+| 浏览器 | `kix-browser`（按需激活） | 原生 `browser{action}` 17 动作（open/snapshot/click/type/press/select/hover/导航/等待/截图/上传/多标签/弹窗）——playwright-core 直驱、CDP attach 接管真实浏览器（登录态保留）、会话跨调用持久；零常驻 schema 税（capability_call 首用自动挂载）；替代 MCP 五跳链路 |
 | 成本路由 | `kix-cost` · `kix-route` | 子代理思考强度归一化；哨兵模型名 → 运行时可用路由 |
 | 补足 | `kix-commands` · `dsh-vision-bridge` · `kix-stalled`（opt-in） | `/kixpower-*` 原生命令；无视觉主模型识图；停滞 Sprint 检测 |
 
-preset 全量：persona + 18 技能 + 6 角色 + 5 命令 + 5 记忆。各插件机制与版本演进见 [DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md) 与 [CHANGELOG.md](CHANGELOG.md)。
+preset 提供 persona、skills、团队角色、原生命令与方法论记忆；清单以各目录为准。各插件机制与版本演进见 [DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md) 与 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 仓库结构
 
@@ -68,7 +69,7 @@ kixparadigm/
 
 ```bash
 npm test                                    # 一致性守护 + 全插件回归（计数由测试输出自报，不在本文档维护）
-node scripts/check-dsh-consistency.cjs      # persona 预算/文档计数/双语一致性守护
+node scripts/check-dsh-consistency.cjs      # persona 预算/分发镜像/双语一致性守护
 kixparadigm doctor                          # 安装状态自检
 ```
 
