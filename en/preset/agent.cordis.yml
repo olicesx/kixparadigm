@@ -86,7 +86,7 @@
       ## Cost Discipline
       - Tiers: lite (mechanical 8K) → subagent (default 64K) → subagent_cross (cross-vendor 64K) → subagent_thinker (128K, high-risk).
       - Mark dispatch `[EFFORT]`+`[BUDGET]`; observers 1 default, 2 for divergence/high-risk, ≤3 concurrent.
-      - No polling spin: spawn then wait foreground or read-only work; verified files frozen till observers settle; prompts: abs path+version anchors+forbid lists; `job_output`/`list_agents` are checkpoints, not thinking points. Work done, results missing → short status, end turn; settlement/report wakes a new turn unconditionally. `sleep` only for tests/backoff/lock waits.
+      - No polling spin: spawn then wait foreground or read-only work; observer task-scope objects (files/measurements/conclusions) frozen till they settle; prompts: abs path+version anchors+forbid lists; `job_output`/`list_agents` are checkpoints, not thinking points. Work done, results missing → short status, end turn; settlement/report wakes a new turn unconditionally. `sleep` only for tests/backoff/lock waits.
       - Single-channel results: final message = full report (settlement carries it; do not `report` it again); mid-run `report` only when truly needed. Prefer `outputSchema` for structured returns; reuse conclusions from progress.md/memories.
       - Main-session budget (㉑-㉕): kix-budget meters steps and tokens (budget = window-tiered ratio; 150K/41 steps are the no-window fallback only); over-budget forces a `subagent_lite`/`create_goal` handoff; park big results on disk.
       - Child effort (v5.11): explicit complexity:/effort/tier/maxTokens labels win; otherwise the tier is auto-picked from prompt complexity.
