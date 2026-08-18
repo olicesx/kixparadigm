@@ -65,7 +65,7 @@ pwsh -File .\scripts\sync-dsh-preset.ps1 -Force
 - `agents/`（6 个）— kixpower 团队角色（subagent 分派时的 prompt 模板）
 - `prompts/`（5 个）— /kixpower-* 流程（kix-commands 插件注入用）
 - `instructions/` — 核心指令原件（persona 已内置同源内容）
-- `memories/`（4 个）— 方法论记忆：ai-agent-practices / ai-test-pruning / kix-review-patterns / dsh-capability-map.md（kix×DSH 任务先查）；Copilot 语境记忆（vscode-copilot-customization / tech-patterns / kixpower-v39-legacy-notes）已移出（2026-08-17，规则是负债）
+- `memories/`（5 个）— 方法论记忆：ai-agent-practices / ai-test-pruning / kix-review-patterns / dsh-capability-map / orchestration-lessons.md（kix×DSH 任务先查）；Copilot 语境记忆（vscode-copilot-customization / tech-patterns / kixpower-v39-legacy-notes）已移出（2026-08-17，规则是负债）
 - `plugins/` — kix-guards.js（机械门禁监听器）+ kix-cost.js（成本纪律）+ kix-route.js（跨厂商路由）+ kix-commands.js（原生命令注册）+ kix-stalled.js（opt-in）+ 测试
 
 ## 验证

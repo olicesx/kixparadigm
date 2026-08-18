@@ -124,10 +124,10 @@ function pickChecks(root, rel, presetRoots, withContract) {
     }
   }
   if (category === 'memories') {
-    checks.push(() => lib.checkMemoriesCount({ root, rel: home + '/memories', expected: 4 }))
+    checks.push(() => lib.checkMemoriesCount({ root, rel: home + '/memories', expected: 5 }))
   }
   if (category === 'readme') {
-    const phrase = p === 'README.md' ? '+ 4 记忆' : '+ 4 memories'
+    const phrase = p === 'README.md' ? '+ 5 记忆' : '+ 5 memories'
     checks.push(() => lib.checkReadmePhrase({ root, rel: p, phrase }))
   }
   if (category === 'package') {

@@ -53,7 +53,7 @@
 
       ## 需求三检（仅信号命中触发；kix-discipline 编辑前查契约）
       - 信号：含实现方案词汇/目标不明/影响大不可逆/与约束冲突；字面明确低风险可逆直接做。
-      - ① XY ② 前提假设 ③ 更优路径。挑战一次给理由，用户裁决后执行不纠缠。不迎合用户：AI 价值=提供超出用户当前认知的视角。编辑前无契约→先调 kix_discipline_spec 落 goal/xy/assumptions/path/acceptance（mode 记成员组合+理由）。
+      - ① XY ② 前提假设 ③ 更优路径。挑战一次给理由，用户裁决后执行不纠缠。不迎合用户：AI 价值=提供超出用户当前认知的视角。编辑前无契约→先调 kix_discipline_spec（mode 记成员组合+理由）。
 
       ## 写码前决策链
       需要存在吗→仓库已有(grep)→标准库→平台原生→已装依赖→一行→最小可行。
@@ -71,7 +71,7 @@
 
       ## 环境默认
       Windows 用 pwsh 7（勿用 5.1）；Linux/macOS 用 bash；语言 CLI 优先主版本，不确定先 --version；系统信息不足先探测，不得以此拒绝任务。
-      Windows 命令可靠性（native 参数数组/引号边界/退出码语义/WSL 桥/后台进程/清理）按 skills/pwsh-reliable 技能执行；shell 出错先读它再重试，勿盲目加转义。
+      Windows 命令可靠性按 skills/pwsh-reliable 执行；shell 出错先读它再重试，勿盲目加转义。
 
       ## 流程路由信号
       属性驱动：规模≥3文件/外部副作用/验证关键/目标不明。命中→停一步做编曲决策并说出来；简单任务不报告；禁止类型→动作静态映射。
@@ -88,18 +88,18 @@
       - prompt 标 [EFFORT]+[BUDGET]；观察者默认1，分歧/高风险2，并发≤3。
       - 禁轮询空转：spawn 后前台等或后台只做只读工作；观察者在飞时被验证文件冻结至结算；派发 prompt 必带绝对路径+版本锚+禁读清单；job_output/list_agents 取结果即走；独立工作做完仍缺结果→简短状态后结束回合（结算/报告无条件唤醒新回合）。sleep 只用于测试/退避/等锁，不用于等子代理。
       - 子代理结果单通道：默认最终消息=完整报告，勿再 report 全文；确需中继才 report 一句话。结构化回流优先 outputSchema；结论复用查 progress.md/memories。
-      - 主会话预算（㉑-㉕）：kix-budget 通过运行时模型窗口与 agent/pre-step.step 感知；动态预算默认封顶 150K，单回合第 41 步或超过预算后，主线程普通工具由 tools/pre-execute 拒绝，必须完成 subagent_lite/create_goal 交接；单结果按宿主 pruner 字符阈值剪裁；工具面 deactivate 延迟到回合末。
-      - 子代理 effort 复杂度感知（v5.11）：首步零 token 分类器按 child prompt 定档——琐碎机械（仅高置信）思考 off、常规保持 high、深任务（帽>8K）升 max、lite 永不静默变 thinker；非 deepseek 经运行时 `llm.resolveModelInfo` 能力门控（trivial 选 off、无则 low；深任务选 max——仅当能力表含；未知/常规不注入）；显式 `complexity:`/effort/档位/maxTokens 优先；每子代理只分类一次（防请求头/前缀缓存抖动）。
+      - 主会话预算（㉑-㉕）：kix-budget 按步数与 token 计费（预算=窗口分档比例，150K/41 步仅无窗口回退），超限强制 subagent_lite/create_goal 交接，大结果落盘。
+      - 子代理 effort（v5.11）：显式 complexity:/effort/档位/maxTokens 标注优先；未标则按 prompt 复杂度自动定档。
 
       ## DSH 适配
       - 分派：subagent 注入 agents/*.agent.md 角色 body + Tri-Block；需继承上下文用 subagent_fork。跨厂商→subagent_cross；识图→subagent_vision（图片路径+问题）；📷 [图片自动识别] 是 vision-bridge 产物。
       - 门禁已挂载：kix-guards（危险 git/SQL/控制平面/未知执行工具）、kix-discipline、kix-orchestration；/kixpower-* 零 token。
-      - 工具面：kix-focus 常驻文件/执行、ask_user_question/todo_write/skill、subagent/subagent_cross、子代理控制、后台任务（jobs 常驻）、发现入口。lite/thinker/vision/fork/reviewer/qa/dev、goal 默认未挂载，**首次使用自动激活**——kix_capability_call { tool: subagent_qa, arguments: {...} } 即自动挂载并执行、下一轮起可直呼；也可 kix_tool_activate 预激活，kix_tool_deactivate 卸载。web_search 与 MCP 经 kix_capability_call；workflow 取消 disabled 重启。
-      - 子代理编排面（v5.10 实测）：子代理工具面已裁编排菜单（subagent×2/agent 控制等——静态 deny + kix-cost child guard；run_code 为 Code Mode 保留传输仍可见；文件/执行/检索/jobs/report/MCP 全留）——需再分派/编排的内容写进 report 回主线程；kix_tool_deactivate 延迟到回合末生效（工具面中途变更打断前缀缓存）。
+      - 工具面见宿主工具列表；按需档位经 kix_capability_call 首用自动激活；workflow 取消 disabled 需重启。
+      - 子代理编排面（v5.10）：子代理不能再分派/编排——需编排的内容写进 report 回主线程。
       - 原生优先：复杂编排 workflow；长目标 goal；先规划 plan mode；长任务 run_in_background+job_output；验证/观察保持 native（证据可回放）；deny 立即中止。
 
       ## 资源
-      instructions/kixparadigm-core.instructions.md；skills/kixparadigm、skills/kixpower、skills/pwsh-reliable（Windows）；prompts/kixpower-*；memories/*.md。
+      instructions/kixparadigm-core.instructions.md；prompts/kixpower-*；memories/*.md；技能见会话目录。
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
   config:
@@ -238,8 +238,9 @@
         # v5.9（㉑，2026-08-17 账本实测）：默认 0.8 在 1M 窗口 = 800K 阈值，
         # kixpower 整改会话爬到 466K 仍从未触发 → 上下文 O(N²) 累积烧掉
         # 100.8M 重读 token。全局降到 0.45；两个实测 1M 窗口模型钉 0.18
-        #（=180K，与 kix-budget 建议线对齐）。新模型未枚举时回退 0.45，
-        # kix-budget 的动态预算（min(35%×窗口,180K)）仍按真实窗口生效。
+        #（=180K，低于 kix-budget 全部动态预算线，兜底先触发）。新模型未枚举时回退 0.45，
+        # kix-budget 的动态预算（窗口分档比例：≤128K→0.85、≤400K→0.65、≤1M→0.40、>1M→0.35）
+        # 仍按真实窗口生效。
         thresholdRatio: 0.45
         modelPolicies:
           - provider: deepseek-official

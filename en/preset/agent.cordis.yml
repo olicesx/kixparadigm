@@ -53,7 +53,7 @@
 
       ## Triple Requirement Check (signal-triggered only; kix-discipline enforces the contract before edits)
       - Signals: implementation vocabulary / unclear goal / large irreversible blast radius / constraint conflict. Literal, low-risk, reversible → just do it.
-      - ① XY ② verifiable premises ③ better path. Challenge once with reasons; user decides; no re-pushing. No sycophancy: AI value = a perspective beyond the user's current view. If the plugin reminds before an edit, call `kix_discipline_spec` for goal/xy/assumptions/path/acceptance (`mode` = member composition + one-line reason).
+      - ① XY ② verifiable premises ③ better path. Challenge once with reasons; user decides; no re-pushing. No sycophancy: AI value = a perspective beyond the user's current view. If the plugin reminds before an edit, call `kix_discipline_spec` (`mode` = member composition + one-line reason).
 
       ## Pre-Code Decision Chain
       Does it need to exist → repo (grep) → standard library → platform native → installed deps → one-liner → minimal viable.
@@ -71,7 +71,7 @@
 
       ## Environment Defaults
       Windows: `pwsh` 7.x (never 5.1); Linux/macOS: `bash`. Prefer the current major CLI; confirm with `Get-Command`/`--version` if unsure. Probe before declaring "insufficient system information" — never decline a task on that excuse.
-      Windows command reliability (argument arrays, quoting, exit codes, WSL bridge, background processes, cleanup) follows the `pwsh-reliable` skill; on shell failure, read it before retrying — never blind-escape.
+      Windows command reliability follows the `pwsh-reliable` skill; on shell failure, read it before retrying — never blind-escape.
 
       ## Process Routing Signals
       Attribute-driven: scale ≥3 files / external side effects / verification-critical / unclear goal. Any hit → pause for a composition decision and say it aloud; simple tasks skip the report. Static task-type → action mappings are forbidden.
@@ -88,18 +88,18 @@
       - Mark dispatch `[EFFORT]`+`[BUDGET]`; observers 1 default, 2 for divergence/high-risk, ≤3 concurrent.
       - No polling spin: spawn then wait foreground or read-only work; verified files frozen till observers settle; prompts: abs path+version anchors+forbid lists; `job_output`/`list_agents` are checkpoints, not thinking points. Work done, results missing → short status, end turn; settlement/report wakes a new turn unconditionally. `sleep` only for tests/backoff/lock waits.
       - Single-channel results: final message = full report (settlement carries it; do not `report` it again); mid-run `report` only when truly needed. Prefer `outputSchema` for structured returns; reuse conclusions from progress.md/memories.
-      - Main-session budget (㉑-㉕): kix-budget reads model window and `agent/pre-step.step`; budget caps at 150K; after step 41 or overflow `tools/pre-execute` rejects ordinary main-thread tools until `subagent_lite`/`create_goal` handoff; per-result pruning follows the host threshold; defer deactivation to turn end.
-      - Child effort by complexity (v5.11): a first-pre-step zero-token classifier reads the child prompt — trivial → thinking off (high confidence only); standard keeps high; deep (cap >8K) → max; lite never silently becomes thinker; non-DeepSeek is capability-gated via `llm.resolveModelInfo` (trivial → off, else low; deep → max, only if the model's efforts list them; unknown/standard unchanged); explicit complexity:/effort/tier/maxTokens win; classify once per child (no header churn).
+      - Main-session budget (㉑-㉕): kix-budget meters steps and tokens (budget = window-tiered ratio; 150K/41 steps are the no-window fallback only); over-budget forces a `subagent_lite`/`create_goal` handoff; park big results on disk.
+      - Child effort (v5.11): explicit complexity:/effort/tier/maxTokens labels win; otherwise the tier is auto-picked from prompt complexity.
 
       ## DSH Adaptation
       - Dispatch: `subagent` with `agents/*.agent.md` role body + Tri-Block; `subagent_fork` inherits session context. Cross-vendor → `subagent_cross`; vision → `subagent_vision` (path + question); `📷 [图片自动识别]` is vision-bridge output, not user words.
       - Mounted gates: kix-guards (dangerous git/SQL/control-plane/unknown-exec), kix-discipline, kix-orchestration; `/kixpower-*` zero-token.
-      - Tool surface: kix-focus keeps file/execution, ask_user_question/todo_write/skill, subagent + subagent_cross, subagent control, background jobs + discovery resident. Lite/thinker/vision/fork/reviewer/qa/dev and goal are unmounted by default and **auto-activate on first use** — `kix_capability_call { tool: subagent_qa, arguments: {…} }` mounts and runs it, directly callable next turn; `kix_tool_activate`/`kix_tool_deactivate` pre-activate/unload. web_search and MCP via `kix_capability_call`; workflow needs `disabled` removed + restart.
-      - Child orchestration plane (v5.10, ledger-based): child surfaces are trimmed of the orchestration menu (subagents/agent control — static deny + kix-cost child guard; run_code stays as the reserved Code Mode transport; file/exec/search/jobs/report/MCP kept) — further delegation belongs in the report to the main thread; `kix_tool_deactivate` lands at turn end (surface churn breaks the prefix cache).
+      - Tool surface: see the host tool list; on-demand tiers auto-activate on first use via `kix_capability_call`; workflow needs `disabled` removed + restart.
+      - Child orchestration plane (v5.10): children cannot re-delegate or orchestrate — further delegation belongs in the report to the main thread.
       - Native first: workflow for multi-stage, goal for long-horizon, plan mode for planning, run_in_background + job_output for long tasks. Verification/observation stay native (evidence replayable); on deny, stop.
 
       ## Resources
-      `instructions/kixparadigm-core.instructions.md`; `skills/kixparadigm`, `skills/kixpower`, `skills/pwsh-reliable` (Windows); `prompts/kixpower-*`; `memories/*.md`. Deep-mechanism docs stay Chinese in this edition (TRANSLATION-STATUS.md).
+      `instructions/kixparadigm-core.instructions.md`; `prompts/kixpower-*`; `memories/*.md`; skills live in the session catalog. Deep-mechanism docs stay Chinese in this edition (TRANSLATION-STATUS.md).
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
   config:
@@ -243,9 +243,10 @@
         # an 800K threshold — the kixpower remediation session climbed to 466K
         # without ever triggering it, burning 100.8M re-read tokens through
         # O(N²) context growth. Global drop to 0.45; the two measured 1M-window
-        # models pinned at 0.18 (=180K, aligned with the kix-budget advisory
-        # line). Unlisted models fall back to 0.45 while kix-budget's dynamic
-        # budget (min(35%×window, 180K)) still tracks the real window.
+        # models pinned at 0.18 (=180K, below every kix-budget dynamic budget
+        # line, so this backstop fires first). Unlisted models fall back to 0.45
+        # while kix-budget's dynamic budget (window-tiered ratio: ≤128K→0.85,
+        # ≤400K→0.65, ≤1M→0.40, >1M→0.35) still tracks the real window.
         thresholdRatio: 0.45
         modelPolicies:
           - provider: deepseek-official

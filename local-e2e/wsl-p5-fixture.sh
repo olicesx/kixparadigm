@@ -17,11 +17,11 @@ printf '%s\n' "'use strict'" "module.exports = { name: 'fixture' }" > "$WS/dsh/p
 cp "$WS/dsh/preset/plugins/kix-fixture.js" "$WS/en/preset/plugins/kix-fixture.js"
 
 # Memories count 4 (so memories writes don't false-fail count unless we add)
-for i in 1 2 3 4; do echo "# m$i" > "$WS/dsh/preset/memories/m$i.md"; done
-for i in 1 2 3 4; do echo "# m$i" > "$WS/en/preset/memories/m$i.md"; done
+for i in 1 2 3 4 5; do echo "# m$i" > "$WS/dsh/preset/memories/m$i.md"; done
+for i in 1 2 3 4 5; do echo "# m$i" > "$WS/en/preset/memories/m$i.md"; done
 
-echo '+ 4 记忆' > "$WS/README.md"
-echo '+ 4 memories' > "$WS/README.en.md"
+echo '+ 5 记忆' > "$WS/README.md"
+echo '+ 5 memories' > "$WS/README.en.md"
 printf '%s\n' '{"version":"1.2.19"}' > "$WS/package.json"
 printf '%s\n' '{"version":"1.2.19"}' > "$WS/en/package.json"
 

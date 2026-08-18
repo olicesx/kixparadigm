@@ -49,7 +49,7 @@ See [INSTALL.md](INSTALL.md). Start with `/kixpower-new`.
 | Cost & routing | `kix-cost` · `kix-route` | Subagent thinking-effort normalization; sentinel model names → runtime-available routes |
 | Top-up | `kix-commands` · `dsh-vision-bridge` · `kix-stalled` (opt-in) | `/kixpower-*` native commands; vision for blind lead models; stalled-Sprint detection |
 
-Preset in full: persona + 18 skills + 6 roles + 5 commands + 4 memories. Per-plugin mechanics and evolution: [DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md), [CHANGELOG.md](CHANGELOG.md).
+Preset in full: persona + 18 skills + 6 roles + 5 commands + 5 memories. Per-plugin mechanics and evolution: [DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md), [CHANGELOG.md](CHANGELOG.md).
 
 ## Repo layout
 
