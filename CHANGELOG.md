@@ -1,5 +1,43 @@
 # Changelog
 
+
+## v1.2.20（2026-08-18）定版段
+
+- **版本更新**：提升至 1.2.20，双包（zh/en）版本对齐，check-consistency 同步
+- **预算分档**：resolveBudgetTokens 实现分档（0.35/0.30/0.25）上下文比例逻辑
+- **镜像一致**：kix-guards、kix-guards.test、kix-budget、kix-budget.test 中英双包镜像 hash 一致## Unreleased（2026-08-18）WSL2 rc.7 升级实测
+
+- **升级**：WSL2 dsh `0.1.0-rc.6 → 0.1.0-rc.7`，preset 同步 + web 重启 + `DEPLOY-CHECK-ACCEPT`（28 PASS）一次通过。
+- **真实任务三连（33236 API：session.create/session.prompt，preset 自动加载）**：8×3K ENDMARK 全对、3×10K BIGMARK 全对、强制全文 cat 触发㉓急剪（prune=1 + 配对 replacement=1，ctx 19.7K）；全程零持久化错误，streak 提醒注入且模型正确响应。
+- **rc.7 适配裁决：零适配**——`toolResultPruner` 服务名未变；默认 `thresholdChars` 2048→8192 由插件的 config 动态感知设计自动消化（3K 不剪/10K 剪两侧行为均正确）；tool/result 形状兼容；RPC 面不变。
+- **验收器**：B/C/D/E/F PASS；A/FOCUS 为谓词范围错配（小会话按设计触不到 41 步/150K/goal 生命周期）。
+- **41 步 gate 实弹（session-1d549821，rc.7 首测）**：45 小文件逐步 cat + 3 大文件任务跨 41 步——**DENY 精确命中 turn=1 step=41**（realDenies=1，verifier A PASS），模型按 gate 指示经 subagent_lite 交接后继续，48/48 标记全收、零持久化错误；B FAIL 为模型自发优化（gate 后大文件改 tail 读，180 字符低于阈值，不剪正确）——㉓ 实弹证据由前轮账本（prune=1+配对 replacement）覆盖，两账本互补全谓词。
+- **浏览器直连 E2E**：零依赖 CDP（Node24 WebSocket + DevTools Protocol + Edge headless，本会话 Playwright MCP 桥故障的绕行）；真实用户链路全通：点「新建会话」→ 键入任务 → 点「发送消息」→ session-92df18f1 执行（b1/b2/b3.txt BROWSEMARK 全对、cat 回读、零错误）。报告 `tmp-analyze/rc7-e2e-report.md`。
+
+## Unreleased（2026-08-18）交付前整体自检（kix-budget v6 变更集）
+
+- **e2e 实弹（最强证据）**：自检会话本身作为被测对象——kix-budget 在生产环境两次实弹触发（连续 8 步只读 streak steer → 第 41 步 deny 普通工具 → subagent_lite 交接 → gate 解除 → 再触发再交接，完整双循环）；活账本（110 步 / 6 回合）replay `REPLAY-ACCEPT`、verifier 六谓词全 PASS `LIVE-E2E-ACCEPT`（2 真实 deny、37 prune 全配对 replacement、0 持久化错误）。
+- **verifier v2 根因修复**（`local-e2e/verify-budget-e2e.cjs`）：①纯 node 多帧 zstd 解压（DSH 每事件一帧级联流，单帧解压只出 203 字节假象——曾误导子代理产出「空账本」结论；免外部 CLI，Windows 无 zstd 可跑）②谓词 A 增加真实 deny 等价通道（`isError:true` + gate 文本；机制契约：回合内完成交接则 turn-stopping steer 按设计不触发）③谓词 C 只计 `isError:true` 结果——修复源码文件读取回显被误计为插件错误的结构性误报（8→0）。
+- **测试证据链补齐**（观察者 4 GAP 全关）：git tag/remote/update-ref 写操作反例 + `--list`/`-v` 保守否决文档化断言；`{ landed }` 返回形态用例；缺 `config.thresholdChars` 回退默认 2K 用例；75K prune 线标签纠偏（pruneRatio 0.5×150K）。
+- **缺陷修复**：en 包 `npm test` 链漏挂 `kix-budget.test.js`（本轮加测试时只改了 zh 链）——补挂后双包 67/67 全绿且结果完全一致。
+- **自检结论（三通道）**：哲学冲突 2 项 FINDING 均被裁决反证（`agent.cordis.yml:91` persona 明文契约 + `hardHandoff:false` 逃生口 + 双循环解除实测 + 触发区 41 步/150K 远超正常回合）；能力不降（gate 只路由不改可用面，白名单为文档化交接契约）；token 效率主张 A/D/effort 证据充分、B/C 补齐至充分。zh/en 全套件 + CONSISTENCY OK；Windows 安装副本与源逐字节一致。
+- **过程缺陷如实记录**：子代理两次误报（「空账本」= 单帧解压陷阱；「测试文件损坏」= 其自身编辑事故，主线程从安装副本恢复重建）——印证「子代理产出需物证裁决」纪律；lite 权限门禁拒跑全套件为按设计行为。
+
+## Unreleased（2026-08-18）kix-budget v6 主会话闭环
+
+- **㉑/㉕ 运行时交接 gate**：`agent/pre-step.step` 与运行时模型窗口驱动主会话状态；第 41 步或动态预算超线后，`tools/pre-execute` 拒绝普通工具，只放行 `subagent_lite`/`create_goal`；只在目标工具真实成功（含嵌套结果）后解除 gate。
+- **㉓ 结果剪裁**：单结果按宿主 `toolResultPruner.config.thresholdChars`（默认 2K）在下一步边界剪裁，兼容宿主 { pruned, charsRemoved } 返回形态；保留 compaction/prune 与 tool/result replacement 账本证据。
+- **㉒ 分类修正**：git `config/branch/tag/remote/update-ref` 等写操作不再被只读 allowlist 误判；模型窗口解析失败或返回空窗口均不缓存，允许下一步重试；usage 缺失时改由 tokenMeter 感知上下文。
+- **验收**：Windows zh/en kix-budget 60 项全绿；WSL2 全局版本锚定 `dsh@0.1.0-rc.6` + `kixparadigm@1.2.19`/`-en@1.2.19`，当前安装副本默认配置实测 53 步 gate、40 次 paired replacement/prune，账本通过 `LIVE-E2E-ACCEPT`；F3/F4 延迟卸载账本通过 `FOCUS-E2E-ACCEPT`。
+- **WSL 复验（调度纪律 trial #2）**：预检抓到 WSL 侧 `kixparadigm-en` preset 副本滞后（kix-budget.js 停在旧版：源更新后只重装了 zh 未重装 en），且 `check-deploy.sh` parity 段只比对 zh 副本、漏 en——已修为两 preset 各对自身源 cmp（parity PASS 行 2→4），重装 en 后两 preset 全 20 插件文件 wholesale hash MATCH。全套重跑五绿：DEPLOY-CHECK-ACCEPT / LIVE-E2E-ACCEPT / FOCUS-E2E-ACCEPT / GATE-CLEAR-E2E-ACCEPT / CHILD-E2E-ACCEPT。33236 API 新鲜端到端复现：发现 glm-4.7 把 child 报告放进 reasoning 块的行为方差（报告未送达 parent，E 谓词正确拒绝——不弱化），夹具第 4 步加硬为 run_code console.log 确定性打印 + 正文重述后一次通过（`--root-kix-child-trial2--/422007af-*` 五项全 PASS）。
+- **F5 child E2E 闭环（verify-child-e2e v2）**：实测确认 lite child（`subagent_lite` 派发，5-6 工具只读面 + run_code）的工具面裁剪在 **SDK tools 表层面强制**——child 的 run_code 内 `tools.subagent`/`tools.kix_capability_call` 访问即 `TypeError`（"is not a function"），不存在「发出 tool/call(name∈denied) → 门禁拒绝」的记账通道（v1 谓词假设了该通道，结构性不可达成）。v2 C 谓词对齐机制现实：要求两条越权路径（subagent 直呼 + kix_capability_call 代理）的主动探测（run_code arguments 引用）与对应 `tools.X is not a function` 证据同时在场，强度不低于 v1。33236 服务 API（`session.create`/`session.prompt`）驱动真实 lite child 账本，五项全 PASS：`CHILD-E2E-ACCEPT`（ledger `--root-kix-child-lite-e2e--/a3df3195-*`）。附带发现：headless profile 不加载 agent preset（无 kix 面）；完整 `subagent` 派发的 child 是 25 工具 Claude-Code 风格面（含编排工具、无 run_code）——A 谓词的 denied 集只适用于 lite 档。
+
+## v1.2.19（2026-08-18）v5.11/v6 运行时闭环
+
+- **㉙ 复杂度感知 effort**：子代理首个 pre-step 使用零 token 分类器区分琐碎、常规和深任务，结合模型能力门控选择 effort；显式 effort、档位、maxTokens 仍保持权威，lite 不静默升档。
+- **㉑-㉕ kix-budget**：运行时窗口、`tokenMeter`、step 计数和 session event 驱动 gate、handoff、急剪与结果 replacement；主/child 边界按运行时深度和 session header 感知。
+- **㉖ run_code 文案勘误**：run_code 是保留传输名，继续存在于 child 工具面；deny 编排工具的镜像段才从子代理可见面移除。
+- **E2E 验证器**：预算、focus 延迟卸载和 child deny 均只接受结构化 ledger 证据；无真实 child deny tool-call 的夹具保持拒绝。
 ## v1.2.15（2026-08-17）kix-consistency 泛化：自感知边界 + N 份身份组
 
 - **该相同的数份必须相同（N ≥ 2）**：`checkIdenticalSet` 一次比 N 份（缺一份 / 任一份与锚点字节不同都失败）；身份组不再写死 zh/en 一对——按自感知 preset 根展开，加语言 / 加 preset 自然进组
@@ -52,3 +90,4 @@
 
 - v1.2.9：编曲模型（activatable 成员档 + Sprint 流程）、kix-discipline 插件化、kix-route modelPreference 配置化
 - v1.2.8 及以前：见 git log
+

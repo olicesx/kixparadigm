@@ -448,14 +448,31 @@ await ok('deactivate 未激活的工具 → 报错', (async () => {
   const r = await deactivateTool.execute({ tool: 'goal' })
   return r.ok === false && String(r.error).includes('未激活')
 })())
-await ok('deactivate 已激活 → dispose 被调', (async () => {
+// v5.10 延迟卸载（㉔ 机制化）：deactivate 入队不立即 dispose；回合边界统一执行。
+async function flushTurn() {
+  for (const cb of listeners['agent/turn-stopping'] || []) await cb({})
+}
+await ok('deactivate 已激活 → 延迟（立即不 dispose，返回 deferred）', (async () => {
   const before = disposeCalls
   const r = await deactivateTool.execute({ tool: 'workflow' })
-  return r.ok === true && disposeCalls === before + 1
+  return r.ok === true && r.deferred === true && disposeCalls === before
 })())
-await ok('deactivate 后可重新激活', (async () => {
+await ok('待卸载期间重新激活 → 取消卸载、复用 fiber（不重复挂载）', (async () => {
+  pluginCalls.length = 0
   const r = await activateTool.execute({ tool: 'workflow' })
-  return r.ok === true
+  return r.ok === true && pluginCalls.length === 0 && String(r.note).includes('卸载已取消')
+})())
+await ok('deactivate → 回合边界 flush 才真正 dispose', (async () => {
+  const before = disposeCalls
+  await deactivateTool.execute({ tool: 'workflow' })
+  const mid = disposeCalls
+  await flushTurn()
+  return mid === before && disposeCalls === before + 1
+})())
+await ok('flush 后重新激活 → 全新挂载', (async () => {
+  pluginCalls.length = 0
+  const r = await activateTool.execute({ tool: 'workflow' })
+  return r.ok === true && pluginCalls.length === 1
 })())
 await ok('激活 goal → 正常挂载', (async () => {
   pluginCalls.length = 0
@@ -503,8 +520,9 @@ await ok('activationKeyFor：goal 工具名 → goal 激活键（工具名≠激
 })())
 await ok('capability_call 首次调用 goal（create_goal）→ 自动挂载并执行', (async () => {
   // 前置：section 9 已显式激活 goal（activated 键 'goal'，挂载即注册 create_goal）
-  // → 先卸载还原未挂载态，才能测自动激活路径
+  // → 先卸载并 flush 回合边界还原未挂载态，才能测自动激活路径（v5.10 延迟卸载）
   await deactivateTool.execute({ tool: 'goal' })
+  await flushTurn()
   pluginCalls.length = 0
   executeCalls = []
   const r = await callTool.execute({ tool: 'create_goal', arguments: { objective: 'x' } }, { agent: { id: 'agent-1' } })
@@ -516,10 +534,12 @@ await ok('已挂载的常驻工具仍拒绝代理（job_output 常驻）', (asyn
   const r = await callTool.execute({ tool: 'job_output', arguments: {} }, { agent: { id: 'agent-1' } })
   return r.ok === false && String(r.error).includes('常驻')
 })())
-await ok('自动激活后可用 kix_tool_deactivate 卸载', (async () => {
+await ok('自动激活后可用 kix_tool_deactivate 卸载（延迟语义）', (async () => {
   const before = disposeCalls
   const r = await deactivateTool.execute({ tool: 'subagent_qa' })
-  return r.ok === true && disposeCalls === before + 1
+  const mid = disposeCalls
+  await flushTurn()
+  return r.ok === true && r.deferred === true && mid === before && disposeCalls === before + 1
 })())
 await ok('卸载后再代理调用 → 重新自动挂载', (async () => {
   pluginCalls.length = 0

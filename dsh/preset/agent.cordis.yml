@@ -7,7 +7,8 @@
 #     （2026-08-17 起：主模型自由挑成员+流程，四条不变量地板见 persona）。
 #   - 机制细节层（按需技能）——本 preset 的 skills/ 目录：kixparadigm（机械门禁、
 #     验证 gate、输出格式、跨厂商模型）、kixpower（多智能体编排 v5.7）、handoff、
-#     write-a-skill、improve-codebase-architecture。
+#     write-a-skill、improve-codebase-architecture、pwsh-reliable（Windows 命令
+#     可靠性：native 参数/引号/退出码/WSL/清理，2026-08-17 吸收）。
 #   - 团队角色（agents/）、kixpower 流程（prompts/）、方法论记忆（memories/）、
 #     核心指令原件（instructions/）作为 preset 内资源随附。
 #
@@ -70,6 +71,7 @@
 
       ## 环境默认
       Windows 用 pwsh 7（勿用 5.1）；Linux/macOS 用 bash；语言 CLI 优先主版本，不确定先 --version；系统信息不足先探测，不得以此拒绝任务。
+      Windows 命令可靠性（native 参数数组/引号边界/退出码语义/WSL 桥/后台进程/清理）按 skills/pwsh-reliable 技能执行；shell 出错先读它再重试，勿盲目加转义。
 
       ## 流程路由信号
       属性驱动：规模≥3文件/外部副作用/验证关键/目标不明。命中→停一步做编曲决策并说出来；简单任务不报告；禁止类型→动作静态映射。
@@ -84,17 +86,20 @@
       ## 成本纪律
       - 分档：lite（机械只读 8K，首次使用自动激活）→ subagent（常规 64K，默认）→ subagent_cross（跨厂商 64K）→ subagent_thinker（128K，高风险）。
       - prompt 标 [EFFORT]+[BUDGET]；观察者默认1，分歧/高风险2，并发≤3。
-      - 禁轮询空转：spawn 后前台等或后台先做别的；job_output/list_agents 取结果即走；独立工作做完仍缺结果→简短状态后结束回合（结算/报告无条件唤醒新回合）。sleep 只用于测试/退避/等锁，不用于等子代理。
+      - 禁轮询空转：spawn 后前台等或后台只做只读工作；观察者在飞时被验证文件冻结至结算；派发 prompt 必带绝对路径+版本锚+禁读清单；job_output/list_agents 取结果即走；独立工作做完仍缺结果→简短状态后结束回合（结算/报告无条件唤醒新回合）。sleep 只用于测试/退避/等锁，不用于等子代理。
       - 子代理结果单通道：默认最终消息=完整报告，勿再 report 全文；确需中继才 report 一句话。结构化回流优先 outputSchema；结论复用查 progress.md/memories。
+      - 主会话预算（㉑-㉕）：kix-budget 通过运行时模型窗口与 agent/pre-step.step 感知；动态预算默认封顶 150K，单回合第 41 步或超过预算后，主线程普通工具由 tools/pre-execute 拒绝，必须完成 subagent_lite/create_goal 交接；单结果按宿主 pruner 字符阈值剪裁；工具面 deactivate 延迟到回合末。
+      - 子代理 effort 复杂度感知（v5.11）：首步零 token 分类器按 child prompt 定档——琐碎机械（仅高置信）思考 off、常规保持 high、深任务（帽>8K）升 max、lite 永不静默变 thinker；非 deepseek 经运行时 `llm.resolveModelInfo` 能力门控（trivial 选 off、无则 low；深任务选 max——仅当能力表含；未知/常规不注入）；显式 `complexity:`/effort/档位/maxTokens 优先；每子代理只分类一次（防请求头/前缀缓存抖动）。
 
       ## DSH 适配
       - 分派：subagent 注入 agents/*.agent.md 角色 body + Tri-Block；需继承上下文用 subagent_fork。跨厂商→subagent_cross；识图→subagent_vision（图片路径+问题）；📷 [图片自动识别] 是 vision-bridge 产物。
       - 门禁已挂载：kix-guards（危险 git/SQL/控制平面/未知执行工具）、kix-discipline、kix-orchestration；/kixpower-* 零 token。
       - 工具面：kix-focus 常驻文件/执行、ask_user_question/todo_write/skill、subagent/subagent_cross、子代理控制、后台任务（jobs 常驻）、发现入口。lite/thinker/vision/fork/reviewer/qa/dev、goal 默认未挂载，**首次使用自动激活**——kix_capability_call { tool: subagent_qa, arguments: {...} } 即自动挂载并执行、下一轮起可直呼；也可 kix_tool_activate 预激活，kix_tool_deactivate 卸载。web_search 与 MCP 经 kix_capability_call；workflow 取消 disabled 重启。
+      - 子代理编排面（v5.10 实测）：子代理工具面已裁编排菜单（subagent×2/agent 控制等——静态 deny + kix-cost child guard；run_code 为 Code Mode 保留传输仍可见；文件/执行/检索/jobs/report/MCP 全留）——需再分派/编排的内容写进 report 回主线程；kix_tool_deactivate 延迟到回合末生效（工具面中途变更打断前缀缓存）。
       - 原生优先：复杂编排 workflow；长目标 goal；先规划 plan mode；长任务 run_in_background+job_output；验证/观察保持 native（证据可回放）；deny 立即中止。
 
       ## 资源
-      instructions/kixparadigm-core.instructions.md；skills/kixparadigm、skills/kixpower；prompts/kixpower-*；memories/*.md。
+      instructions/kixparadigm-core.instructions.md；skills/kixparadigm、skills/kixpower、skills/pwsh-reliable（Windows）；prompts/kixpower-*；memories/*.md。
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
   config:
@@ -229,6 +234,20 @@
   config:
     - id: compaction-basic
       name: '@deepseek-ai/dsh-compaction-basic'
+      config:
+        # v5.9（㉑，2026-08-17 账本实测）：默认 0.8 在 1M 窗口 = 800K 阈值，
+        # kixpower 整改会话爬到 466K 仍从未触发 → 上下文 O(N²) 累积烧掉
+        # 100.8M 重读 token。全局降到 0.45；两个实测 1M 窗口模型钉 0.18
+        #（=180K，与 kix-budget 建议线对齐）。新模型未枚举时回退 0.45，
+        # kix-budget 的动态预算（min(35%×窗口,180K)）仍按真实窗口生效。
+        thresholdRatio: 0.45
+        modelPolicies:
+          - provider: deepseek-official
+            model: deepseek-v4-pro
+            thresholdRatio: 0.18
+          - provider: zai-coding-cn
+            model: glm-5.3
+            thresholdRatio: 0.18
 
     - id: command-compact
       name: '@deepseek-ai/dsh-command-compact'
@@ -236,9 +255,15 @@
     - id: tool-result-pruner
       name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
       config:
-        thresholdChars: 8192
-        headChars: 4096
-        tailChars: 1024
+        thresholdChars: 2048
+        headChars: 1024
+        tailChars: 512
+
+    # v5.9 主会话预算（㉑-㉓）：advisory + 急剪。必须挂本 realm 内——
+    # ctx.get('toolResultPruner') 只在 isolate realm 可见（compaction-basic
+    # 同款约束）；tokenMeter/llm 留宿主面，realm 内照常解析。
+    - id: kix-budget
+      name: ./plugins/kix-budget.js
 
 # ── delegation and workflows ────────────────────────────────────────────────
 
@@ -275,6 +300,20 @@
         provider: spawn
         toolName: subagent
         backgroundMode: continuable
+        # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
+        # bash/read/grep/glob；exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
+        # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
+        # 条件挂载的细分档位/workflow 由 plugins/kix-cost.js 的 child guard
+        # 语义兜底。被 deny 的名字同时从 tools 数组与 system 内 TypeScript
+        # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
+        # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
+        # 可见面，其工具镜像一并保留。subagent×2/agent 控制是「编排
+        # 留主线程」（kix 地板②）的主线程职责。文件/执行/检索/jobs/
+        # skill/report/MCP（capability_call）全保留——裁的是子代理定义上
+        # 不该有的编排面，不是能力。
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           # v5.8 预算帽：完成侧（思考+回答）兜底上限，防失控（s1 budget forcing）
           maxTokens: 65536
@@ -337,6 +376,20 @@
         provider: spawn
         toolName: subagent_thinker
         backgroundMode: continuable
+        # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
+        # bash/read/grep/glob；exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
+        # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
+        # 条件挂载的细分档位/workflow 由 plugins/kix-cost.js 的 child guard
+        # 语义兜底。被 deny 的名字同时从 tools 数组与 system 内 TypeScript
+        # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
+        # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
+        # 可见面，其工具镜像一并保留。subagent×2/agent 控制是「编排
+        # 留主线程」（kix 地板②）的主线程职责。文件/执行/检索/jobs/
+        # skill/report/MCP（capability_call）全保留——裁的是子代理定义上
+        # 不该有的编排面，不是能力。
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           model: kix-route:thinker
           maxTokens: 131072
@@ -360,6 +413,20 @@
         provider: spawn
         toolName: subagent_cross
         backgroundMode: continuable
+        # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
+        # bash/read/grep/glob；exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
+        # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
+        # 条件挂载的细分档位/workflow 由 plugins/kix-cost.js 的 child guard
+        # 语义兜底。被 deny 的名字同时从 tools 数组与 system 内 TypeScript
+        # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
+        # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
+        # 可见面，其工具镜像一并保留。subagent×2/agent 控制是「编排
+        # 留主线程」（kix 地板②）的主线程职责。文件/执行/检索/jobs/
+        # skill/report/MCP（capability_call）全保留——裁的是子代理定义上
+        # 不该有的编排面，不是能力。
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           model: kix-route:cross
           maxTokens: 65536
@@ -381,6 +448,20 @@
         provider: spawn
         toolName: subagent_vision
         backgroundMode: continuable
+        # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
+        # bash/read/grep/glob；exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
+        # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
+        # 条件挂载的细分档位/workflow 由 plugins/kix-cost.js 的 child guard
+        # 语义兜底。被 deny 的名字同时从 tools 数组与 system 内 TypeScript
+        # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
+        # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
+        # 可见面，其工具镜像一并保留。subagent×2/agent 控制是「编排
+        # 留主线程」（kix 地板②）的主线程职责。文件/执行/检索/jobs/
+        # skill/report/MCP（capability_call）全保留——裁的是子代理定义上
+        # 不该有的编排面，不是能力。
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           model: kix-route:vision
           # 视觉模型普遍 4K 输出帽（settings zai-vision maxTokens 4096）；
@@ -395,6 +476,20 @@
         provider: fork
         toolName: subagent_fork
         backgroundMode: continuable
+        # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
+        # bash/read/grep/glob；exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
+        # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
+        # 条件挂载的细分档位/workflow 由 plugins/kix-cost.js 的 child guard
+        # 语义兜底。被 deny 的名字同时从 tools 数组与 system 内 TypeScript
+        # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
+        # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
+        # 可见面，其工具镜像一并保留。subagent×2/agent 控制是「编排
+        # 留主线程」（kix 地板②）的主线程职责。文件/执行/检索/jobs/
+        # skill/report/MCP（capability_call）全保留——裁的是子代理定义上
+        # 不该有的编排面，不是能力。
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           # v5.8 预算帽：继承会话上下文的子代理同样兜底
           maxTokens: 65536
@@ -415,6 +510,20 @@
         provider: spawn
         toolName: subagent_reviewer
         backgroundMode: continuable
+        # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
+        # bash/read/grep/glob；exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
+        # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
+        # 条件挂载的细分档位/workflow 由 plugins/kix-cost.js 的 child guard
+        # 语义兜底。被 deny 的名字同时从 tools 数组与 system 内 TypeScript
+        # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
+        # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
+        # 可见面，其工具镜像一并保留。subagent×2/agent 控制是「编排
+        # 留主线程」（kix 地板②）的主线程职责。文件/执行/检索/jobs/
+        # skill/report/MCP（capability_call）全保留——裁的是子代理定义上
+        # 不该有的编排面，不是能力。
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         persona: |-
           You are kixpower-reviewer: an independent read-only adversarial reviewer.
           Hard constraints:
@@ -460,6 +569,20 @@
         provider: spawn
         toolName: subagent_qa
         backgroundMode: continuable
+        # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
+        # bash/read/grep/glob；exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
+        # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
+        # 条件挂载的细分档位/workflow 由 plugins/kix-cost.js 的 child guard
+        # 语义兜底。被 deny 的名字同时从 tools 数组与 system 内 TypeScript
+        # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
+        # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
+        # 可见面，其工具镜像一并保留。subagent×2/agent 控制是「编排
+        # 留主线程」（kix 地板②）的主线程职责。文件/执行/检索/jobs/
+        # skill/report/MCP（capability_call）全保留——裁的是子代理定义上
+        # 不该有的编排面，不是能力。
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         persona: |-
           You are kixpower-qa (Ivy): acceptance testing, bug filing, and QA
           signoff — never business source code.
@@ -489,6 +612,20 @@
         provider: spawn
         toolName: subagent_dev
         backgroundMode: continuable
+        # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
+        # bash/read/grep/glob；exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
+        # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
+        # 条件挂载的细分档位/workflow 由 plugins/kix-cost.js 的 child guard
+        # 语义兜底。被 deny 的名字同时从 tools 数组与 system 内 TypeScript
+        # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
+        # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
+        # 可见面，其工具镜像一并保留。subagent×2/agent 控制是「编排
+        # 留主线程」（kix 地板②）的主线程职责。文件/执行/检索/jobs/
+        # skill/report/MCP（capability_call）全保留——裁的是子代理定义上
+        # 不该有的编排面，不是能力。
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         persona: |-
           You are kixpower-dev (Nova frontend / Sage backend / Milo design —
           one contract, three hats): the coding member on the CEO team.
