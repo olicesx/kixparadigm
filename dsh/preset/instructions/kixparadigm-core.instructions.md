@@ -77,6 +77,7 @@ applyTo: '**'
 ## 环境默认（工具链选择）
 
 - **默认用 `pwsh`（7.x），不用 `powershell`（5.1）**：5.1 按 GBK 读 UTF-8 无 BOM 的 .ps1 且把 native stderr 包装成 `NativeCommandError` 在 `$ErrorActionPreference='Stop'` 下中断
+- **Windows 命令可靠性按 `skills/pwsh-reliable` 技能执行**（2026-08-17 吸收）：native 参数走数组 + call operator、`$LASTEXITCODE` 即取即判、预期非零先分类、跨解析层引号边界（含 WSL 复合脚本 base64 过桥）、后台进程精确 PID 清理；shell 出错先读技能再重试，勿盲目加转义
 - 其他语言同理：优先平台当前主版本 CLI；环境不确定时先 `Get-Command` / `--version` 确认
 
 ## 流程路由信号（任务开始时的元决策，与需求三检同构）

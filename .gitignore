@@ -24,3 +24,13 @@ Thumbs.db
 # 本地 Node 运行时 tarball（WSL 自举用，31MB 二进制，不入库）
 node-v*.tar.xz
 node-v*.tar.gz
+
+# 本地分析/报告工作区（含会话数据与个人路径，仅本地，勿入库）
+tmp-analyze/
+
+# 本地需求三检契约状态（插件运行时本地产物）
+kix-discipline/
+
+# Playwright MCP 本地痕迹
+.playwright-mcp/
+

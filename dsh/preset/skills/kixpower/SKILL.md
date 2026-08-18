@@ -81,3 +81,33 @@ description: "Kixpower — AI 多智能体协作编排（v5.7）。采用 DAG �
 | ⑱ | 禁轮询空转 / 观察者门控（1→分歧+1，并发≤3）/ [EFFORT]+[BUDGET] 标注 / outputSchema 回流 / 跨会话结论复用 / 同会话去重 | persona「成本纪律」节（agent.cordis.yml，P1 压缩为选择层；机制由 kix-cost/kix-route 插件强制） |
 | ⑲ | 等待步骤零思考：job_output/list_agents 等待是检查点不是思考点；后台任务运行期间做其他独立工作（实测：单次 job_output 等待烧 12,998 思考） | persona「成本纪律」节（agent.cordis.yml，同上） |
 | ⑳ | review 流程阶段 2 取证分工：orchestrator 判断 + `subagent_lite` 并行机械取证（只读/检索/核对/枚举走 lite，禁止 orchestrator 逐文件通读 diff） | `prompts/kixpower-review.prompt.md` 阶段 2 |
+
+## v5.9 主会话预算（2026-08-17 会话账本实测驱动）
+
+> 48 会话 / 173M 重读 token 账本定位：80% 燃烧 = 主会话上下文 O(N²) 累积（466K 马拉松重读 100.8M，占 58%），v5.8 只优化了子代理每步固定开销。机制：`plugins/kix-budget.js` + compaction 阈值下调；常驻规则一句话在 persona「成本纪律」节。
+
+| # | 方法 | 落地段 |
+|---|---|---|
+| ㉑ | 主会话预算：运行时读取模型窗口与 `agent/pre-step.step`，上下文同时感知 usage/tokenMeter；动态预算默认封顶 150K，主会话第 41 步或上下文超线后由 `tools/pre-execute` 拒绝普通工具，必须完成 lite/goal 交接；运行时与会话深度都不可得时强动作 fail-open | `plugins/kix-budget.js` + agent.cordis.yml |
+| ㉒ | 机械取证提示：连续 8 步只读仍提供一次 advisory；真正强制边界是主会话 step 41 gate，常见 git 写命令不再误判为只读 | `plugins/kix-budget.js` |
+| ㉓ | 工具结果急剪：宿主 pruner 字符阈值默认 2K，单结果超线在下一步边界 head/tail 替换；总上下文过半仍是兜底触发 | `plugins/kix-budget.js` + tool-result-pruner |
+| ㉔ | 激活抖动纪律：`deactivate` 入队并在 `turn-stopping` 统一 dispose，待卸载期间再次激活复用 fiber | `plugins/kix-focus.js` + 回归/E2E |
+| ㉕ | 马拉松交接：step/context gate 强制主线程调用 `subagent_lite` 或 `create_goal`，goal round / `/kixpower-continue` 负责跨回合恢复 | `plugins/kix-budget.js` + goal/continue |
+
+## v5.10 子代理编排面与激活抖动（2026-08-17 子代理账本实测驱动）
+
+> 107 个子代理会话 / 2,432 次调用 / 162.5M 重读 token——与主会话同量级的另一半燃烧。首步固定开销中位 23.4K（system 38.8K chars + tools 34.3K chars）；**system 里 ~25K chars 是 run_code 的 TypeScript 工具镜像**（每个工具 schema 付两次钱）；40/107 个子代理尝试过再分派（50 次）——每个孙代再付一次全额固定开销；`change` 请求头（工具面中途变更）后 cacheRead 归零、整个上下文全价重读。
+
+| # | 方法 | 落地段 |
+|---|---|---|
+| ㉖ | 子代理编排面裁剪：恒注册编排名静态 `toolFilter.deny`（subagent×2、agent 控制、exit_plan_mode、ask_user_question——账本 0 使用；deny 名同时从 tools 数组与 system 内 TS 镜像消失）。run_code 为 Code Mode 保留传输名不可 restrict（WSL2 实弹实锤）且是正当执行通道——保留；条件挂载名（dev/qa/workflow 等）由 kix-cost child guard 语义兜底。文件/执行/检索/jobs/skill/report/MCP 全保留——裁的是子代理不该有的编排面，不是能力 | agent.cordis.yml 各 tool-subagent 行 + `plugins/kix-cost.js`（tools.guard） |
+| ㉗ | 延迟卸载：kix_tool_deactivate 入队、回合边界统一 dispose——消灭 `change` 头缓存重置；期间再激活则复用 fiber 不重复挂载 | `plugins/kix-focus.js`（pendingDefers + agent/turn-stopping flush） |
+| ㉘ | 子代理预算覆盖：child 会话继承宿主 compaction 与 kix-budget 结果急剪；主会话 advisory/step-context gate 保持 main-only，child 不继承主线程交接锁 | v6 runtime scope + E2E |
+
+## v5.11 复杂度感知子代理 effort（2026-08-18）
+
+> v5.8 的 effort 分层只看预算帽（≥98K → max、其余 high），不感知任务内容——机械 child 照付 high 思考、深任务落普通档被 high 封顶。v5.11 在子代理**首个被接受的 pre-step** 用零 token 分类器读初始 prompt 叶子文本定复杂度档：纯机械判定不耗模型 token，**每子代理只分类一次**（首步定档后缓存复用，后续请求/pre-step 不改写，请求头全程稳定——v5.10 教训：中途 `change` 头清零前缀缓存）。
+
+| # | 方法 | 落地段 |
+|---|---|---|
+| ㉙ | 复杂度感知 effort：琐碎机械 → DeepSeek 思考 off（**仅高置信才判**，保守取向——深活误判 trivial 关思考的代价远大于机械活没省下思考，超长文本一律不判 trivial）；常规 → 保留既有 high（v5.8 默认不变）；深任务且预算帽 >8K → 升 max；lite（≤8K 帽）**永不静默变 thinker**（升档必须显式换 thinker 档位）。非 deepseek 经运行时 `llm.resolveModelInfo` 能力门控同档适配——trivial 能力含 off 选 off、否则含 low 选 low；deep 帽 >8K 且能力含 max 选 max；能力表缺失/未知与常规档不注入（适配器默认不变，绝不发能力表外 effort）。深作信号**否定感知**（v5.11.1）：命中点前短窗口内否定词且无句读隔断 → 该深作命中不计入（`不要分析`/英文否定不产生深作命中）；同组靠后的主动命中仍计数（「不要分析，只排查」→ 排查 主动）；机械信号检测保持原样（保守取向——机械误命中只是没省思考，不会关错）。显式 `complexity:`/`复杂度：` 标记优先于信号推断；显式 effort/档位/maxTokens 恒权威——分类器只填空不覆盖（不改 selected tool/路由/maxTokens） | `plugins/kix-cost.js`（agent/pre-step 零 token 预分类 + agent/request 注入） |

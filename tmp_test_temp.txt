@@ -1,0 +1,1 @@
+  check('tokenMeter 缺失 → 不抛错（跨环境不挂）', pre === 'NEXT4' && pruned === 3)
