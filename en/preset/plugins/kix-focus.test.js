@@ -1,4 +1,4 @@
-// kix-focus 回归测试（2026-08-16）
+﻿// kix-focus 回归测试（2026-08-16）
 //
 // 单元级验证：加载 kix-focus.js，mock DSH tools 服务（register/restrict/schemas/execute），
 // 覆盖：
@@ -769,6 +769,23 @@ await ok('capability_call 分派 subagent_qa + 无 prompt 参数 → 不注入',
     { agent: agentWithCwd(root) })
   return r.ok === true && r.sprintInjected === undefined
     && executeCalls.length === 1
+})())
+
+// ── 档位守卫：subagent_lite 仅在 maxTokens > 8192 时可用 ────────────────
+section('档位守卫：subagent_lite 仅在 maxTokens > 8192 时可用')
+await ok('64K 档（65536）代理 subagent_lite → 放行', (async () => {
+  executeCalls = []
+  const r = await callTool.execute(
+    { tool: 'subagent_lite', arguments: { prompt: 'test' } },
+    { agent: { id: 'agent-64k', options: { maxTokens: 65536 } } })
+  return r.ok === true && executeCalls.length === 1 && executeCalls[0].name === 'subagent_lite'
+})())
+await ok('lite 档（8192）代理 subagent_lite → 拒（档位判断路径）', (async () => {
+  executeCalls = []
+  const r = await callTool.execute(
+    { tool: 'subagent_lite', arguments: { prompt: 'test' } },
+    { agent: { id: 'agent-lite', options: { maxTokens: 8192 } } })
+  return r.ok === false && r.error && r.error.includes('maxTokens > 8192') && executeCalls.length === 0
 })())
 
 // ── 清理临时工作区（2026-08-17：与 kix-orchestration.test 同款纪律）──────

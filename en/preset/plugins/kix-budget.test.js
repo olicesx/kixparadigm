@@ -2,7 +2,8 @@
 //
 // 单元级验证：加载 kix-budget.js，mock cordis ctx（on/effect/get）与
 // tokenMeter/toolResultPruner/llm 服务，覆盖：
-//   - 预算解析：min(35%×窗口, 150K)——窗口由运行时模型信息解析、
+//   - 预算解析：按窗口分档（≤128K→0.85；≤400K→0.65；≤1M→0.40；>1M→0.35，
+//     v1.2.21 完全动态化：默认帽废止）——窗口由运行时模型信息解析、
 //     无窗口回退绝对帽
 //   - 只读分类：grep/cat/管道组合 → true；重定向/git 写子命令/python/
 //     node → false（马拉松实测 python3 heredoc 全在写文件）
@@ -10,7 +11,7 @@
 //   - 预算建议：ctx ≥ 预算 → 注入一次 ㉑ 建议（优先于 streak）；纯散文
 //     回合走 turn-stopping steer 通道
 //   - 急剪：单结果超过宿主字符阈值或 ctx ≥ 50% 预算 → pre-step 调 pruneSession
-//   - 主会话 step>40/context>150K → tools/pre-execute 硬门禁，lite/goal 交接解除
+//   - 主会话 step>40/context>动态预算 → tools/pre-execute 硬门禁，lite/goal 交接解除
 //   - turn/start 重置回合内状态
 // 运行：node plugins/kix-budget.test.js
 
@@ -51,13 +52,15 @@ function check(label, cond) {
 
 // ── 纯逻辑 ────────────────────────────────────────────────────────────────
 console.log('== 预算解析 ==')
-check('resolveBudgetTokens: 1M 窗口 → 150K 封顶', I.resolveBudgetTokens(1000000, I.DEFAULTS) === 150000)
-check('resolveBudgetTokens: 128K 窗口 → 45875 按比例', I.resolveBudgetTokens(131072, I.DEFAULTS) === 45875)
-check('resolveBudgetTokens: 400K 窗口 → 120K 按比例（分档变更：由0.35→0.30）', I.resolveBudgetTokens(400000, I.DEFAULTS) === 120000)
-check('resolveBudgetTokens: 无窗口 → 绝对帽', I.resolveBudgetTokens(undefined, I.DEFAULTS) === 150000)
-check('resolveBudgetTokens: 300K 窗口 → 90K 按比例（分档：0.30）', I.resolveBudgetTokens(300000, I.DEFAULTS) === 90000)
-check('resolveBudgetTokens: 800K 窗口 → 150K 绝对帽截断（分档：0.25→200K）', I.resolveBudgetTokens(800000, I.DEFAULTS) === 150000)
-check('resolveBudgetTokens: 1.5M 窗口 → 150K 绝对帽截断', I.resolveBudgetTokens(1500000, I.DEFAULTS) === 150000)
+check('resolveBudgetTokens: 1M 窗口 → 400K 纯分档（v1.2.21 完全动态化：默认帽废止）', I.resolveBudgetTokens(1000000, I.DEFAULTS) === 400000)
+check('resolveBudgetTokens: 128K 窗口 → 111411 按比例', I.resolveBudgetTokens(131072, I.DEFAULTS) === 111411)
+check('resolveBudgetTokens: 400K 窗口 → 260K 按比例（分档变更：由0.30→0.65）', I.resolveBudgetTokens(400000, I.DEFAULTS) === 260000)
+check('resolveBudgetTokens: 无窗口 → 回退 absoluteCapTokens', I.resolveBudgetTokens(undefined, I.DEFAULTS) === 150000)
+check('resolveBudgetTokens: 300K 窗口 → 195K 按比例（分档：0.65）', I.resolveBudgetTokens(300000, I.DEFAULTS) === 195000)
+check('resolveBudgetTokens: 800K 窗口 → 320K（v1.2.21 完全动态化：0.40 新档、默认帽废止）', I.resolveBudgetTokens(800000, I.DEFAULTS) === 320000)
+check('resolveBudgetTokens: 1M 边界 1048576 → 419430（0.40 档）', I.resolveBudgetTokens(1048576, I.DEFAULTS) === 419430)
+check('resolveBudgetTokens: 2M 窗口 2097152 → 734003（0.35 档，无帽截断）', I.resolveBudgetTokens(2097152, I.DEFAULTS) === 734003)
+check('resolveBudgetTokens: 1.5M 窗口 1500000 → 525000（0.35 档，无帽截断；v1.2.21 完全动态化：默认帽废止）', I.resolveBudgetTokens(1500000, I.DEFAULTS) === 525000)
 check('resolveBudgetTokens: 显式 budgetRatio=0.4 + 1M 窗口 → 400K 配置覆盖', I.resolveBudgetTokens(1000000, { budgetRatio: 0.4 }) === 400000)
 check('main agent depth 0', I.isMainAgent({ options: { subagentDepth: 0 } }) === true)
 check('child agent depth 1', I.isMainAgent({ options: { subagentDepth: 1 } }) === false)
@@ -106,7 +109,7 @@ function makeAgent(sessionId, provider, model, depth = 0) {
   }
 }
 const mainAgent = makeAgent('s-main', 'zai-coding-cn', 'glm-5.3')
-// 1M 窗口 → 预算 150K；prune 触发线 = 75K
+// 1M 窗口 → 预算 400K（0.40 档，v1.2.21 完全动态化）；prune 触发线 = 200K
 services.llm = {
   resolveModelInfo: async (provider, model) => {
     if (model === 'glm-5.3') return { context: { contextWindow: 1000000 } }
@@ -161,12 +164,12 @@ async function main() {
   listeners['session/event'][0](mainAgent.session, { type: 'turn/start', data: { turn: 2 } })
   listeners['session/event'][0](mainAgent.session, {
     type: 'assistant/message',
-    data: { usage: { inputTokens: 90000, cacheReadTokens: 120000 } },
+    data: { usage: { inputTokens: 250000, cacheReadTokens: 180000 } },
   })
-  check('记账：input+cacheRead = 210K', I.usageContextTokens({ inputTokens: 90000, cacheReadTokens: 120000 }) === 210000)
+  check('记账：input+cacheRead = 430K', I.usageContextTokens({ inputTokens: 250000, cacheReadTokens: 180000 }) === 430000)
   d = await postExec(mainAgent, 'edit', { file_path: 'x' })
   const tb = appendedText(d)
-  check('ctx 210K ≥ 动态预算：注入 gate', typeof tb === 'string' && tb.includes('kix-budget gate') && tb.includes('create_goal'))
+  check('ctx 430K ≥ 动态预算 400K：注入 gate', typeof tb === 'string' && tb.includes('kix-budget gate') && tb.includes('create_goal'))
   check('普通工具被 gate 拒绝', (await preGate(mainAgent, 'read', {})).kind === 'deny')
   check('lite transition 放行', (await preGate(mainAgent, 'kix_capability_call', { tool: 'subagent_lite' })).kind === 'allow')
   await postExec(mainAgent, 'kix_capability_call', { tool: 'subagent_lite' })
@@ -189,10 +192,10 @@ async function main() {
   listeners['session/event'][0](mainAgent.session, { type: 'turn/start', data: { turn: 3 } })
   listeners['session/event'][0](mainAgent.session, {
     type: 'assistant/message',
-    data: { usage: { inputTokens: 200000, cacheReadTokens: 5000 } },
+    data: { usage: { inputTokens: 410000, cacheReadTokens: 5000 } },
   })
   await listeners['agent/turn-stopping'][0]({ agent: mainAgent, turn: 3 })
-  check('纯散文回合超预算 → steer 一次', mainAgent.steered.length === 1 && mainAgent.steered[0].content[0].text.includes('kix-budget'))
+  check('纯散文回合超预算（415K ≥ 400K）→ steer 一次', mainAgent.steered.length === 1 && mainAgent.steered[0].content[0].text.includes('kix-budget'))
   await listeners['agent/turn-stopping'][0]({ agent: mainAgent, turn: 3 })
   check('同回合不重复 steer', mainAgent.steered.length === 1)
   const lowAgent = makeAgent('s-low', 'zai-coding-cn', 'glm-5.3')
@@ -228,7 +231,7 @@ async function main() {
   console.log('== 急剪（㉓）==')
   let pruned = 0
   services.tokenMeter = {
-    measure() { return { totalTokens: 100000 } },
+    measure() { return { totalTokens: 300000 } },
   }
   services.toolResultPruner = {
     config: { thresholdChars: 2048 },
@@ -236,7 +239,7 @@ async function main() {
   }
   listeners['session/event'][0](mainAgent.session, { type: 'tool/result', data: {} })
   let pre = await listeners['agent/pre-step'][0]({ agent: mainAgent, signal: undefined }, async () => 'NEXT')
-  check('脏 + 100K ≥ 75K prune 线 → pruneSession 被调', pruned === 1)
+  check('脏 + 300K ≥ 200K prune 线（1M 窗口预算 400K）→ pruneSession 被调', pruned === 1)
   check('pre-step 不阻断（next 透传）', pre === 'NEXT')
   const oversizeAgent = makeAgent('s-oversize', 'zai-coding-cn', 'glm-5.3')
   listeners['session/event'][0](oversizeAgent.session, { type: 'tool/result', data: { message: { content: [{ content: [{ type: 'text', text: 'x'.repeat(3000) }] }] } } })
@@ -244,7 +247,7 @@ async function main() {
   check('3K 单结果低于上下文半量也剪裁', pruned === 2)
   pre = await listeners['agent/pre-step'][0]({ agent: mainAgent, signal: undefined }, async () => 'NEXT2')
   check('无新结果不重复 prune', pruned === 2 && pre === 'NEXT2')
-  // 小窗口模型：预算约 45.9K，prune 线约 22.9K，100K 仍触发
+  // 小窗口模型：预算约 45.9K，prune 线约 22.9K，300K 仍触发
   const smallAgent = makeAgent('s-small', 'x', 'small-128k')
   listeners['session/event'][0](smallAgent.session, { type: 'tool/result', data: {} })
   await listeners['agent/pre-step'][0]({ agent: smallAgent, signal: undefined }, async () => 'NEXT3')
@@ -253,7 +256,7 @@ async function main() {
   listeners['session/event'][0](mainAgent.session, { type: 'tool/result', data: {} })
   pre = await listeners['agent/pre-step'][0]({ agent: mainAgent, signal: undefined }, async () => 'NEXT4')
   check('tokenMeter 缺失 → 不抛错（跨环境不挂）', pre === 'NEXT4' && pruned === 3)
-  services.tokenMeter = { measure() { return { totalTokens: 100000 } } }
+  services.tokenMeter = { measure() { return { totalTokens: 300000 } } }
   const boundaryAgent = makeAgent('s-boundary-oversize', 'zai-coding-cn', 'glm-5.3')
   listeners['session/event'][0](boundaryAgent.session, { type: 'turn/start', data: { turn: 1 } })
   listeners['session/event'][0](boundaryAgent.session, { type: 'tool/result', data: { message: { content: [{ content: [{ type: 'text', text: 'y'.repeat(3000) }] }] } } })
@@ -285,16 +288,16 @@ async function main() {
   let retryCalls = 0
   services.llm = { resolveModelInfo: async () => { retryCalls++; if (retryCalls === 1) throw new Error('temporary'); return { context: { contextWindow: 131072 } } } }
   const retryAgent = makeAgent('s-retry', 'provider', 'retry-model')
-  listeners['session/event'][0](retryAgent.session, { type: 'assistant/message', data: { usage: { inputTokens: 100000 } } })
+  listeners['session/event'][0](retryAgent.session, { type: 'assistant/message', data: { usage: { inputTokens: 120000 } } })
   await preStep(retryAgent, 1)
   check('解析失败不锁死绝对回退', retryCalls === 1 && (await preGate(retryAgent, 'read', {})).kind === 'allow')
   await preStep(retryAgent, 2)
   check('第二次读取到动态窗口', retryCalls === 2 && (await preGate(retryAgent, 'read', {})).kind === 'deny')
-  services.tokenMeter = { measure() { return { totalTokens: 160000 } } }
+  services.tokenMeter = { measure() { return { totalTokens: 420000 } } }
   services.llm = { resolveModelInfo: async () => ({ context: { contextWindow: 1000000 } }) }
   const noUsageAgent = makeAgent('s-no-usage', 'provider', 'no-usage')
   await preStep(noUsageAgent, 1)
-  check('无 usage 时 tokenMeter 仍触发上下文 gate', (await preGate(noUsageAgent, 'read', {})).kind === 'deny')
+  check('无 usage 时 tokenMeter 仍触发上下文 gate（420K ≥ 400K）', (await preGate(noUsageAgent, 'read', {})).kind === 'deny')
   delete services.tokenMeter
   let missingWindowCalls = 0
   services.llm = { resolveModelInfo: async () => { missingWindowCalls++; return { context: {} } } }

@@ -157,7 +157,7 @@ plan.md 强制 task DAG，orchestrator 按 ω/γ/k 路由：
 | v5.9 | 2026-08-17 | **主会话预算**（48 会话/173M 重读 token 账本实测驱动）：㉑ 上下文 advisory 线 min(35%×窗口,180K) + compaction thresholdRatio 0.8→0.45（1M 模型钉 0.18）；㉒ 主线程连续 8 步只读 streak 门禁（⑳ 机制化）；㉓ 工具结果急剪（pruneSession 提前到 50% 预算）；㉔ deactivate 延迟到回合末；㉕ 马拉松默认 goal/continue 分会话。落地 `plugins/kix-budget.js`（35 单测）+ persona 一句话索引。 |
 | v5.10 | 2026-08-17 | **子代理编排面与激活抖动**（107 子代理/162.5M 重读账本实测）：㉖ 编排面裁剪（deny 名同时从 tools 数组与 system TS 镜像消失；run_code 为保留传输名不可 restrict、正当执行通道保留；静态 deny 恒注册名 + kix-cost child guard 兜底条件挂载名）㉗ kix_tool_deactivate 延迟到回合末（change 头缓存重置清零）㉘ 子代理会话吃 v5.9 预算/compaction 覆盖。落地 agent.cordis.yml 各 tool-subagent 行 + kix-cost/kix-focus。 |
 | v5.11 | 2026-08-18 | **复杂度感知子代理 effort**：首 pre-step 零 token 分类器按初始 prompt 定复杂度档——琐碎机械（仅高置信）→ DeepSeek 思考 off；常规 → 保留既有 high；深任务（预算帽 >8K）→ 升 max；lite 永不静默变 thinker；非 deepseek 经 `llm.resolveModelInfo` 能力门控（trivial 含 off 选 off、否则 low；深任务 max——仅当能力表支持；未知/常规保持默认）；深作信号否定感知（v5.11.1：否定语境命中不计深作——`不要分析`/英文否定不算，同组后续主动命中仍计数）；显式 `complexity:` 标记/effort/档位/maxTokens 恒权威；每子代理只分类一次（防 `change` 头/前缀缓存抖动）。落地 `plugins/kix-cost.js`。 |
-| v6.0 | 2026-08-18 | **主会话运行时闭环**：`agent/pre-step.step`/动态模型窗口驱动 150K budget gate；第 41 步或上下文超线由 `tools/pre-execute` 拒绝普通工具，成功 lite/goal 交接后解除；宿主 pruner 2K 单结果剪裁并保留 replacement 账本；WSL2 真实回放覆盖 gate deny、35 次 prune replacement、延迟激活/卸载与 goal 自动续轮。 |
+| v6.0 | 2026-08-18 | **主会话运行时闭环**：`agent/pre-step.step`/动态模型窗口驱动分档 budget gate（≤128K→0.85、≤400K→0.65、≤1M→0.40、>1M→0.35；150K 仅无窗口回退）；第 41 步或上下文超线由 `tools/pre-execute` 拒绝普通工具，成功 lite/goal 交接后解除；宿主 pruner 2K 单结果剪裁并保留 replacement 账本；WSL2 真实回放覆盖 gate deny、35 次 prune replacement、延迟激活/卸载与 goal 自动续轮。 |
 
 **改造明细以本页版本表为唯一来源**；历史 v5.2 audit 修复与 v5.6/v5.7 信任链收口均保留在版本表中，不再维护易漂移的总数公式。
 

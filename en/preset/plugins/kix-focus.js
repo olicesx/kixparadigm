@@ -742,6 +742,14 @@ module.exports = {
           if (!r.ok) return { ok: false, tool: toolName, error: r.error }
           autoActivated = true
         }
+        // 档位守卫：subagent_lite 仅在 maxTokens > 8192 时可用（避免 lite 档反锁）。
+        if (toolName === 'subagent_lite' && exec.agent && exec.agent.options && exec.agent.options.maxTokens <= 8192) {
+          return { ok: false, error: `kix-focus: subagent_lite 需要 maxTokens > 8192（当前 ${exec.agent.options.maxTokens}）。升级档位或直接调用目标工具。` }
+
+        // 档位放行：subagent_lite 且 maxTokens > 8192 时放行（与守卫对称）
+        if (toolName === 'subagent_lite' && exec.agent && exec.agent.options && exec.agent.options.maxTokens > 8192) {
+          // 放行，继续执行（档位守卫已拦截不满足条件的情况）
+        }        }
         // 目标工具必须存在（agent 视图优先；restrict 不影响存在性检查）
         const def2 = (agentScope ? tools.get(toolName, agentScope) : null) || tools.get(toolName, undefined)
         if (!def2) {
@@ -950,3 +958,6 @@ module.exports.__internals = {
   resolveEntryCandidates,
   defaultResolvePkg,
 }
+
+
+
