@@ -1,11 +1,23 @@
 # Changelog
 
 
+## v1.2.21（2026-08-18）预算完全动态化 + 分档上调 + persona 压缩
+
+- **budgetRatioTiers 完全动态化**：resolveBudgetTokens 改为按运行时窗口分档取比例（≤128K→0.85、≤400K→0.65、≤1M→0.40、>1M→0.35），废止 150K 默认帽——absoluteCapTokens 150K 仅作无窗口回退与用户可选硬顶；窗口不可得时不再强动作。相对 1.2.20（npm）的三档 0.35/0.30/0.25+150K 硬帽，小窗口模型交接点 45.9K→111.4K（128K 窗口）、400K 窗口 120K→260K。
+- **预算分档上调**：≤128K 档 0.35→0.85、≤400K 档 0.30→0.65（用户裁决）——小窗口 handoff 固定开销占比高，尽量用满窗口、减少过早交接；斜率语义「比例随窗口递减」。
+- **persona 压缩**（-884 chars zh / -1288 en，双份同步）：删除与 gate 注入/宿主工具 schema/技能目录重复的机制复述 7 行/份（预算细节/effort 分类器/工具面清单/子代理面/资源行/pwsh 括号/三检字段枚举），保留全部行为锚点——还清「机制细节由插件强制，常驻层只放思考锚点」原则债。
+- **编排纪律新记忆**：memories 4→5（orchestration-lessons：顺序依赖链单元化/无依赖才并行/gate 触发仅整链交接或 create_goal）。
+- **kix-focus**：subagent_lite 档位守卫（maxTokens ≤8192 反锁拦截）。
+- **脱敏**：local-e2e 四脚本用户名硬编码改为脚本位置推导（$(dirname "$0")）。
+- **一致性**：kix-consistency 门禁同步 5 记忆断言；zh/en 镜像 hash 一致；双包 73/73 测试绿。
+
 ## v1.2.20（2026-08-18）定版段
 
 - **版本更新**：提升至 1.2.20，双包（zh/en）版本对齐，check-consistency 同步
 - **预算分档**：resolveBudgetTokens 实现分档（0.35/0.30/0.25）上下文比例逻辑
-- **镜像一致**：kix-guards、kix-guards.test、kix-budget、kix-budget.test 中英双包镜像 hash 一致## Unreleased（2026-08-18）WSL2 rc.7 升级实测
+- **镜像一致**：kix-guards、kix-guards.test、kix-budget、kix-budget.test 中英双包镜像 hash 一致
+
+## v1.2.21 前置（2026-08-18）WSL2 rc.7 升级实测
 
 - **升级**：WSL2 dsh `0.1.0-rc.6 → 0.1.0-rc.7`，preset 同步 + web 重启 + `DEPLOY-CHECK-ACCEPT`（28 PASS）一次通过。
 - **真实任务三连（33236 API：session.create/session.prompt，preset 自动加载）**：8×3K ENDMARK 全对、3×10K BIGMARK 全对、强制全文 cat 触发㉓急剪（prune=1 + 配对 replacement=1，ctx 19.7K）；全程零持久化错误，streak 提醒注入且模型正确响应。
@@ -14,7 +26,7 @@
 - **41 步 gate 实弹（session-1d549821，rc.7 首测）**：45 小文件逐步 cat + 3 大文件任务跨 41 步——**DENY 精确命中 turn=1 step=41**（realDenies=1，verifier A PASS），模型按 gate 指示经 subagent_lite 交接后继续，48/48 标记全收、零持久化错误；B FAIL 为模型自发优化（gate 后大文件改 tail 读，180 字符低于阈值，不剪正确）——㉓ 实弹证据由前轮账本（prune=1+配对 replacement）覆盖，两账本互补全谓词。
 - **浏览器直连 E2E**：零依赖 CDP（Node24 WebSocket + DevTools Protocol + Edge headless，本会话 Playwright MCP 桥故障的绕行）；真实用户链路全通：点「新建会话」→ 键入任务 → 点「发送消息」→ session-92df18f1 执行（b1/b2/b3.txt BROWSEMARK 全对、cat 回读、零错误）。报告 `tmp-analyze/rc7-e2e-report.md`。
 
-## Unreleased（2026-08-18）交付前整体自检（kix-budget v6 变更集）
+## v1.2.21 前置（2026-08-18）交付前整体自检（kix-budget v6 变更集）
 
 - **e2e 实弹（最强证据）**：自检会话本身作为被测对象——kix-budget 在生产环境两次实弹触发（连续 8 步只读 streak steer → 第 41 步 deny 普通工具 → subagent_lite 交接 → gate 解除 → 再触发再交接，完整双循环）；活账本（110 步 / 6 回合）replay `REPLAY-ACCEPT`、verifier 六谓词全 PASS `LIVE-E2E-ACCEPT`（2 真实 deny、37 prune 全配对 replacement、0 持久化错误）。
 - **verifier v2 根因修复**（`local-e2e/verify-budget-e2e.cjs`）：①纯 node 多帧 zstd 解压（DSH 每事件一帧级联流，单帧解压只出 203 字节假象——曾误导子代理产出「空账本」结论；免外部 CLI，Windows 无 zstd 可跑）②谓词 A 增加真实 deny 等价通道（`isError:true` + gate 文本；机制契约：回合内完成交接则 turn-stopping steer 按设计不触发）③谓词 C 只计 `isError:true` 结果——修复源码文件读取回显被误计为插件错误的结构性误报（8→0）。
@@ -23,7 +35,7 @@
 - **自检结论（三通道）**：哲学冲突 2 项 FINDING 均被裁决反证（`agent.cordis.yml:91` persona 明文契约 + `hardHandoff:false` 逃生口 + 双循环解除实测 + 触发区 41 步/150K 远超正常回合）；能力不降（gate 只路由不改可用面，白名单为文档化交接契约）；token 效率主张 A/D/effort 证据充分、B/C 补齐至充分。zh/en 全套件 + CONSISTENCY OK；Windows 安装副本与源逐字节一致。
 - **过程缺陷如实记录**：子代理两次误报（「空账本」= 单帧解压陷阱；「测试文件损坏」= 其自身编辑事故，主线程从安装副本恢复重建）——印证「子代理产出需物证裁决」纪律；lite 权限门禁拒跑全套件为按设计行为。
 
-## Unreleased（2026-08-18）kix-budget v6 主会话闭环
+## v1.2.21 前置（2026-08-18）kix-budget v6 主会话闭环
 
 - **㉑/㉕ 运行时交接 gate**：`agent/pre-step.step` 与运行时模型窗口驱动主会话状态；第 41 步或动态预算超线后，`tools/pre-execute` 拒绝普通工具，只放行 `subagent_lite`/`create_goal`；只在目标工具真实成功（含嵌套结果）后解除 gate。
 - **㉓ 结果剪裁**：单结果按宿主 `toolResultPruner.config.thresholdChars`（默认 2K）在下一步边界剪裁，兼容宿主 { pruned, charsRemoved } 返回形态；保留 compaction/prune 与 tool/result replacement 账本证据。

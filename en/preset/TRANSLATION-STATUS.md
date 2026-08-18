@@ -25,7 +25,7 @@ This edition is delivered in **phased translation**. The resident cognition laye
 | `skills/kixpower/*` (SKILL / USAGE_MANUAL / TEAM_CONVENTIONS / README / hooks / scripts / templates / tests) | ~20 | Team orchestration manual; the persona's orchestration rules are already English |
 | `skills/` ecosystem (handoff, write-a-skill, tdd, teach, grill-me, …) | 12 | On-demand skill docs |
 | `prompts/kixpower-*.prompt.md` | 5 | Slash-command flows (`/kixpower-*`) — commands work, injected flow text is Chinese |
-| `memories/*.md` | 4 | Methodology memories; read on demand |
+| `memories/*.md` | 5 | Methodology memories; read on demand |
 | `agents/kixpower-{producer,dev,qa,orchestrator,reviewer}.agent.md` | 5 | Team-role prompt templates for subagent dispatch |
 
 ## Contributing

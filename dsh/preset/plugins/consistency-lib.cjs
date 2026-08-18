@@ -381,9 +381,9 @@ function runAllZh(root) {
   return merge(
     checkPersonaBudget({ root, rel: 'dsh/preset/agent.cordis.yml', maxChars: 4500, maxEstTokens: 2600 }),
     checkPersonaBudget({ root, rel: 'en/preset/agent.cordis.yml', maxChars: 9500, maxEstTokens: 2600 }),
-    checkMemoriesCount({ root, rel: 'dsh/preset/memories', expected: 4 }),
-    checkReadmePhrase({ root, rel: 'README.md', phrase: '+ 4 记忆' }),
-    checkReadmePhrase({ root, rel: 'README.en.md', phrase: '+ 4 memories' }),
+    checkMemoriesCount({ root, rel: 'dsh/preset/memories', expected: 5 }),
+    checkReadmePhrase({ root, rel: 'README.md', phrase: '+ 5 记忆' }),
+    checkReadmePhrase({ root, rel: 'README.en.md', phrase: '+ 5 memories' }),
     ...pluginNames(root).map((name) => checkPluginPair({ root, name })),
     checkVersionPair({ root }),
     checkIdenticalSet({ root, paths: ['dsh/vision-bridge/index.js', 'en/bridge/index.js'], label: 'vision-bridge/index.js' }),

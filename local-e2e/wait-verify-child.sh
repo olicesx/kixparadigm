@@ -23,7 +23,7 @@ for i in $(seq 1 40); do
     echo "  inner $j: turn/end=$N toolcalls=$R"
     if [ "$N" -ge 1 ]; then
       echo "== child turn ended, running verifier =="
-      node /mnt/c/Users/37112/Desktop/kix-bundle/local-e2e/verify-child-e2e.cjs 8
+      node "$(dirname "$0")/verify-child-e2e.cjs" 8
       exit $?
     fi
   done

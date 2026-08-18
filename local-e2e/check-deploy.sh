@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-SOURCE_ROOT=/mnt/c/Users/37112/Desktop/kix-bundle
+SOURCE_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 GLOBAL_ROOT=$(npm root -g)
 EXPECTED_ZH=$(node -p "require('$SOURCE_ROOT/package.json').version")
 EXPECTED_EN=$(node -p "require('$SOURCE_ROOT/en/package.json').version")

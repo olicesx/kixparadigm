@@ -37,7 +37,7 @@ kixparadigm/                      ← 本 preset
 │   ├── kixparadigm.agent.md      ← 范式主入口
 │   └── kixpower-{orchestrator,producer,dev,qa,reviewer}.agent.md
 ├── prompts/                      ← 5 个 kixpower 流程（/kixpower-* 等价物）
-└── memories/                     ← 4 个方法论记忆（ai-agent-practices / ai-test-pruning / kix-review-patterns / dsh-capability-map；Copilot 语境记忆已移出）
+└── memories/                     ← 5 个方法论记忆（ai-agent-practices / ai-test-pruning / kix-review-patterns / dsh-capability-map / orchestration-lessons；Copilot 语境记忆已移出）
 ```
 
 ## VS Code Copilot → DeepSeek Harness 映射

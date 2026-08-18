@@ -8,7 +8,7 @@ for i in $(seq 1 60); do
   echo "poll $i: turn/end=$N ($(date +%H:%M:%S))"
   if [ "$N" -gt 0 ]; then
     echo "== turn ended, running verifier =="
-    node /mnt/c/Users/37112/Desktop/kix-bundle/local-e2e/verify-budget-e2e.cjs 8
+    node "$(dirname "$0")/verify-budget-e2e.cjs" 8
     exit $?
   fi
 done

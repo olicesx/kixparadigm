@@ -88,7 +88,7 @@ description: "Kixpower — AI 多智能体协作编排（v5.7）。采用 DAG �
 
 | # | 方法 | 落地段 |
 |---|---|---|
-| ㉑ | 主会话预算：运行时读取模型窗口与 `agent/pre-step.step`，上下文同时感知 usage/tokenMeter；动态预算默认封顶 150K，主会话第 41 步或上下文超线后由 `tools/pre-execute` 拒绝普通工具，必须完成 lite/goal 交接；运行时与会话深度都不可得时强动作 fail-open | `plugins/kix-budget.js` + agent.cordis.yml |
+| ㉑ | 主会话预算：运行时读取模型窗口与 `agent/pre-step.step`，上下文同时感知 usage/tokenMeter；动态预算按窗口分档（≤128K→0.85、≤400K→0.65、≤1M→0.40、>1M→0.35；150K 仅无窗口回退），主会话第 41 步或上下文超线后由 `tools/pre-execute` 拒绝普通工具，必须完成 lite/goal 交接；运行时与会话深度都不可得时强动作 fail-open | `plugins/kix-budget.js` + agent.cordis.yml |
 | ㉒ | 机械取证提示：连续 8 步只读仍提供一次 advisory；真正强制边界是主会话 step 41 gate，常见 git 写命令不再误判为只读 | `plugins/kix-budget.js` |
 | ㉓ | 工具结果急剪：宿主 pruner 字符阈值默认 2K，单结果超线在下一步边界 head/tail 替换；总上下文过半仍是兜底触发 | `plugins/kix-budget.js` + tool-result-pruner |
 | ㉔ | 激活抖动纪律：`deactivate` 入队并在 `turn-stopping` 统一 dispose，待卸载期间再次激活复用 fiber | `plugins/kix-focus.js` + 回归/E2E |
