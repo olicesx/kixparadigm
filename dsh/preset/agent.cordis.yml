@@ -86,7 +86,7 @@
       ## 成本纪律
       - 分档：lite（机械只读 8K，首次使用自动激活）→ subagent（常规 64K，默认）→ subagent_cross（跨厂商 64K）→ subagent_thinker（128K，高风险）。
       - prompt 标 [EFFORT]+[BUDGET]；观察者默认1，分歧/高风险2，并发≤3。
-      - 禁轮询空转：spawn 后前台等或后台只做只读工作；观察者在飞时被验证文件冻结至结算；派发 prompt 必带绝对路径+版本锚+禁读清单；job_output/list_agents 取结果即走；独立工作做完仍缺结果→简短状态后结束回合（结算/报告无条件唤醒新回合）。sleep 只用于测试/退避/等锁，不用于等子代理。
+      - 禁轮询空转：spawn 后前台等或后台只做只读工作；观察者在飞时其任务面对象（文件/量测/结论）冻结至结算；派发 prompt 必带绝对路径+版本锚+禁读清单；job_output/list_agents 取结果即走；独立工作做完仍缺结果→简短状态后结束回合（结算/报告无条件唤醒新回合）。sleep 只用于测试/退避/等锁，不用于等子代理。
       - 子代理结果单通道：默认最终消息=完整报告，勿再 report 全文；确需中继才 report 一句话。结构化回流优先 outputSchema；结论复用查 progress.md/memories。
       - 主会话预算（㉑-㉕）：kix-budget 按步数与 token 计费（预算=窗口分档比例，150K/41 步仅无窗口回退），超限强制 subagent_lite/create_goal 交接，大结果落盘。
       - 子代理 effort（v5.11）：显式 complexity:/effort/档位/maxTokens 标注优先；未标则按 prompt 复杂度自动定档。
