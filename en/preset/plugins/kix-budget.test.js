@@ -11,7 +11,7 @@
 //   - 预算建议：ctx ≥ 预算 → 注入一次 ㉑ 建议（优先于 streak）；纯散文
 //     回合走 turn-stopping steer 通道
 //   - 急剪：单结果超过宿主字符阈值或 ctx ≥ 50% 预算 → pre-step 调 pruneSession
-//   - 主会话 step>40/context>动态预算 → tools/pre-execute 硬门禁，lite/goal 交接解除
+//   - 主会话 context>动态预算，或动态计量不可用且 step>40 → 硬门禁，lite/goal 交接解除
 //   - turn/start 重置回合内状态
 // 运行：node plugins/kix-budget.test.js
 
@@ -92,6 +92,23 @@ check('read 工具 → 只读', I.isReadOnlyTool('read', {}) === true)
 check('bash cat → 只读', I.isReadOnlyTool('bash', { command: 'cat f' }) === true)
 check('bash npm install → 非只读', I.isReadOnlyTool('bash', { command: 'npm install' }) === false)
 check('edit 工具 → 非只读', I.isReadOnlyTool('edit', {}) === false)
+check('background lite 不完成交接', I.transitionCompletesHandoff({ name: 'subagent_lite', arguments: { run_in_background: true } }) === false)
+check('foreground lite 完成交接', I.transitionCompletesHandoff({ name: 'subagent_lite', arguments: { run_in_background: false } }) === true)
+check('proxy foreground lite 完成交接', I.transitionCompletesHandoff({ name: 'kix_capability_call', arguments: { tool: 'subagent_lite', arguments: { run_in_background: false } } }) === true)
+check('create_goal 完成交接', I.transitionCompletesHandoff({ name: 'create_goal', arguments: {} }) === true)
+check('unrelated proxy argument substring 不算 transition', I.transitionToolOf({ name: 'kix_capability_call', arguments: { tool: 'web_search', arguments: { query: 'subagent_lite' } } }) === undefined)
+check('structured status: top-level success wins over report evidence', I.structuredResultStatus({ ok: true, result: 'report cites {"ok":false}' }) === 'success')
+check('structured status: canonical isError=false is success', I.structuredResultStatus({ isError: false, content: 'report' }) === 'success')
+check('structured status: nested report object is ignored', I.structuredResultStatus({ content: [{ ok: false }] }) === 'unknown')
+check('structured status: prose containing failure sample is unknown', I.structuredResultStatus('report cites {"ok":false}') === 'unknown')
+check('structured status: complete failure envelope is failure', I.structuredResultStatus('{"ok":false,"error":"x"}') === 'failure')
+check('proxy status: canonical value envelope controls success', I.transitionResultStatus({ name: 'kix_capability_call' }, { isError: false, value: { ok: true } }) === 'success')
+check('proxy status: canonical value envelope controls failure', I.transitionResultStatus({ name: 'kix_capability_call' }, { isError: false, value: { ok: false } }) === 'failure')
+check('proxy status: real DSH canonical wrapper unlocks foreground lite', I.transitionResultStatus({ name: 'kix_capability_call' }, { isError: false, value: { ok: true, tool: 'subagent_lite', result: { isError: false, value: { kind: 'foreground', output: [] } } } }) === 'success')
+check('event status: rendered complete envelope is success', I.toolResultEventStatus({ message: { content: [{ content: [{ type: 'text', text: '{"ok":true}' }] }] } }) === 'success')
+check('rendered status: cyclic content fails closed without throw', (() => { const value = {}; value.content = value; return I.toolResultEventStatus({ message: { content: value } }) === 'unknown' })())
+check('rendered status: over-deep content fails closed without throw', (() => { let value = { text: 'plain' }; for (let i = 0; i < 20; i++) value = { content: value }; return I.toolResultEventStatus({ message: { content: value } }) === 'unknown' })())
+check('proxy status: prose without envelope stays unknown', I.transitionResultStatus({ name: 'kix_capability_call' }, { isError: false, content: [{ type: 'text', text: 'plain report' }] }) === 'unknown')
 
 // ── 派发模拟 ──────────────────────────────────────────────────────────────
 function makeAgent(sessionId, provider, model, depth = 0) {
@@ -153,7 +170,7 @@ async function main() {
   check('第 7 步只读：无建议（阈值 8 未到）', appendedText(d) === undefined)
   d = await postExec(mainAgent, 'bash', { command: 'cat file8' })
   const t8 = appendedText(d)
-  check('第 8 步只读：注入 ⑳ 建议', typeof t8 === 'string' && t8.includes('kix-budget') && t8.includes('subagent_lite'))
+  check('第 8 步只读：注入收敛建议', typeof t8 === 'string' && t8.includes('kix-budget') && t8.includes('run_code') && t8.includes('artifact'))
   d = await postExec(mainAgent, 'bash', { command: 'cat file9' })
   check('第 9 步：不重复注入', appendedText(d) === undefined)
   d = await postExec(mainAgent, 'edit', { file_path: 'x' })
@@ -171,9 +188,14 @@ async function main() {
   const tb = appendedText(d)
   check('ctx 430K ≥ 动态预算 400K：注入 gate', typeof tb === 'string' && tb.includes('kix-budget gate') && tb.includes('create_goal'))
   check('普通工具被 gate 拒绝', (await preGate(mainAgent, 'read', {})).kind === 'deny')
-  check('lite transition 放行', (await preGate(mainAgent, 'kix_capability_call', { tool: 'subagent_lite' })).kind === 'allow')
-  await postExec(mainAgent, 'kix_capability_call', { tool: 'subagent_lite' })
-  check('交接成功后解除 gate', (await preGate(mainAgent, 'read', {})).kind === 'allow')
+  check('unrelated capability_call 参数仅提及 lite 仍被 gate 拒绝', (await preGate(mainAgent, 'kix_capability_call', { tool: 'web_search', arguments: { query: 'subagent_lite usage' } })).kind === 'deny')
+  const backgroundLite = { tool: 'subagent_lite', arguments: { run_in_background: true } }
+  check('background lite transition 可启动', (await preGate(mainAgent, 'kix_capability_call', backgroundLite)).kind === 'allow')
+  await postExec(mainAgent, 'kix_capability_call', backgroundLite)
+  check('background spawn 不解除 gate', (await preGate(mainAgent, 'read', {})).kind === 'deny')
+  const foregroundLite = { tool: 'subagent_lite', arguments: { run_in_background: false } }
+  await postExec(mainAgent, 'kix_capability_call', foregroundLite, { isError: false, value: { ok: true }, content: [{ type: 'text', text: '{"ok":true}' }] })
+  check('foreground lite 完整回流后解除 gate', (await preGate(mainAgent, 'read', {})).kind === 'allow')
   const nestedAgent = makeAgent('s-nested', 'zai-coding-cn', 'glm-5.3')
   listeners['session/event'][0](nestedAgent.session, { type: 'turn/start', data: { turn: 1 } })
   await preStep(nestedAgent, 41)
@@ -181,10 +203,15 @@ async function main() {
   check('嵌套目标失败不解除 gate', (await preGate(nestedAgent, 'read', {})).kind === 'deny')
   await postExec(nestedAgent, 'kix_capability_call', { tool: 'create_goal' }, { isError: false, content: [{ type: 'text', text: '{\"ok\":true}' }] })
   check('嵌套目标成功才解除 gate', (await preGate(nestedAgent, 'read', {})).kind === 'allow')
+  const unknownProxyAgent = makeAgent('s-unknown-proxy', 'zai-coding-cn', 'glm-5.3')
+  listeners['session/event'][0](unknownProxyAgent.session, { type: 'turn/start', data: { turn: 1 } })
+  await preStep(unknownProxyAgent, 41)
+  await postExec(unknownProxyAgent, 'kix_capability_call', { tool: 'subagent_lite', arguments: { run_in_background: false } }, { isError: false, content: [{ type: 'text', text: 'plain report without envelope' }] })
+  check('proxy unknown result 不解除 gate', (await preGate(unknownProxyAgent, 'read', {})).kind === 'deny')
   const eventAgent = makeAgent('s-event-clear', 'zai-coding-cn', 'glm-5.3')
   listeners['session/event'][0](eventAgent.session, { type: 'turn/start', data: { turn: 1 } })
   await preStep(eventAgent, 41)
-  listeners['session/event'][0](eventAgent.session, { type: 'tool/call', data: { callId: 'event-1', name: 'kix_capability_call', arguments: { tool: 'subagent_lite' } } })
+  listeners['session/event'][0](eventAgent.session, { type: 'tool/call', data: { callId: 'event-1', name: 'kix_capability_call', arguments: { tool: 'subagent_lite', arguments: { run_in_background: false } } } })
   listeners['session/event'][0](eventAgent.session, { type: 'tool/result', data: { message: { source: { callId: 'event-1' }, content: [{ content: [{ type: 'text', text: '{\"ok\":true,\"tool\":\"subagent_lite\"}' }] }] } } })
   check('session event 成功配对解除 gate', (await preGate(eventAgent, 'read', {})).kind === 'allow')
 
@@ -214,9 +241,16 @@ async function main() {
   check('step 40 remains available', (await preGate(stepAgent, 'read', {})).kind === 'allow')
   await preStep(stepAgent, 41)
   const stepDeny = await preGate(stepAgent, 'grep', {})
-  check('step 41 denies ordinary tool', stepDeny.kind === 'deny' && stepDeny.reason.includes('41'))
+  check('缺 usage 计量时 step 41 兜底拒绝', stepDeny.kind === 'deny' && stepDeny.reason.includes('兜底边界 41'))
   await listeners['agent/turn-stopping'][0]({ agent: stepAgent, turn: 1 })
-  check('step gate steers once', stepAgent.steered.length === 1 && stepAgent.steered[0].source.form === 'gate')
+  check('fallback step gate steers once', stepAgent.steered.length === 1 && stepAgent.steered[0].source.form === 'gate')
+  const measuredStepAgent = makeAgent('s-steps-measured', 'zai-coding-cn', 'glm-5.3')
+  listeners['session/event'][0](measuredStepAgent.session, { type: 'turn/start', data: { turn: 1 } })
+  listeners['session/event'][0](measuredStepAgent.session, { type: 'assistant/message', data: { usage: { inputTokens: 5000 } } })
+  await preStep(measuredStepAgent, 41)
+  check('动态窗口+usage 有效且低于预算时 step 41 不拒绝', (await preGate(measuredStepAgent, 'read', {})).kind === 'allow')
+  await listeners['agent/turn-stopping'][0]({ agent: measuredStepAgent, turn: 1 })
+  check('动态计量有效时 turn-stopping 不注入 step gate', measuredStepAgent.steered.length === 0)
   const childAgent = makeAgent('s-child', 'zai-coding-cn', 'glm-5.3', 1)
   await preStep(childAgent, 41)
   check('child step 41 is not main gate', (await preGate(childAgent, 'read', {})).kind === 'allow')
@@ -224,9 +258,14 @@ async function main() {
   listeners['session/event'][0](stepRecoveryAgent.session, { type: 'turn/start', data: { turn: 1 } })
   await preStep(stepRecoveryAgent, 41)
   check('step gate recovery starts denied', (await preGate(stepRecoveryAgent, 'read', {})).kind === 'deny')
-  await postExec(stepRecoveryAgent, 'kix_capability_call', { tool: 'subagent_lite' })
+  await postExec(stepRecoveryAgent, 'kix_capability_call', { tool: 'subagent_lite', arguments: { run_in_background: false } }, { isError: false, value: { ok: true }, content: [{ type: 'text', text: '{"ok":true}' }] })
   await preStep(stepRecoveryAgent, 42)
   check('successful handoff keeps next step open', (await preGate(stepRecoveryAgent, 'read', {})).kind === 'allow')
+  const reportAgent = makeAgent('s-report-status', 'zai-coding-cn', 'glm-5.3')
+  listeners['session/event'][0](reportAgent.session, { type: 'turn/start', data: { turn: 1 } })
+  await preStep(reportAgent, 41)
+  await postExec(reportAgent, 'subagent_lite', { run_in_background: false }, { isError: false, content: [{ type: 'text', text: 'report cites {"ok":false} as evidence' }] })
+  check('foreground report 引用失败 envelope 不阻止解锁', (await preGate(reportAgent, 'read', {})).kind === 'allow')
 
   console.log('== 急剪（㉓）==')
   let pruned = 0
@@ -305,7 +344,9 @@ async function main() {
   listeners['session/event'][0](missingWindowAgent.session, { type: 'assistant/message', data: { usage: { inputTokens: 100000 } } })
   await preStep(missingWindowAgent, 1)
   await preStep(missingWindowAgent, 2)
-  check('成功但缺窗口信息不永久缓存', missingWindowCalls === 2)
+  await preStep(missingWindowAgent, 41)
+  check('成功但缺窗口信息不永久缓存', missingWindowCalls === 3)
+  check('usage 存在但窗口缺失时 step 41 仍作 fallback', (await preGate(missingWindowAgent, 'read', {})).kind === 'deny')
   const cleanup = ctx.cleanup
   if (typeof cleanup === 'function') cleanup()
   check('effect 注册了可调用 cleanup', typeof cleanup === 'function')

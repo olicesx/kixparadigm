@@ -46,10 +46,11 @@ See [INSTALL.md](INSTALL.md). Start with `/kixpower-new`.
 | Mechanical guards | `kix-guards` · `kix-consistency` | Commit budget, feature branch, force push, dangerous SQL, control-plane protection (hard deny only for irreversible damage); preset consistency write-time guard (prevents zh/en drift) |
 | Handoff discipline | `kix-orchestration` · `kix-discipline` | Subagent handoff evidence-chain checks; spec contract gate + verification gate |
 | Focus | `kix-focus` | Tool surface 85→18 resident cut + on-demand catalog & proxied execution — progressive disclosure at runtime |
+| Browser | `kix-browser` (on-demand) | Native `browser{action}` with 17 actions (open/snapshot/click/type/press/select/hover/navigate/wait/screenshot/upload/tabs/dialog) — direct playwright-core, CDP attach takes over your real browser (login state preserved), session persists across calls; zero resident-schema tax (capability_call auto-mounts on first use); replaces the MCP five-hop chain |
 | Cost & routing | `kix-cost` · `kix-route` | Subagent thinking-effort normalization; sentinel model names → runtime-available routes |
 | Top-up | `kix-commands` · `dsh-vision-bridge` · `kix-stalled` (opt-in) | `/kixpower-*` native commands; vision for blind lead models; stalled-Sprint detection |
 
-Preset in full: persona + 18 skills + 6 roles + 5 commands + 5 memories. Per-plugin mechanics and evolution: [DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md), [CHANGELOG.md](CHANGELOG.md).
+The preset includes persona, skills, team roles, native commands, and methodology memories; directories are authoritative. Per-plugin mechanics and evolution: [DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md), [CHANGELOG.md](CHANGELOG.md).
 
 ## Repo layout
 
@@ -68,7 +69,7 @@ kixparadigm/
 
 ```bash
 npm test                                    # consistency guard + full plugin regression (counts self-reported by test output, not maintained in this doc)
-node scripts/check-dsh-consistency.cjs      # persona budget/doc counts/bilingual consistency guard
+node scripts/check-dsh-consistency.cjs      # persona budget/distribution mirrors/bilingual consistency guard
 kixparadigm doctor                          # install self-check
 ```
 

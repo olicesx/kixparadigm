@@ -1,6 +1,6 @@
 {
   "name": "kixparadigm",
-  "version": "1.2.22",
+  "version": "1.2.23",
   "description": "kixparadigm — AI 自编排最小范式（认知层常驻）+ kixpower 多智能体编排 + DSH 一键导入（preset + vision-bridge + 门禁插件）",
   "license": "MIT",
   "author": "kix (olicesx)",
@@ -29,7 +29,6 @@
     "instructions/",
     "prompts/",
     "memories/",
-    "plugins/",
     "INSTALL.md",
     "install.ps1",
     "install.sh",
@@ -42,7 +41,7 @@
     "test:installer": "node --test scripts/install-lib.test.js",
     "test:consistency": "node scripts/check-dsh-consistency.cjs",
     "test:vision": "node --test dsh/vision-bridge/test.js",
-    "test": "npm run test:installer && node scripts/check-dsh-consistency.cjs && node --test dsh/vision-bridge/test.js && node dsh/preset/plugins/kix-guards.test.js && node dsh/preset/plugins/kix-commands.test.js && node dsh/preset/plugins/kix-cost.test.js && node dsh/preset/plugins/kix-route.test.js && node dsh/preset/plugins/kix-discipline.test.js && node dsh/preset/plugins/kix-orchestration.test.js && node dsh/preset/plugins/kix-focus.test.js && node dsh/preset/plugins/kix-consistency.test.js && node dsh/preset/plugins/kix-budget.test.js",
+    "test": "npm run test:installer && node scripts/check-dsh-consistency.cjs && node --test dsh/vision-bridge/test.js && cd dsh/preset/plugins && node --test",
     "verify:vision": "node scripts/verify-vision-bridge-resolution.cjs",
     "verify:guards": "node scripts/verify-guards.js"
   },

@@ -15,7 +15,7 @@
 //   - session/event：从 assistant/message.usage 记录每会话最新上下文
 //     （inputTokens+cacheReadTokens）；turn/start 重置回合内计数；tool/result
 //     置脏标记（下一步边界才测量，O(surface) 不空转）。
-//   - agent/pre-step（waterfall）：读取真实 turn/step，超过 40 步或动态预算就标记交接；新结果按宿主 pruner 字符阈值剪裁
+//   - agent/pre-step（waterfall）：动态上下文超预算即交接；窗口或 usage 计量缺失时才以 40 步作硬兜底；新结果按宿主 pruner 字符阈值剪裁
 //     调 toolResultPruner.pruneSession —— 单结果超阈值立即剪，过半预算仍作为兜底
 //     （㉓）。原始事件由宿主 session surface 保留，插件不自行写文件。
 //   - tools/pre-execute：主会话 handoffRequired 时拒绝普通工具，只放行 lite/goal 交接；tools/post-execute 保留 streak 提醒
@@ -63,7 +63,7 @@ const DEFAULTS = {
   budgetRatio: 0.35,
   absoluteCapTokens: 150000, // 无窗口回退值 + 用户可选硬顶（显式配置才截断分档值）
   streakReadOnly: 8,
-  turnStepLimit: 40,
+  turnStepLimit: 40, // 动态窗口或上下文计量不可用时的零计量 fallback
   resultThresholdChars: 2048,
   pruneRatio: 0.5,
   hardHandoff: true,
@@ -210,11 +210,77 @@ function transitionToolOf(exec) {
     try { args = JSON.parse(args) } catch { args = undefined }
   }
   const target = args && typeof args === 'object' ? String(args.tool || '') : ''
-  if (target === 'subagent_lite' || target === 'create_goal') return target
-  const raw = JSON.stringify(exec)
-  if (raw.includes('subagent_lite')) return 'subagent_lite'
-  if (raw.includes('create_goal')) return 'create_goal'
-  return undefined
+  return target === 'subagent_lite' || target === 'create_goal' ? target : undefined
+}
+
+function transitionCompletesHandoff(exec) {
+  const transition = transitionToolOf(exec)
+  if (transition === 'create_goal') return true
+  if (transition !== 'subagent_lite') return false
+
+  let args = exec && (exec.arguments ?? exec.args)
+  if (typeof args === 'string') {
+    try { args = JSON.parse(args) } catch { args = undefined }
+  }
+  if (String(exec && exec.name || '') === 'kix_capability_call') {
+    args = args && typeof args === 'object' ? args.arguments : undefined
+  }
+  return Boolean(args && typeof args === 'object' && args.run_in_background === false)
+}
+
+// 只把完整 JSON envelope 当作状态；报告正文引用 {"ok":false} 不是执行失败。
+function structuredResultStatus(value) {
+  if (value == null) return 'unknown'
+  if (typeof value === 'string') {
+    const text = value.trim()
+    if (!((text.startsWith('{') && text.endsWith('}')) || (text.startsWith('[') && text.endsWith(']')))) return 'unknown'
+    try { return structuredResultStatus(JSON.parse(text)) } catch { return 'unknown' }
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) return 'unknown'
+  if (value.isError === true || value.ok === false) return 'failure'
+  if (value.isError === false || value.ok === true) return 'success'
+  return 'unknown'
+}
+
+function renderedEnvelopeStatus(content, seen = new Set(), depth = 0) {
+  if (depth > 12) return 'unknown'
+  if (content && typeof content === 'object') {
+    if (seen.has(content)) return 'unknown'
+    seen.add(content)
+  }
+  const items = Array.isArray(content) ? content : [content]
+  let found = 'unknown'
+  for (const item of items) {
+    if (item == null) continue
+    const direct = typeof item === 'string'
+      ? structuredResultStatus(item)
+      : typeof item === 'object' && typeof item.text === 'string'
+        ? structuredResultStatus(item.text)
+        : 'unknown'
+    if (direct === 'failure') return 'failure'
+    if (direct === 'success') found = 'success'
+    if (typeof item === 'object' && item.content !== undefined) {
+      const nested = renderedEnvelopeStatus(item.content, seen, depth + 1)
+      if (nested === 'failure') return 'failure'
+      if (nested === 'success') found = 'success'
+    }
+  }
+  return found
+}
+
+function toolResultEventStatus(data) {
+  const direct = structuredResultStatus(data)
+  if (direct !== 'unknown') return direct
+  return renderedEnvelopeStatus(data && data.message && data.message.content)
+}
+
+function transitionResultStatus(exec, result) {
+  const direct = structuredResultStatus(result)
+  if (direct === 'failure') return direct
+  if (String(exec && exec.name || '') !== 'kix_capability_call') return direct
+  const valueStatus = structuredResultStatus(result && result.value)
+  if (valueStatus !== 'unknown') return valueStatus
+  return renderedEnvelopeStatus(result && result.content)
 }
 
 function isHandoffDiscovery(exec) {
@@ -232,8 +298,8 @@ function isHandoffDiscovery(exec) {
 function handoffText(st) {
   const trigger = st.handoffReason === 'context'
     ? `上下文已达到动态预算 ${Math.round(st.handoffBudget / 1000)}K tokens`
-    : `当前回合已达到 ${st.handoffStep} 步`
-  return `kix-budget gate: 主会话 ${trigger}。机械/长任务交接是强制边界：下一步只能调用 subagent_lite 或 create_goal（可先用 capability_search 发现参数），不要继续主线程逐项取证；判断留在主线程。交接成功后 gate 自动解除。`
+    : `动态上下文计量不可用，当前回合已达到兜底边界 ${st.handoffStep} 步`
+  return `kix-budget gate: 主会话 ${trigger}。机械/长任务交接是强制边界：下一步只能调用 foreground subagent_lite（run_in_background:false）或 create_goal（可先用 capability_search 发现参数），不要继续主线程逐项取证；判断留在主线程。后台 spawn 不算完成，完整回流或 goal 交接后 gate 自动解除。`
 }
 
 function handoffDenyText(st) {
@@ -259,12 +325,12 @@ function makeUserMessage(text, form = 'notice') {
 }
 
 function streakAdviceText(n) {
-  return `kix-budget: 主线程已连续 ${n} 步只读检索/核对（实测：orchestrator 逐文件通读是最大燃烧源，⑳）。剩余机械取证请改派 subagent_lite（并行 ≤2，让其落盘只回结论），判断与编排留在主线程。本回合不再重复提醒。`
+  return `kix-budget: 主线程已连续 ${n} 步只读检索/核对；这是收敛建议，不是交接完成。已知文件的机械并发/聚合用 run_code；仍需语义检索或判断时改派 subagent_lite（并行 ≤2）。小结果由最终消息完整回流；仅大结果写 artifact 并回路径+结论。判断与编排留在主线程，停止继续开新任务面。本回合不再重复提醒。`
 }
 
 function budgetAdviceText(ctxTokens, budgetTokens) {
   const k = (n) => Math.round(n / 1000)
-  return `kix-budget: 上下文已达 ${k(ctxTokens)}K tokens（本会话动态预算 ${k(budgetTokens)}K；窗口由运行时模型目录解析）。① 后续大块输出落盘、只回文件路径+结论 ② 未完机械步骤改派 subagent_lite ③ 本回合收尾，长任务用 goal 续跑或 /kixpower-continue。本回合不再重复提醒。`
+  return `kix-budget: 上下文已达 ${k(ctxTokens)}K tokens（本会话动态预算 ${k(budgetTokens)}K；窗口由运行时模型目录解析）。① 已知文件机械聚合用 run_code，语义检索改派 subagent_lite ② 小结果最终消息完整回流，仅大结果写 artifact 并回路径+结论 ③ 本回合收尾，长任务用 goal 或 /kixpower-continue。本回合不再重复提醒。`
 }
 
 // ── 插件 ───────────────────────────────────────────────────────────────────
@@ -287,22 +353,29 @@ module.exports = {
       return st
     }
 
-    // 预算解析（provider/model → contextWindow，缓存；失败回退绝对帽）
+    // 预算解析（provider/model → contextWindow，缓存；失败回退绝对帽）。
+    // dynamic 标记让 step hard gate 只在窗口或上下文计量不可用时兜底。
     const windowCache = new Map()
-    async function budgetFor(agent) {
+    async function budgetStateFor(agent) {
+      const fallback = { tokens: resolveBudgetTokens(undefined, cfg), dynamic: false }
       const llm = ctx.get('llm')
       const target = agent && agent.session ? routedTargetOf(agent.session) : undefined
-      if (!llm || !target) return resolveBudgetTokens(undefined, cfg)
+      if (!llm || !target) return fallback
       const key = target.provider + '/' + target.model
-      if (windowCache.has(key)) return resolveBudgetTokens(windowCache.get(key), cfg)
+      if (windowCache.has(key)) return { tokens: resolveBudgetTokens(windowCache.get(key), cfg), dynamic: true }
       try {
         const info = await llm.resolveModelInfo(target.provider, target.model)
         const win = Number(info && info.context && info.context.contextWindow)
         if (Number.isFinite(win) && win > 0) windowCache.set(key, win)
       } catch {
-        return resolveBudgetTokens(undefined, cfg)
+        return fallback
       }
-      return resolveBudgetTokens(windowCache.has(key) ? windowCache.get(key) : undefined, cfg)
+      return windowCache.has(key)
+        ? { tokens: resolveBudgetTokens(windowCache.get(key), cfg), dynamic: true }
+        : fallback
+    }
+    async function budgetFor(agent) {
+      return (await budgetStateFor(agent)).tokens
     }
 
     function contextTokensFor(session, st) {
@@ -339,8 +412,14 @@ module.exports = {
         return
       }
       if (event.type === 'tool/call') {
-        const transition = transitionToolOf({ name: d.name, arguments: d.arguments })
-        if (transition && d.callId) transitionByCall.set(String(session.id) + ':' + String(d.callId), transition)
+        const transitionExec = { name: d.name, arguments: d.arguments }
+        const transition = transitionToolOf(transitionExec)
+        if (transition && d.callId) {
+          transitionByCall.set(String(session.id) + ':' + String(d.callId), {
+            transition,
+            completesHandoff: transitionCompletesHandoff(transitionExec),
+          })
+        }
         return
       }
       if (event.type === 'tool/result') {
@@ -352,9 +431,8 @@ module.exports = {
         const callId = d.message && d.message.source && d.message.source.callId
         const transition = callId && transitionByCall.get(String(session.id) + ':' + String(callId))
         if (transition) {
-          const normalized = JSON.stringify(d).replace(/\\/g, '')
-          const failed = normalized.includes('\"isError\":true') || normalized.includes('\"ok\":false')
-          if (st.handoffRequired && !failed && normalized.includes('\"ok\":true')) satisfyHandoff(st)
+          const status = toolResultEventStatus(d)
+          if (st.handoffRequired && transition.completesHandoff && status === 'success') satisfyHandoff(st)
           transitionByCall.delete(String(session.id) + ':' + String(callId))
         }
       }
@@ -371,22 +449,21 @@ module.exports = {
           const step = Number(payload && payload.step)
           if (isMainAgent(agent) && Number.isFinite(step)) {
             st.turnSteps = Math.max(st.turnSteps, step)
+            const contextTokens = contextTokensFor(session, st)
+            const budgetState = await budgetStateFor(agent)
+            if (!st.handoffRequired && !st.handoffSatisfied && contextTokens > 0 && contextTokens >= budgetState.tokens) {
+              st.handoffRequired = true
+              st.handoffReason = 'context'
+              st.handoffStep = step
+              st.handoffBudget = budgetState.tokens
+            }
+            const hasDynamicMeasurement = budgetState.dynamic && contextTokens > 0
             const limit = Number(cfg.turnStepLimit) || DEFAULTS.turnStepLimit
-            if (cfg.hardHandoff !== false && step > limit && !st.handoffRequired && !st.handoffSatisfied) {
+            if (cfg.hardHandoff !== false && !hasDynamicMeasurement && step > limit && !st.handoffRequired && !st.handoffSatisfied) {
               st.handoffRequired = true
               st.handoffReason = 'steps'
               st.handoffStep = step
-              st.handoffBudget = 0
-            }
-            const contextTokens = contextTokensFor(session, st)
-            if (!st.handoffRequired && !st.handoffSatisfied && contextTokens > 0) {
-              const budget = await budgetFor(agent)
-              if (contextTokens >= budget) {
-                st.handoffRequired = true
-                st.handoffReason = 'context'
-                st.handoffStep = step
-                st.handoffBudget = budget
-              }
+              st.handoffBudget = budgetState.tokens
             }
           }
 
@@ -448,13 +525,10 @@ module.exports = {
       else st.streak = 0
 
       const transition = transitionToolOf(exec)
+      const completesHandoff = transitionCompletesHandoff(exec)
       const outcome = await next()
-      const resultJson = result === undefined ? '' : JSON.stringify(result)
-      const outcomeJson = outcome === undefined ? '' : JSON.stringify(outcome)
-      const resultNormalized = resultJson.replace(/\\/g, '')
-      const outcomeNormalized = outcomeJson.replace(/\\/g, '')
-      const failed = Boolean(result && result.isError) || Boolean(outcome && outcome.isError) || resultNormalized.includes('\"isError\":true') || resultNormalized.includes('\"ok\":false') || outcomeNormalized.includes('\"isError\":true') || outcomeNormalized.includes('\"ok\":false')
-      if (st.handoffRequired && transition && !failed) satisfyHandoff(st)
+      const completed = transitionResultStatus(exec, result) === 'success'
+      if (st.handoffRequired && transition && completesHandoff && completed) satisfyHandoff(st)
       try {
         const contextTokens = contextTokensFor(session, st)
         if (isMainAgent(agent) && !st.handoffRequired && !st.handoffSatisfied && contextTokens > 0) {
@@ -487,19 +561,22 @@ module.exports = {
       const st = stateFor(session.id)
       try {
         const contextTokens = contextTokensFor(session, st)
-        const budget = await budgetFor(agent)
+        const budgetState = await budgetStateFor(agent)
         if (cfg.hardHandoff !== false && !st.handoffRequired && !st.handoffSatisfied) {
-          const limit = Number(cfg.turnStepLimit) || DEFAULTS.turnStepLimit
-          if (st.turnSteps > limit) {
-            st.handoffRequired = true
-            st.handoffReason = 'steps'
-            st.handoffStep = st.turnSteps
-            st.handoffBudget = budget
-          } else if (contextTokens >= budget) {
+          if (contextTokens > 0 && contextTokens >= budgetState.tokens) {
             st.handoffRequired = true
             st.handoffReason = 'context'
             st.handoffStep = st.turnSteps
-            st.handoffBudget = budget
+            st.handoffBudget = budgetState.tokens
+          } else {
+            const hasDynamicMeasurement = budgetState.dynamic && contextTokens > 0
+            const limit = Number(cfg.turnStepLimit) || DEFAULTS.turnStepLimit
+            if (!hasDynamicMeasurement && st.turnSteps > limit) {
+              st.handoffRequired = true
+              st.handoffReason = 'steps'
+              st.handoffStep = st.turnSteps
+              st.handoffBudget = budgetState.tokens
+            }
           }
         }
         if (st.handoffRequired && !st.handoffSteered && typeof agent.steer === 'function') {
@@ -522,6 +599,10 @@ module.exports = {
     resultTextChars,
     prunerThreshold,
     transitionToolOf,
+    transitionCompletesHandoff,
+    structuredResultStatus,
+    toolResultEventStatus,
+    transitionResultStatus,
     isHandoffDiscovery,
     handoffText,
     handoffDenyText,

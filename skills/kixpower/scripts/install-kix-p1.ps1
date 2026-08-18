@@ -9,23 +9,18 @@
 #   pwsh -ExecutionPolicy Bypass -File .\skills\kixpower\scripts\install-kix-p1.ps1
 #
 # 安装内容（幂等，可重复运行）：
-#   1. 复制 plugins/kix-commands.js → ~/.dsh/.agent-presets/kixparadigm/plugins/
+#   1. 从 dsh/preset/plugins/ 复制 kix-commands.js → ~/.dsh/.agent-presets/kixparadigm/plugins/
 #   2. 在 agent.cordis.yml 追加挂载行（已存在则跳过）
-#   3. 同步源仓库 plugins/kix-guards.js + kix-guards.test.js（v2 接线补全，
-#      2026-08-15 起纳入源仓库；agent.cordis.yml 的 kix-guards 挂载行 preset 自带）
+#   3. 从同一 canonical source 同步 kix-guards.js + kix-guards.test.js
 #   4. 打印验证指引
 
 $ErrorActionPreference = 'Stop'
 
-$RepoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath))
-# 上面: skills/kixpower/scripts/install-kix-p1.ps1 -> skills/kixpower/scripts -> skills/kixpower -> skills -> repo
-# 修正：install 脚本在 skills/kixpower/scripts/ 下，repo 根 = 上 3 级
-$RepoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath))
-$RepoRoot = Split-Path -Parent $RepoRoot
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 
 $PresetDir = Join-Path $env:USERPROFILE '.dsh\.agent-presets\kixparadigm'
 $PluginsDir = Join-Path $PresetDir 'plugins'
-$SrcPlugin = Join-Path $RepoRoot 'skills\kixpower\scripts\kix-commands.js'
+$SrcPlugin = Join-Path $RepoRoot 'dsh\preset\plugins\kix-commands.js'
 $DstPlugin = Join-Path $PluginsDir 'kix-commands.js'
 $CordisYml = Join-Path $PresetDir 'agent.cordis.yml'
 
@@ -60,17 +55,17 @@ if ($content -match '(?m)^\s*- id: kix-commands\s*$') {
   Write-Host '==> [2/3] agent.cordis.yml 已追加 kix-commands 挂载行'
 }
 
-# 3. 同步 kix-guards（v2，2026-08-15 起源仓库 plugins/ 为准；幂等）
-$SrcGuards = Join-Path $RepoRoot 'plugins\kix-guards.js'
-$SrcGuardsTest = Join-Path $RepoRoot 'plugins\kix-guards.test.js'
+# 3. 同步 kix-guards（dsh/preset/plugins 是唯一实现；幂等）
+$SrcGuards = Join-Path $RepoRoot 'dsh\preset\plugins\kix-guards.js'
+$SrcGuardsTest = Join-Path $RepoRoot 'dsh\preset\plugins\kix-guards.test.js'
 if (Test-Path $SrcGuards) {
   Copy-Item -Path $SrcGuards -Destination (Join-Path $PluginsDir 'kix-guards.js') -Force
   if (Test-Path $SrcGuardsTest) {
     Copy-Item -Path $SrcGuardsTest -Destination (Join-Path $PluginsDir 'kix-guards.test.js') -Force
   }
-  Write-Host '==> [3/3] kix-guards（v2）已同步（源仓库 plugins/ 为准）'
+  Write-Host '==> [3/3] kix-guards 已从 dsh/preset/plugins 同步'
 } else {
-  Write-Host '==> [3/3] 源仓库无 plugins/kix-guards.js，跳过（保留安装副本现有版本）'
+  Write-Host '==> [3/3] canonical kix-guards.js 缺失，跳过（保留安装副本现有版本）'
 }
 
 Write-Host ''
