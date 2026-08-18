@@ -60,23 +60,20 @@ pwsh -File .\scripts\sync-dsh-preset.ps1 -Force
 - `preset.yml` — roster 显示元数据（name/description）
 - `DSH-ADAPTATION.md` — **权威机制映射**（Copilot 工具名 → DSH、门禁等价物、团队分派、
   跨厂商、vision、PTC §9）；kix 原始文档冲突时以此为准
-- `skills/`（17 个）— kixparadigm / kixpower / handoff / write-a-skill /
-  improve-codebase-architecture + 12 个通用方法论（tdd/teach/grill-me/…）
-- `agents/`（6 个）— kixpower 团队角色（subagent 分派时的 prompt 模板）
-- `prompts/`（5 个）— /kixpower-* 流程（kix-commands 插件注入用）
+- `skills/` — kixparadigm / kixpower / handoff / write-a-skill / improve-codebase-architecture 与通用方法论
+- `agents/` — kixpower 团队角色（subagent 分派时的 prompt 模板）
+- `prompts/` — /kixpower-* 流程（kix-commands 插件注入用）
 - `instructions/` — 核心指令原件（persona 已内置同源内容）
-- `memories/`（5 个）— 方法论记忆：ai-agent-practices / ai-test-pruning / kix-review-patterns / dsh-capability-map / orchestration-lessons.md（kix×DSH 任务先查）；Copilot 语境记忆（vscode-copilot-customization / tech-patterns / kixpower-v39-legacy-notes）已移出（2026-08-17，规则是负债）
+- `memories/` — 方法论记忆（目录清单为准；kix×DSH 任务先查）；Copilot 语境记忆已移出
 - `plugins/` — kix-guards.js（机械门禁监听器）+ kix-cost.js（成本纪律）+ kix-route.js（跨厂商路由）+ kix-commands.js（原生命令注册）+ kix-stalled.js（opt-in）+ 测试
 
 ## 验证
 
 ```powershell
 npm test                                        # 一致性守护 + 全插件回归（zh）
-node scripts\check-dsh-consistency.cjs          # persona 预算 / 文档计数 / zh-en 插件一致性
-node --test dsh\vision-bridge\test.js           # vision-bridge 纯逻辑回归 6 用例
-node scripts\run-plugin-tests.cjs               # 全部插件测试（自动发现 *.test.js，逐文件直跑：
-                                                #   guards 219 / commands 6 / cost 28 / route 68 /
-                                                #   discipline 68 / orchestration 77 / focus 102 组断言；
+node scripts\check-dsh-consistency.cjs          # persona 预算 / distribution mirrors / zh-en 插件一致性
+node --test dsh\vision-bridge\test.js           # vision-bridge 纯逻辑回归
+(cd dsh\preset\plugins; node --test)           # 全部插件测试（Node 20+ 自动发现；
                                                 #   单文件仍可 node .\dsh\preset\plugins\<name>.test.js 直跑）
 ```
 

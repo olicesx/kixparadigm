@@ -133,6 +133,12 @@ const CAPABILITY_GROUPS = [
     tools: ['mcp__semgrep__'],
   },
   {
+    id: 'browser-native',
+    title: '原生浏览器自动化（kix-browser 插件，17 action：open/snapshot/click/type/press/select/hover/back/forward/reload/wait/screenshot/upload/tabs/dialog/text/close）',
+    hint: '默认未挂载（渐进披露），首次使用自动激活：kix_capability_call { tool: "browser", arguments: { action: "open", url: "https://…" } }，激活后下一轮起直呼；CDP attach 真实浏览器优先（KIX_BROWSER_CDP）',
+    tools: ['browser'],
+  },
+  {
     id: 'orchestration',
     title: '重型编排（workflow/goal）',
     hint: 'workflow 已挂载（直接可用，批量扇出/多阶段编排；未挂载的部署需取消 disabled 重启）；goal 默认未挂载，**首次使用自动激活**（kix_capability_call { tool: create_goal } 即挂载并执行，或 kix_tool_activate { tool: goal } 预激活）',
@@ -309,16 +315,23 @@ function makeUserMessage(text) {
 // 经 kix_tool_activate 运行时挂载（ctx.plugin），下一轮请求即直呼可用；
 // kix_tool_deactivate 卸载。避免"全禁 = 能力消失"与"常驻 = 每轮占 schema"
 // 两极，语义对齐 skill 的按需发现。
+const CHILD_MAX_DEPTH = 2
+const CHILD_TOOL_DENY = ['exit_plan_mode', 'subagent', 'subagent_cross', 'interrupt_agent', 'send_message', 'list_agents', 'ask_user_question', 'kix_tool_activate', 'kix_tool_deactivate']
 const ACTIVATABLE_TOOLS = {
   workflow: { package: '@deepseek-ai/dsh-tool-workflow', config: {} },
   goal: { package: '@deepseek-ai/dsh-tool-goal', config: {} },
+  // 2026-08-18 渐进披露扩容：kix-browser（本地插件，17 action 浏览器自动化）
+  // 默认不装载（不占常驻 schema）；pkgPath 相对本插件目录解析（同 preset
+  // plugins/ 部署，rsync 复制非 symlink，__dirname 即真实路径）。首次使用
+  // 经 kix_capability_call 自动挂载，下一轮直呼；kix_tool_deactivate 卸载。
+  browser: { pkgPath: 'kix-browser.js', config: {} },
   // 2026-08-16 渐进面（方案 A）细分档位默认 disabled；2026-08-17 决策升级为
   // 首次使用自动激活（kix_capability_call 代理即挂载，见 capability_call）。
   // config 与 agent.cordis.yml 对应行保持一致（toolName 决定注册的工具名）。
   subagent_lite: {
     package: '@deepseek-ai/dsh-tool-subagent',
     config: {
-      provider: 'spawn', toolName: 'subagent_lite', backgroundMode: 'continuable',
+      provider: 'spawn', toolName: 'subagent_lite', backgroundMode: 'continuable', maxDepth: CHILD_MAX_DEPTH,
       persona: `You are a fast mechanical subagent for strictly mechanical subtasks:
 reading files, searching, simple checks and verification. Do exactly
 what the task asks. No extra analysis, no suggestions, no speculation.
@@ -335,21 +348,24 @@ Return concise factual results with file:line evidence when relevant.`,
   subagent_thinker: {
     package: '@deepseek-ai/dsh-tool-subagent',
     config: {
-      provider: 'spawn', toolName: 'subagent_thinker', backgroundMode: 'continuable',
+      provider: 'spawn', toolName: 'subagent_thinker', backgroundMode: 'continuable', maxDepth: CHILD_MAX_DEPTH,
+      toolFilter: { deny: [...CHILD_TOOL_DENY] },
       agentOptions: { model: 'kix-route:thinker', maxTokens: 131072 },
     },
   },
   subagent_vision: {
     package: '@deepseek-ai/dsh-tool-subagent',
     config: {
-      provider: 'spawn', toolName: 'subagent_vision', backgroundMode: 'continuable',
+      provider: 'spawn', toolName: 'subagent_vision', backgroundMode: 'continuable', maxDepth: CHILD_MAX_DEPTH,
+      toolFilter: { deny: [...CHILD_TOOL_DENY] },
       agentOptions: { model: 'kix-route:vision', maxTokens: 4096 },
     },
   },
   subagent_fork: {
     package: '@deepseek-ai/dsh-tool-subagent',
     config: {
-      provider: 'fork', toolName: 'subagent_fork', backgroundMode: 'continuable',
+      provider: 'fork', toolName: 'subagent_fork', backgroundMode: 'continuable', maxDepth: CHILD_MAX_DEPTH,
+      toolFilter: { deny: [...CHILD_TOOL_DENY] },
       agentOptions: { maxTokens: 65536 },
     },
   },
@@ -359,7 +375,7 @@ Return concise factual results with file:line evidence when relevant.`,
   subagent_reviewer: {
     package: '@deepseek-ai/dsh-tool-subagent',
     config: {
-      provider: 'spawn', toolName: 'subagent_reviewer', backgroundMode: 'continuable',
+      provider: 'spawn', toolName: 'subagent_reviewer', backgroundMode: 'continuable', maxDepth: CHILD_MAX_DEPTH,
       persona: `You are kixpower-reviewer: an independent read-only adversarial reviewer.
 Hard constraints:
 - Read-only: never edit, commit, push, or publish.
@@ -377,6 +393,7 @@ before any claim is accepted):
 Return structured output: for each claim, mechanism/contract/impact
 status (confirmed|disputed|unknown) with evidence, plus a \`rebuttal\`
 field with the author's most likely counterargument.`,
+      toolFilter: { deny: [...CHILD_TOOL_DENY] },
       agentOptions: { maxTokens: 65536 },
     },
   },
@@ -386,7 +403,7 @@ field with the author's most likely counterargument.`,
   subagent_qa: {
     package: '@deepseek-ai/dsh-tool-subagent',
     config: {
-      provider: 'spawn', toolName: 'subagent_qa', backgroundMode: 'continuable',
+      provider: 'spawn', toolName: 'subagent_qa', backgroundMode: 'continuable', maxDepth: CHILD_MAX_DEPTH,
       persona: `You are kixpower-qa (Ivy): acceptance testing, bug filing, and QA
 signoff — never business source code.
 Hard constraints:
@@ -405,13 +422,14 @@ Hard constraints:
   test/fixture after verification → REVERIFY_REQUIRED, never a
   direct PASS; CONDITIONAL only means CI-pending.
 Report with tables: gate results / verdict / issue list.`,
+      toolFilter: { deny: [...CHILD_TOOL_DENY] },
       agentOptions: { maxTokens: 65536 },
     },
   },
   subagent_dev: {
     package: '@deepseek-ai/dsh-tool-subagent',
     config: {
-      provider: 'spawn', toolName: 'subagent_dev', backgroundMode: 'continuable',
+      provider: 'spawn', toolName: 'subagent_dev', backgroundMode: 'continuable', maxDepth: CHILD_MAX_DEPTH,
       persona: `You are kixpower-dev (Nova frontend / Sage backend / Milo design —
 one contract, three hats): the coding member on the CEO team.
 Hard constraints:
@@ -430,6 +448,7 @@ Hard constraints:
 - Blocked → report the blocker with facts (failure mode + root
   cause); do not improvise around it.
 Report: what changed / gate results / known issues, tables over prose.`,
+      toolFilter: { deny: [...CHILD_TOOL_DENY] },
       agentOptions: { maxTokens: 65536 },
     },
   },
@@ -834,7 +853,11 @@ module.exports = {
         return { ok: true, reused: true, undeferred: true }
       }
       try {
-        const pkg = resolvePkg(entry.package)
+        // pkgPath：本地插件相对本文件目录解析（同 preset 部署形态）；
+        // package：npm 包名走候选根解析（symlink 部署兼容）。
+        const pkg = entry.pkgPath
+          ? require(require('path').resolve(__dirname, entry.pkgPath))
+          : resolvePkg(entry.package)
         const fiber = await ctx.plugin(pkg, entry.config)
         if (fiber.state !== 2 /* ACTIVE */) {
           fiber.dispose().catch(() => {})
@@ -854,11 +877,11 @@ module.exports = {
       // 2026-08-17 枚举 bug 修复：描述枚举曾漏 subagent_reviewer（集合有、
       // 描述无——模型照描述行事即永远激活不了它）；现与 ACTIVATABLE_TOOLS
       // 键集合同步（测试有回归防线），新增 qa/dev 一并列入。
-      description: '显式预激活一个默认未挂载的 scope 工具（细分档位与 goal）：goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev；qa/dev/reviewer = 编曲成员菜单（Ivy 验收签署 / Nova·Sage·Milo 三合一编码 / 反方辩护三层只读审查）。2026-08-17 起这些工具首次使用时已由 kix_capability_call 自动激活，本工具仅用于想提前挂载的场景（jobs 已常驻、无需激活）。workflow 依赖 isolate realm 服务、动态激活不可用（激活会报错，直接挂载可用）。运行时挂载其工具包，激活后下一轮请求即可直接调用（无需代理）。用 kix_tool_deactivate 卸载。',
+      description: '显式预激活一个默认未挂载的 scope 工具（细分档位与 goal）：goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev / browser（本地 kix-browser 插件，17 action 浏览器自动化，pkgPath 解析）；qa/dev/reviewer = 编曲成员菜单（Ivy 验收签署 / Nova·Sage·Milo 三合一编码 / 反方辩护三层只读审查）。2026-08-17 起这些工具首次使用时已由 kix_capability_call 自动激活，本工具仅用于想提前挂载的场景（jobs 已常驻、无需激活）。workflow 依赖 isolate realm 服务、动态激活不可用（激活会报错，直接挂载可用）。运行时挂载其工具包，激活后下一轮请求即可直接调用（无需代理）。用 kix_tool_deactivate 卸载。',
       parameters: {
         type: 'object',
         properties: {
-          tool: { type: 'string', description: '要激活的工具名（goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev）' },
+          tool: { type: 'string', description: '要激活的工具名（goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev / browser）' },
         },
         required: ['tool'],
       },
@@ -883,11 +906,11 @@ module.exports = {
 
     const disposeDeactivate = tools.register({
       name: 'kix_tool_deactivate',
-      description: '卸载一个已激活的 scope 工具（goal/subagent 细分档位含编曲成员 qa/dev/reviewer）。v5.10 起为延迟卸载：入队后本回合内仍可直呼，回合结束后才真正卸载（工具面中途变更会打断请求前缀缓存）。jobs 已常驻、无需也卸载不了。',
+      description: '卸载一个已激活的 scope 工具（goal/subagent 细分档位含编曲成员 qa/dev/reviewer，及 browser 浏览器插件）。v5.10 起为延迟卸载：入队后本回合内仍可直呼，回合结束后才真正卸载（工具面中途变更会打断请求前缀缓存）。jobs 已常驻、无需也卸载不了。',
       parameters: {
         type: 'object',
         properties: {
-          tool: { type: 'string', description: '要卸载的工具名（goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev）' },
+          tool: { type: 'string', description: '要卸载的工具名（goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev / browser）' },
         },
         required: ['tool'],
       },

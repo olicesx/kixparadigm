@@ -88,21 +88,21 @@ description: "Kixpower — AI 多智能体协作编排（v5.7）。采用 DAG �
 
 | # | 方法 | 落地段 |
 |---|---|---|
-| ㉑ | 主会话预算：运行时读取模型窗口与 `agent/pre-step.step`，上下文同时感知 usage/tokenMeter；动态预算按窗口分档（≤128K→0.85、≤400K→0.65、≤1M→0.40、>1M→0.35；150K 仅无窗口回退），主会话第 41 步或上下文超线后由 `tools/pre-execute` 拒绝普通工具，必须完成 lite/goal 交接；运行时与会话深度都不可得时强动作 fail-open | `plugins/kix-budget.js` + agent.cordis.yml |
-| ㉒ | 机械取证提示：连续 8 步只读仍提供一次 advisory；真正强制边界是主会话 step 41 gate，常见 git 写命令不再误判为只读 | `plugins/kix-budget.js` |
+| ㉑ | 主会话预算：动态窗口与 usage/tokenMeter 同时有效时按窗口分档 token 预算（≤128K→0.85、≤400K→0.65、≤1M→0.40、>1M→0.35）hard gate；任一计量面缺失时才回退 150K/step 41，超线必须完成 foreground lite/goal 交接 | `plugins/kix-budget.js` + agent.cordis.yml |
+| ㉒ | 形态病理提示：连续 8 步只读注入一次 advisory；step 41 不与正常 token 预算双重拒绝，只在动态计量缺失时作零计量硬兜底 | `plugins/kix-budget.js` |
 | ㉓ | 工具结果急剪：宿主 pruner 字符阈值默认 2K，单结果超线在下一步边界 head/tail 替换；总上下文过半仍是兜底触发 | `plugins/kix-budget.js` + tool-result-pruner |
 | ㉔ | 激活抖动纪律：`deactivate` 入队并在 `turn-stopping` 统一 dispose，待卸载期间再次激活复用 fiber | `plugins/kix-focus.js` + 回归/E2E |
-| ㉕ | 马拉松交接：step/context gate 强制主线程调用 `subagent_lite` 或 `create_goal`，goal round / `/kixpower-continue` 负责跨回合恢复 | `plugins/kix-budget.js` + goal/continue |
+| ㉕ | 马拉松交接：context 或 fallback-step gate 强制主线程调用 foreground `subagent_lite` / `create_goal`；结构化成功 envelope 才解锁，报告正文引用失败样例不误判 | `plugins/kix-budget.js` + goal/continue |
 
-## v5.10 子代理编排面与激活抖动（2026-08-17 子代理账本实测驱动）
+## v5.12 子代理编排面与激活抖动（2026-08-17 账本 + 2026-08-18 误伤复盘）
 
 > 107 个子代理会话 / 2,432 次调用 / 162.5M 重读 token——与主会话同量级的另一半燃烧。首步固定开销中位 23.4K（system 38.8K chars + tools 34.3K chars）；**system 里 ~25K chars 是 run_code 的 TypeScript 工具镜像**（每个工具 schema 付两次钱）；40/107 个子代理尝试过再分派（50 次）——每个孙代再付一次全额固定开销；`change` 请求头（工具面中途变更）后 cacheRead 归零、整个上下文全价重读。
 
 | # | 方法 | 落地段 |
 |---|---|---|
-| ㉖ | 子代理编排面裁剪：恒注册编排名静态 `toolFilter.deny`（subagent×2、agent 控制、exit_plan_mode、ask_user_question——账本 0 使用；deny 名同时从 tools 数组与 system 内 TS 镜像消失）。run_code 为 Code Mode 保留传输名不可 restrict（WSL2 实弹实锤）且是正当执行通道——保留；条件挂载名（dev/qa/workflow 等）由 kix-cost child guard 语义兜底。文件/执行/检索/jobs/skill/report/MCP 全保留——裁的是子代理不该有的编排面，不是能力 | agent.cordis.yml 各 tool-subagent 行 + `plugins/kix-cost.js`（tools.guard） |
+| ㉖ | 有界 evidence delegation：depth-1 仅可派 `subagent_lite` 机械取证；in-process `maxDepth:2`、静态/动态 9-name toolFilter 与 `kix-cost` proxy-target guard 共同拒绝 depth≥2、regular/cross/goal/workflow；文件/执行/检索/jobs/skill/report/MCP 保留 | agent.cordis.yml + `plugins/kix-focus.js` + `plugins/kix-cost.js` |
 | ㉗ | 延迟卸载：kix_tool_deactivate 入队、回合边界统一 dispose——消灭 `change` 头缓存重置；期间再激活则复用 fiber 不重复挂载 | `plugins/kix-focus.js`（pendingDefers + agent/turn-stopping flush） |
-| ㉘ | 子代理预算覆盖：child 会话继承宿主 compaction 与 kix-budget 结果急剪；主会话 advisory/step-context gate 保持 main-only，child 不继承主线程交接锁 | v6 runtime scope + E2E |
+| ㉘ | 子代理预算覆盖：child 会话继承宿主 compaction 与 kix-budget 结果急剪；主会话 advisory/context/fallback-step gate 保持 main-only，child 不继承主线程交接锁 | v6 runtime scope + E2E |
 
 ## v5.11 复杂度感知子代理 effort（2026-08-18）
 

@@ -86,17 +86,18 @@
       ## 成本纪律
       - 分档：lite（机械只读 8K，首次使用自动激活）→ subagent（常规 64K，默认）→ subagent_cross（跨厂商 64K）→ subagent_thinker（128K，高风险）。
       - prompt 标 [EFFORT]+[BUDGET]；观察者默认1，分歧/高风险2，并发≤3。
-      - 禁轮询空转：spawn 后前台等或后台只做只读工作；观察者在飞时其任务面对象（文件/量测/结论）冻结至结算；派发 prompt 必带绝对路径+版本锚+禁读清单；job_output/list_agents 取结果即走；独立工作做完仍缺结果→简短状态后结束回合（结算/报告无条件唤醒新回合）。sleep 只用于测试/退避/等锁，不用于等子代理。
-      - 子代理结果单通道：默认最终消息=完整报告，勿再 report 全文；确需中继才 report 一句话。结构化回流优先 outputSchema；结论复用查 progress.md/memories。
-      - 主会话预算（㉑-㉕）：kix-budget 按步数与 token 计费（预算=窗口分档比例，150K/41 步仅无窗口回退），超限强制 subagent_lite/create_goal 交接，大结果落盘。
+      - 禁轮询空转：仍有独立工作才后台；发布依赖的最后验证必须 foreground，final 前关键观察者均已结算。观察者在飞时只冻结其 exact claim + evidence cursor/measurement；同文件不同 claim 与主线程综合可读。派发 prompt 带绝对路径+版本锚+禁读清单；job_output/list_agents 取结果即走；sleep 只用于测试/退避/等锁。
+      - 子代理结果单通道：小结果 final-only 完整回流，勿再 report 全文；大结果写完整 artifact，final 只回绝对路径+结论+状态。结构化回流优先 outputSchema；结论复用查 progress.md/memories。
+      - 主会话预算（㉑-㉕）：动态窗口与 usage/tokenMeter 有效时只按 token 分档预算 hard gate；任一计量面缺失时才用 150K/41 步 fallback。超限强制 foreground subagent_lite/create_goal 交接；后台 spawn 不算完成。
       - 子代理 effort（v5.11）：显式 complexity:/effort/档位/maxTokens 标注优先；未标则按 prompt 复杂度自动定档。
 
       ## DSH 适配
       - 分派：subagent 注入 agents/*.agent.md 角色 body + Tri-Block；需继承上下文用 subagent_fork。跨厂商→subagent_cross；识图→subagent_vision（图片路径+问题）；📷 [图片自动识别] 是 vision-bridge 产物。
       - 门禁已挂载：kix-guards（危险 git/SQL/控制平面/未知执行工具）、kix-discipline、kix-orchestration；/kixpower-* 零 token。
       - 工具面见宿主工具列表；按需档位经 kix_capability_call 首用自动激活；workflow 取消 disabled 需重启。
-      - 子代理编排面（v5.10）：子代理不能再分派/编排——需编排的内容写进 report 回主线程。
-      - 原生优先：复杂编排 workflow；长目标 goal；先规划 plan mode；长任务 run_in_background+job_output；验证/观察保持 native（证据可回放）；deny 立即中止。
+      - 子代理编排面（v5.12）：depth-1 子代理只可经 kix_capability_call 派 subagent_lite 做机械取证；in-process maxDepth=2，静态/动态 toolFilter 与 guard 共同拒绝 depth≥2、regular/cross/goal/workflow。
+      - Sandbox 升级参数：首次调用省略 sandbox_permissions 与 justification；仅真实 sandbox denial 后才对原调用单次成对重试；approval disabled 时永不设置。
+      - 原生优先：机械多步/并发/跨工具变换用 run_code；单步、可回放验证、审批动作直呼 native；复杂编排 workflow；长目标 goal；先规划 plan mode；长任务 run_in_background+job_output；deny 立即中止。
 
       ## 资源
       instructions/kixparadigm-core.instructions.md；prompts/kixpower-*；memories/*.md；技能见会话目录。
@@ -301,12 +302,13 @@
         provider: spawn
         toolName: subagent
         backgroundMode: continuable
+        maxDepth: 2
         # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
         # bash/read/grep/glob；exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
         # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
-        # 条件挂载的细分档位/workflow 由 plugins/kix-cost.js 的 child guard
-        # 语义兜底。被 deny 的名字同时从 tools 数组与 system 内 TypeScript
+        # 条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
+        # 机械取证放行，其余 tier/goal/workflow 拒绝。deny 名同时从 tools 与 TypeScript
         # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
         # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
         # 可见面，其工具镜像一并保留。subagent×2/agent 控制是「编排
@@ -349,6 +351,7 @@
         provider: spawn
         toolName: subagent_lite
         backgroundMode: continuable
+        maxDepth: 2
         persona: |-
           You are a fast mechanical subagent for strictly mechanical subtasks:
           reading files, searching, simple checks and verification. Do exactly
@@ -377,12 +380,13 @@
         provider: spawn
         toolName: subagent_thinker
         backgroundMode: continuable
+        maxDepth: 2
         # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
         # bash/read/grep/glob；exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
         # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
-        # 条件挂载的细分档位/workflow 由 plugins/kix-cost.js 的 child guard
-        # 语义兜底。被 deny 的名字同时从 tools 数组与 system 内 TypeScript
+        # 条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
+        # 机械取证放行，其余 tier/goal/workflow 拒绝。deny 名同时从 tools 与 TypeScript
         # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
         # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
         # 可见面，其工具镜像一并保留。subagent×2/agent 控制是「编排
@@ -414,12 +418,13 @@
         provider: spawn
         toolName: subagent_cross
         backgroundMode: continuable
+        maxDepth: 2
         # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
         # bash/read/grep/glob；exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
         # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
-        # 条件挂载的细分档位/workflow 由 plugins/kix-cost.js 的 child guard
-        # 语义兜底。被 deny 的名字同时从 tools 数组与 system 内 TypeScript
+        # 条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
+        # 机械取证放行，其余 tier/goal/workflow 拒绝。deny 名同时从 tools 与 TypeScript
         # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
         # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
         # 可见面，其工具镜像一并保留。subagent×2/agent 控制是「编排
@@ -449,12 +454,13 @@
         provider: spawn
         toolName: subagent_vision
         backgroundMode: continuable
+        maxDepth: 2
         # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
         # bash/read/grep/glob；exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
         # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
-        # 条件挂载的细分档位/workflow 由 plugins/kix-cost.js 的 child guard
-        # 语义兜底。被 deny 的名字同时从 tools 数组与 system 内 TypeScript
+        # 条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
+        # 机械取证放行，其余 tier/goal/workflow 拒绝。deny 名同时从 tools 与 TypeScript
         # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
         # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
         # 可见面，其工具镜像一并保留。subagent×2/agent 控制是「编排
@@ -477,12 +483,13 @@
         provider: fork
         toolName: subagent_fork
         backgroundMode: continuable
+        maxDepth: 2
         # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
         # bash/read/grep/glob；exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
         # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
-        # 条件挂载的细分档位/workflow 由 plugins/kix-cost.js 的 child guard
-        # 语义兜底。被 deny 的名字同时从 tools 数组与 system 内 TypeScript
+        # 条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
+        # 机械取证放行，其余 tier/goal/workflow 拒绝。deny 名同时从 tools 与 TypeScript
         # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
         # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
         # 可见面，其工具镜像一并保留。subagent×2/agent 控制是「编排
@@ -511,12 +518,13 @@
         provider: spawn
         toolName: subagent_reviewer
         backgroundMode: continuable
+        maxDepth: 2
         # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
         # bash/read/grep/glob；exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
         # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
-        # 条件挂载的细分档位/workflow 由 plugins/kix-cost.js 的 child guard
-        # 语义兜底。被 deny 的名字同时从 tools 数组与 system 内 TypeScript
+        # 条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
+        # 机械取证放行，其余 tier/goal/workflow 拒绝。deny 名同时从 tools 与 TypeScript
         # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
         # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
         # 可见面，其工具镜像一并保留。subagent×2/agent 控制是「编排
@@ -570,12 +578,13 @@
         provider: spawn
         toolName: subagent_qa
         backgroundMode: continuable
+        maxDepth: 2
         # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
         # bash/read/grep/glob；exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
         # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
-        # 条件挂载的细分档位/workflow 由 plugins/kix-cost.js 的 child guard
-        # 语义兜底。被 deny 的名字同时从 tools 数组与 system 内 TypeScript
+        # 条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
+        # 机械取证放行，其余 tier/goal/workflow 拒绝。deny 名同时从 tools 与 TypeScript
         # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
         # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
         # 可见面，其工具镜像一并保留。subagent×2/agent 控制是「编排
@@ -613,12 +622,13 @@
         provider: spawn
         toolName: subagent_dev
         backgroundMode: continuable
+        maxDepth: 2
         # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
         # bash/read/grep/glob；exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
         # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
-        # 条件挂载的细分档位/workflow 由 plugins/kix-cost.js 的 child guard
-        # 语义兜底。被 deny 的名字同时从 tools 数组与 system 内 TypeScript
+        # 条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
+        # 机械取证放行，其余 tier/goal/workflow 拒绝。deny 名同时从 tools 与 TypeScript
         # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
         # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
         # 可见面，其工具镜像一并保留。subagent×2/agent 控制是「编排
@@ -844,6 +854,32 @@
 #   条件化 shell + 编曲成员 current_sprint 机械注入用例）。
 - id: kix-focus
   name: ./plugins/kix-focus.js
+
+# ── kix-browser（浏览器自动化原生工具，2026-08-18）───────────────────────
+# 背景：MCP 五跳链路在本宿主解析损坏（navigate/click ToolNotFound，根因未证）
+#   且形态错（--headless 内置 Chromium 非用户浏览器）；playwright-core 脚本
+#   直驱已实证（dsh-capability-map.md「浏览器自动化」行）。高频能力 → 原生化。
+# 单工具 browser{action}（17 action 全覆盖必要操作）：open/snapshot/text/
+#   click/type/press/select/hover/back/forward/reload/wait/screenshot/upload/
+#   tabs/dialog/close；CDP attach 优先（Edge/Chrome --remote-debugging-port=9222
+#   后接管真实浏览器，登录态保留），launch headless 兜底；会话跨调用持久；
+#   URL 门禁（仅 http/https/about:blank）；弹窗默认自动驳回、dialog{auto}
+#   改策略、结果携带 lastDialog；playwright-core 懒 require（未安装不影响
+#   插件装载，错误消息带安装指引）。**故意不含**：页内任意 JS（evaluate——
+#   kix blast-radius 红线，真需要走 pwsh 直驱脚本=代码级可审查）、网络拦截/
+#   cookie/PDF/拖拽（低频，脚本路径可覆盖）。env：KIX_BROWSER_CDP（默认
+#   http://127.0.0.1:9222，空串禁用 attach）/KIX_BROWSER_HEADLESS（默认 true）
+#   /KIX_BROWSER_CORE（显式路径）/KIX_BROWSER_TIMEOUT（默认 15000ms）。
+# 单元测试：node plugins/kix-browser.test.js（12 断言组：门禁/形状/队列/新
+#   action 校验/dialog 策略）。
+# 渐进披露（2026-08-18 与用户确认的合规形态）：默认**不装载**——browser 工具
+# 不占非浏览器会话的常驻 schema。发现与激活走 kix-focus：capability_search
+# 可见 browser-native 组；kix_capability_call { tool:"browser" } 首用自动
+# 挂载（ACTIVATABLE_TOOLS.browser → pkgPath 本地解析），下一轮直呼，
+# kix_tool_deactivate 卸载。需要常驻（每次会话都开箱可用）才取消下面两行
+# 注释并重启宿主。
+# - id: kix-browser
+#   name: ./plugins/kix-browser.js
 
 # ── kix-stalled（L3 档 A：stalled 机械检测，2026-08-15，默认注释 = opt-in）──
 # 只读、无状态、无常驻：/kixst-check <项目根> 命令（零 token）+ kix_stalled_check

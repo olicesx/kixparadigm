@@ -1,4 +1,4 @@
-// kix-guards — kixparadigm 机械门禁的 DSH 原生实现（v9，v1.2.11）
+// kix-guards — kixparadigm 机械门禁的 DSH 原生实现（v13，v1.2.22）
 //
 // 移植自 kixpower 的 blast-radius-check.ps1 / block-source-edit.ps1 核心门禁，
 // 以 DSH `tools/pre-execute` 监听器形态自动拦截（等价 Copilot PreToolUse hook）。
@@ -65,6 +65,8 @@
 //   deny，把源仓库事实源（dsh/preset/、en/preset/）当成安装副本误伤——维护者
 //   无法在本仓库改挂载注释/计数。安装面（~/.dsh / .agent-presets）仍优先命中。
 //
+// v13（v1.2.22，跨厂商反方审查）：run_code 数据面剥离；regex/division/tagged-template
+// 歧义 fail-closed，U+2028/U+2029 终止行注释，codegen/optional-chain 能力补拦。
 // v12（v1.2.14，用户决策）：控制平面写从硬 deny 降为 remind。kix 自迭代 /
 //   用户已授权改安装副本时，硬拦会挡正事；安装面仍识别并注入一次提醒
 //   （additionalContexts，带 id），不记 denyMemo。源仓库事实源继续豁免
@@ -260,25 +262,29 @@ function isTerminalDestructiveSql(text) {
   return false
 }
 
-// v3：git 子命令解析式检测（修复 -C/-c/git.exe 绕过；ps1 Get-KixGitCommandPartsAll 的简化）
-// 对每个 `git[.exe]` 出现位置，跳过旗标（短旗标 -C/-c 等跳过其值，长旗标 --x 无值），
-// 取第一个非旗标 token 为子命令。
+// Git 全局 options 中只有这些形态会消费下一 token；其余 flags 只跳过自身。
+// 已带值的 --x=y / -Cpath / -ckey=value 不再消费后续子命令。
+const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set([
+  '-C', '-c', '--config-env', '--exec-path', '--git-dir', '--work-tree',
+  '--namespace', '--super-prefix', '--attr-source',
+])
+
 function gitSubcommands(text) {
   const subs = new Set()
-  const re = /\bgit(?:\.exe)?\b/g
-  let m
-  while ((m = re.exec(text))) {
-    const rest = text.slice(m.index + m[0].length)
-    const tokens = rest.split(/\s+/).filter(Boolean)
+  for (const part of splitShellSegments(text)) {
+    const command = leadingCommand(shellTokens(part.text))
+    if (!command || command.name !== 'git') continue
+    const tokens = command.args
     for (let i = 0; i < tokens.length; i++) {
       const t = tokens[i]
-      if (t.startsWith('--')) continue
-      if (t.startsWith('-')) {
-        // 短旗标通常带值（-C <path> / -c <key=val>）；下一 token 非旗标即为其值
-        if (i + 1 < tokens.length && !tokens[i + 1].startsWith('-')) i++
+      if (t === '--') continue
+      if (GIT_GLOBAL_OPTIONS_WITH_VALUE.has(t)) {
+        if (i + 1 < tokens.length) i++
         continue
       }
-      subs.add(t.replace(/^["']|["']$/g, ''))
+      if (/^-(?:C|c).+/.test(t) || t.startsWith('--')) continue
+      if (t.startsWith('-')) continue
+      subs.add(t)
       break
     }
   }
@@ -365,6 +371,127 @@ function stableArgs(args) {
 
 function escapeRegex(text) {
   return String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+// run_code 的参数常携带待编辑源码；字符串/注释是数据，不应按执行能力拦截。
+// Template raw text 同样剥离，但 ${...} 内表达式递归保留并继续检查。
+function executableJsSurface(source) {
+  const input = String(source || '')
+  const output = input.split('')
+  let ambiguous = false
+  const isLineTerminator = (ch) => ch === '\n' || ch === '\r' || ch === '\u2028' || ch === '\u2029'
+  const blank = (i) => {
+    if (!isLineTerminator(output[i])) output[i] = ' '
+  }
+
+  function quoted(start, quote) {
+    blank(start)
+    for (let i = start + 1; i < input.length; i++) {
+      const ch = input[i]
+      blank(i)
+      if (ch === '\\') {
+        if (i + 1 < input.length) blank(++i)
+      } else if (ch === quote) {
+        return i + 1
+      }
+    }
+    return input.length
+  }
+
+  function lineComment(start) {
+    let i = start
+    while (i < input.length && !isLineTerminator(input[i])) blank(i++)
+    return i
+  }
+
+  function blockComment(start) {
+    let i = start
+    while (i < input.length) {
+      const closes = input[i] === '*' && input[i + 1] === '/'
+      blank(i++)
+      if (closes) {
+        if (i < input.length) blank(i++)
+        return i
+      }
+    }
+    return i
+  }
+
+  function templateCouldBeTagged(start) {
+    let i = start - 1
+    while (i >= 0 && /\s/u.test(input[i])) i--
+    if (i < 0) return false
+    if (input[i] === ')' || input[i] === ']' || input[i] === '}') return true
+    if (!/[A-Za-z0-9_$]/.test(input[i])) return false
+    const end = i + 1
+    while (i >= 0 && /[A-Za-z0-9_$]/.test(input[i])) i--
+    const word = input.slice(i + 1, end)
+    return !new Set(['return', 'throw', 'case', 'yield', 'await', 'else', 'do', 'typeof', 'void', 'delete', 'new', 'in', 'of', 'instanceof']).has(word)
+  }
+
+  function template(start) {
+    blank(start)
+    let i = start + 1
+    while (i < input.length) {
+      const ch = input[i]
+      if (ch === '\\') {
+        blank(i++)
+        if (i < input.length) blank(i++)
+      } else if (ch === '`') {
+        blank(i++)
+        return i
+      } else if (ch === '$' && input[i + 1] === '{') {
+        blank(i++)
+        blank(i++)
+        i = code(i, true)
+      } else {
+        blank(i++)
+      }
+    }
+    return i
+  }
+
+  function code(start, templateExpression) {
+    let braces = 0
+    let i = start
+    while (i < input.length && !ambiguous) {
+      const ch = input[i]
+      if (ch === "'" || ch === '"') {
+        i = quoted(i, ch)
+      } else if (ch === '`') {
+        if (templateCouldBeTagged(i)) {
+          ambiguous = true
+          break
+        }
+        i = template(i)
+      } else if (ch === '/' && input[i + 1] === '/') {
+        i = lineComment(i)
+      } else if (ch === '/' && input[i + 1] === '*') {
+        i = blockComment(i)
+      } else if (ch === '/') {
+        // Regex-vs-division requires a real parser. Preserve the raw source so
+        // the capability check fails closed instead of guessing the JS grammar.
+        ambiguous = true
+        break
+      } else if (ch === '{') {
+        braces++
+        i++
+      } else if (ch === '}') {
+        if (templateExpression && braces === 0) {
+          blank(i)
+          return i + 1
+        }
+        braces = Math.max(0, braces - 1)
+        i++
+      } else {
+        i++
+      }
+    }
+    return i
+  }
+
+  code(0, false)
+  return ambiguous ? input : output.join('')
 }
 
 // ps1 检查 3：force push 完整检测（--force / -f / push +refs 语法 / --mirror）。
@@ -872,9 +999,9 @@ module.exports = {
 
       // 1b. run_code 代码体受限能力检查（P0 修复 2026-08-15；v3 补 fs 直写）
       if (tool === 'run_code' && args && typeof args.code === 'string') {
-        const code = args.code
-        if (/import\s*\(\s*["']node:|require\s*\(\s*["']node:|child_process|fetch\s*\(|WebSocket\s*\(|process\.|\b(?:require|import)\s*\(\s*["']fs["']\)|writeFileSync\s*\(/.test(code)) {
-          return deny('BLAST RADIUS: run_code 代码体包含受限能力（node: 动态 import / child_process / fetch / WebSocket / process 访问 / fs 直写）已拦截。run_code 是通用 Node 运行时，这些能力可绕过工具门禁；需要此类能力时请改用 native 工具（pwsh 等）经门禁执行。')
+        const surface = executableJsSurface(args.code)
+        if (/\b(?:require|import)\s*\(|\bchild_process\b|\b(?:fetch|WebSocket)\b|\bprocess\s*(?:\?\.|\.|\[)|\bwriteFileSync\s*\(|\b(?:eval|Function|constructor)\b/.test(surface)) {
+          return deny('BLAST RADIUS: run_code 可执行语法面包含受限能力（module import/require、child_process、network、process、fs 直写或动态代码生成）。字符串/注释/非 tagged template raw 可作为数据；regex/division 或 tagged template 歧义按原文 fail-closed。真实能力请改用 native 工具经门禁执行。')
         }
       }
 
@@ -981,6 +1108,7 @@ module.exports.__internals = {
   normalizeMemo,
   stableArgs,
   escapeRegex,
+  executableJsSurface,
   COMMIT_HARD_CAP,
   COMMIT_BUDGET_DEFAULT,
   CONTROL_PLANE_REMIND,

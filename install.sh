@@ -12,16 +12,14 @@
 #   1. Detects COPILOT_HOME (default ~/.copilot)
 #   2. Detects VS Code prompts folder
 #   3. Detects VS Code memory folder
-#   4. Copies bundle/skills/*   -> $COPILOT_HOME/skills/
-#   5. Copies bundle/agents/*   -> $COPILOT_HOME/agents/
-#   6. Copies bundle/instructions/* -> $COPILOT_HOME/instructions/
-#   7. Copies bundle/prompts/*  -> $VSCODE_PROMPTS_DIR/
-#   8. Copies bundle/memories/* -> $VSCODE_MEMORY_DIR/  (unless --skip-memories)
-#   9. Replaces placeholders in *.agent.md:
+#   4. Copies every bundle skill containing SKILL.md -> $COPILOT_HOME/skills/
+#   5. Copies the curated agent/instruction/prompt manifests
+#   6. Copies curated user memories -> $VSCODE_MEMORY_DIR/ (unless --skip-memories)
+#   7. Replaces placeholders in *.agent.md:
 #        {{COPILOT_HOME}}  -> $COPILOT_HOME
 #        {{HOOK_LAUNCHER}} -> bash
 #        {{HOOK_EXT}}      -> sh
-#  10. chmod +x all .sh hooks/scripts under skills/
+#   8. chmod +x all .sh hooks/scripts under skills/
 #
 # Idempotent: rerunning overwrites existing files.
 
@@ -72,11 +70,18 @@ err()  { printf '\033[31m[x]\033[0m %s\n' "$1"; }
 
 run() { if [ "$DRY_RUN" -eq 1 ]; then echo "    (dry-run) $*"; else "$@"; fi; }
 
-# --- Asset manifest ---
-SKILLS=(kixparadigm kixpower handoff write-a-skill improve-codebase-architecture)
+# --- Asset policy ---
+# Skills are convention-based: every directory containing SKILL.md is public.
+SKILLS=()
+for skill_file in "$BUNDLE_ROOT"/skills/*/SKILL.md; do
+  [ -f "$skill_file" ] || continue
+  SKILLS+=("$(basename "$(dirname "$skill_file")")")
+done
+if [ "${#SKILLS[@]}" -eq 0 ]; then err "No installable skills found under bundle skills/"; exit 1; fi
 AGENTS=(kixparadigm kixpower-dev kixpower-orchestrator kixpower-producer kixpower-qa kixpower-reviewer)
 INSTRUCTIONS=(kixparadigm-core)
 PROMPTS=(kixpower kixpower-continue kixpower-import kixpower-new kixpower-review)
+# Memories are deliberately curated: DSH capability data and legacy notes are not user-memory defaults.
 MEMORIES=(ai-agent-practices vscode-copilot-customization ai-test-pruning)
 
 # --- Uninstall ---
