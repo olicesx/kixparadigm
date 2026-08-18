@@ -22,8 +22,8 @@ for i in 1 2 3 4; do echo "# m$i" > "$WS/en/preset/memories/m$i.md"; done
 
 echo '+ 4 记忆' > "$WS/README.md"
 echo '+ 4 memories' > "$WS/README.en.md"
-printf '%s\n' '{"version":"1.2.13"}' > "$WS/package.json"
-printf '%s\n' '{"version":"1.2.13"}' > "$WS/en/package.json"
+printf '%s\n' '{"version":"1.2.19"}' > "$WS/package.json"
+printf '%s\n' '{"version":"1.2.19"}' > "$WS/en/package.json"
 
 # Sprint marker for orchestration handoff tests (optional)
 echo 1 > "$WS/docs/.kixpower-current-sprint"

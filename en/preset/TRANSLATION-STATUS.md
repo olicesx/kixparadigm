@@ -14,6 +14,7 @@ This edition is delivered in **phased translation**. The resident cognition laye
 | `DSH-ADAPTATION.md` | English (condensed authoritative mapping) |
 | `PLUGINIZATION-ROADMAP.md` | English (condensed edition; CN full edition in CN preset) |
 | `README.md`, `TRANSLATION-STATUS.md` | English |
+| `skills/pwsh-reliable/SKILL.md` | English (native — absorbed from the pwsh-reliable bundle 2026-08-17; byte-identical in CN/EN presets) |
 | `plugins/` (kix-guards.js, kix-cost.js, kix-commands.js, kix-route.js, kix-discipline.js, kix-orchestration.js, kix-focus.js + tests) | Code — language-neutral |
 
 ## ⏳ Pending (Chinese originals, still fully functional)

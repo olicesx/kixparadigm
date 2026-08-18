@@ -795,6 +795,12 @@ module.exports = {
     // 即此）。挂载的 fiber 随 agent ctx 自动销毁（ctx dispose 时卸载），
     // 无需手动 effect；显式卸载走 kix_tool_deactivate。
     const activated = new Map()
+    // v5.10 延迟卸载队列（㉔ 机制化）：deactivate 只入队，agent/turn-stopping
+    // 才真正 dispose——工具面变更（tools/change）会打断 provider 前缀缓存，
+    // 会话中途卸载 = 剩余步骤的整个上下文全价重读（实测 'change' 头后
+    // cacheRead 归零）。回合末卸载则下一回合天然从新工具面起步，零浪费。
+    // 期间被再次 ensureActivated → 取消卸载复用 fiber（不重复挂载）。
+    const pendingDefers = new Map()
     const resolvePkg = typeof cfg.resolvePkg === 'function' ? cfg.resolvePkg : defaultResolvePkg
     // 挂载一个可激活工具并登记。返回 { ok:true } 或 { ok:false, error }。
     // ctx.plugin() 返回 Fiber & PromiseLike<Fiber>：必须 await 取 Fiber，
@@ -810,6 +816,14 @@ module.exports = {
       const entry = ACTIVATABLE_TOOLS[name]
       if (!entry) {
         return { ok: false, error: `kix-focus: ${name || '(空)'} 不可按需激活。可激活：${Object.keys(ACTIVATABLE_TOOLS).join(' / ')}` }
+      }
+      // v5.10 延迟卸载：已挂载（含待卸载队列中的）直接复用，不重复 ctx.plugin
+      // （重复挂载同一包 = 第二次注册同名工具抛错）。待卸载 → 取消本次卸载。
+      if (activated.has(name)) return { ok: true, reused: true }
+      if (pendingDefers.has(name)) {
+        activated.set(name, pendingDefers.get(name))
+        pendingDefers.delete(name)
+        return { ok: true, reused: true, undeferred: true }
       }
       try {
         const pkg = resolvePkg(entry.package)
@@ -854,14 +868,14 @@ module.exports = {
         }
         const r = await ensureActivated(name)
         if (!r.ok) return { ok: false, tool: name, error: r.error }
-        return { ok: true, tool: name, note: activationNote(name) }
+        return { ok: true, tool: name, ...(r.undeferred ? { note: `kix-focus: ${name} 的待执行卸载已取消，继续可用。` } : { note: activationNote(name) }) }
       },
     })
     ctx.effect(() => disposeActivate)
 
     const disposeDeactivate = tools.register({
       name: 'kix_tool_deactivate',
-      description: '卸载一个已激活的 scope 工具（goal/subagent 细分档位含编曲成员 qa/dev/reviewer）：下一轮请求起不再可见。jobs 已常驻、无需也卸载不了。',
+      description: '卸载一个已激活的 scope 工具（goal/subagent 细分档位含编曲成员 qa/dev/reviewer）。v5.10 起为延迟卸载：入队后本回合内仍可直呼，回合结束后才真正卸载（工具面中途变更会打断请求前缀缓存）。jobs 已常驻、无需也卸载不了。',
       parameters: {
         type: 'object',
         properties: {
@@ -878,17 +892,31 @@ module.exports = {
         if (!activated.has(name)) {
           return { ok: false, error: `kix-focus: ${name || '(空)'} 未激活（无需卸载）。` }
         }
+        // v5.10 延迟卸载：只入队，turn-stopping 统一 dispose（见文件尾 flush）
         const fiber = activated.get(name)
         activated.delete(name)
-        try {
-          await fiber.dispose()
-        } catch (e) {
-          return { ok: false, tool: name, error: `kix-focus: 卸载 ${name} 出错：${e && e.message ? e.message : String(e)}` }
-        }
-        return { ok: true, tool: name, note: `kix-focus: ${name} 已卸载，下一轮请求起不再可见。` }
+        pendingDefers.set(name, fiber)
+        return { ok: true, tool: name, deferred: true, note: `kix-focus: ${name} 已标记卸载，将于本回合结束后生效（避免工具面中途变更打断前缀缓存）。本回合内仍可直接调用。` }
       },
     })
     ctx.effect(() => disposeDeactivate)
+
+    // v5.10：回合边界统一执行延迟卸载。串行 dispose，单个失败不阻断其余
+    //（fiber 随 ctx 生命周期兜底销毁）。Plugin stop 时 ctx.dispose 连带
+    // 清理，无需额外 effect。
+    ctx.on('agent/turn-stopping', async () => {
+      if (pendingDefers.size === 0) return
+      const entries = [...pendingDefers.entries()]
+      pendingDefers.clear()
+      for (const [name, fiber] of entries) {
+        try {
+          await fiber.dispose()
+          ctx.logger?.info?.(`[kix-focus] 延迟卸载生效：${name}`)
+        } catch (e) {
+          ctx.logger?.warn?.(`[kix-focus] 延迟卸载 ${name} 失败：${e && e.message ? e.message : String(e)}`)
+        }
+      }
+    })
 
     // ── Phase 2 感知（不做 deny）：restrict 已保证被裁剪工具对模型不可见
     //（模型直呼 = UNKNOWN_TOOL，走不到这里）；capability_call 内部子调用走

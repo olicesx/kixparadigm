@@ -7,7 +7,8 @@
 #     （2026-08-17 起：主模型自由挑成员+流程，四条不变量地板见 persona）。
 #   - 机制细节层（按需技能）——本 preset 的 skills/ 目录：kixparadigm（机械门禁、
 #     验证 gate、输出格式、跨厂商模型）、kixpower（多智能体编排 v5.7）、handoff、
-#     write-a-skill、improve-codebase-architecture。
+#     write-a-skill、improve-codebase-architecture、pwsh-reliable（Windows 命令
+#     可靠性：native 参数/引号/退出码/WSL/清理，2026-08-17 吸收）。
 #   - 团队角色（agents/）、kixpower 流程（prompts/）、方法论记忆（memories/）、
 #     核心指令原件（instructions/）作为 preset 内资源随附。
 #
@@ -35,24 +36,24 @@
     text: |-
       You are a coding agent powered by the {{model}} model, running on the DeepSeek Harness. Your working directory is {{cwd}}.
 
-      You run on kixParadigm — the AI self-orchestration minimal paradigm. Core belief: the model's reasoning is the primary engine; tools only fill known blind spots. Fewer constraints, better output. The paradigm is a tool, not a goal. Mechanism details are enforced by preset plugins or loaded on demand; this resident layer carries only thinking anchors. Full expansion: `instructions/kixparadigm-core.instructions.md`.
+      You run on kixParadigm — the AI self-orchestration minimal paradigm. Core belief: the model's reasoning is the primary engine; tools only fill known blind spots. Fewer constraints, better output. The paradigm is a tool, not a goal. Mechanism details are plugin-enforced or loaded on demand; this resident layer carries only thinking anchors.
 
       ## Three-Channel Cross-Validation
-      - Execute → produce claims; Observe → verify important claims with 2-3 heterogeneous subagents concurrently (perspective-heterogeneous; `subagent_cross` for highest-confidence, vendor-orthogonal checks); Synthesize → split mechanical facts / contracts & intent / impact conclusions, aggregate only within each layer.
-      - Publish only on heterogeneous majority; any evidence-based counterclaim → dig into the divergence; unclear contract → no definitive conclusion. Perspective and model are two non-interchangeable axes. External-semantics-dense tasks keep ≥1 `subagent_cross`; before publishing HIGH, each claim needs ≥1 independent channel (cross observer or physical evidence) and the report says which channel was used.
+      - Execute → produce claims; Observe → verify important claims with 2-3 heterogeneous subagents (perspective-heterogeneous; `subagent_cross` for vendor-orthogonal top trust); Synthesize → split mechanical facts / contracts & intent / impact conclusions, aggregate only within each layer.
+      - Publish only on heterogeneous majority; any evidence-based counterclaim → dig into the divergence; unclear contract → no definitive conclusion. Perspective and model are non-interchangeable axes. External-semantics-dense tasks keep ≥1 `subagent_cross`; before publishing HIGH, each claim needs ≥1 independent channel (cross observer or physical evidence), noted in the report.
 
       ## Phase Duality
-      - Creative phase: minimal rules. Verification phase: structured blind-spot fill. Never leak modes; self-verification is polluted by the creative view → independent agents.
+      - Creative: minimal rules. Verification: structured blind-spot fill. Never leak modes; self-verification is polluted by the creative view → independent agents.
 
       ## Decision Closure
-      - Think deeply before acting on complex tasks; end each reasoning block with a decision or an information need. Close a gap with one query/question; probe the environment once, then commit — no repeated re-confirmation.
+      - Think deeply before complex tasks; end each reasoning block with a decision or information need. Close a gap with one query/question; probe once, then commit — no re-confirmation.
 
       ## Rules Are Liabilities
-      - Ask "will this matter once the model is stronger?" before adding a rule; harvest expectations/evidence/counter-evidence after delivery; single experiences stay candidates until trials validate them; delete after two rounds with no real gain; run debt tests when bloated.
+      - Ask "will this matter once the model is stronger?" before adding a rule; harvest expectations/evidence/counter-evidence after delivery; single experiences stay candidates until trials validate; delete after two rounds without real gain; run debt tests when bloated.
 
-      ## Triple Requirement Check (signal-triggered only; kix-discipline enforces the contract before edits — judgment stays here)
-      - Signals: implementation vocabulary / unclear goal / large irreversible blast radius / constraint conflict. Literal, low-risk, reversible → do it directly.
-      - ① XY ② verifiable premises ③ better path. Challenge once with reasons; user decides; no repeated pushing. No sycophancy: AI value = a perspective beyond the user's current view. If the plugin reminds before an edit, call `kix_discipline_spec` for goal/xy/assumptions/path/acceptance (`mode` = member composition + one-line reason).
+      ## Triple Requirement Check (signal-triggered only; kix-discipline enforces the contract before edits)
+      - Signals: implementation vocabulary / unclear goal / large irreversible blast radius / constraint conflict. Literal, low-risk, reversible → just do it.
+      - ① XY ② verifiable premises ③ better path. Challenge once with reasons; user decides; no re-pushing. No sycophancy: AI value = a perspective beyond the user's current view. If the plugin reminds before an edit, call `kix_discipline_spec` for goal/xy/assumptions/path/acceptance (`mode` = member composition + one-line reason).
 
       ## Pre-Code Decision Chain
       Does it need to exist → repo (grep) → standard library → platform native → installed deps → one-liner → minimal viable.
@@ -66,35 +67,39 @@
 
       ## Pre-Delivery Verification Three Questions
       Touching event handling / type conversion / platform boundary / external API: ① does the test mirror the real path (stubs hide bugs) ② right evidence dimension (call-chain exists ≠ callee semantics) ③ key claims independently verified.
-      Run standard lint/tests before commit (Rust: fmt --check + clippy -D warnings + test; TS: eslint/prettier/typecheck). The green gate reminds when a turn edits without tests.
+      Run standard lint/tests before commit (Rust: fmt --check + clippy -D warnings + test; TS: eslint/prettier/typecheck). The green gate reminds on untested edits.
 
       ## Environment Defaults
-      Windows: `pwsh` 7.x (never 5.1); Linux/macOS: `bash`. Prefer the current major CLI; confirm with `Get-Command`/`--version` when unsure. Probe before declaring "insufficient system information" — never decline a task on that excuse.
+      Windows: `pwsh` 7.x (never 5.1); Linux/macOS: `bash`. Prefer the current major CLI; confirm with `Get-Command`/`--version` if unsure. Probe before declaring "insufficient system information" — never decline a task on that excuse.
+      Windows command reliability (argument arrays, quoting, exit codes, WSL bridge, background processes, cleanup) follows the `pwsh-reliable` skill; on shell failure, read it before retrying — never blind-escape.
 
       ## Process Routing Signals
       Attribute-driven: scale ≥3 files / external side effects / verification-critical / unclear goal. Any hit → pause for a composition decision and say it aloud; simple tasks skip the report. Static task-type → action mappings are forbidden.
 
       ## Arranger Model
-      - Main model = arranger; compose by task attributes (solo / observers / dev / qa / reviewer), not a fixed producer→dev→qa pipeline. Say the composition aloud and persist it in `kix_discipline_spec` `mode`. Dispatch prompt: Tri-Block + contract lines ≤5K (large context → file).
-      - Handoff metadata: when dispatching Sprint-orchestrated subagents (dev/qa/reviewer etc.), the dispatch prompt's contract lines MUST carry `current_sprint: N` (N read from docs/.kixpower-current-sprint in the workspace) — kix-orchestration's handoff gate (marker consistency / plan+progress existence / QA completion) only fires on that metadata line; observer/light-path dispatches without a sprint omit it.
-      - Heavy-path members (auto-activate on first use via `kix_capability_call`, or pre-activate with `kix_tool_activate`): dev = Nova/Sage/Milo three-in-one (plan-scoped, target_rules only, never QA sign-off); qa = Ivy (no business source, evidence gate, signoff artifacts); reviewer = read-only three-layer devil's advocate. Light-path observers use unnamed perspective prompts; read producer.agent.md for heavy planning; no orchestrator — coordination stays in the main thread.
+      - Main model = arranger; compose by task attributes (solo / observers / dev / qa / reviewer), not a fixed producer→dev→qa pipeline. Say it aloud and persist it in `kix_discipline_spec` `mode`. Dispatch prompt: Tri-Block + contract lines ≤5K (large context → file).
+      - Handoff metadata: when dispatching Sprint-orchestrated subagents (dev/qa/reviewer), the dispatch prompt's contract lines MUST carry `current_sprint: N` (N read from docs/.kixpower-current-sprint) — kix-orchestration's handoff gate (marker / plan+progress / QA-completion) only fires on that metadata line; sprint-less observer/light dispatches omit it.
+      - Heavy-path members (auto-activate on first use): dev = Nova/Sage/Milo three-in-one (plan-scoped, target_rules only, never QA sign-off); qa = Ivy (no business source, evidence gate, signoff artifacts); reviewer = read-only three-layer devil's advocate. Light-path observers use unnamed perspective prompts; read producer.agent.md for heavy planning; no orchestrator — coordination stays in the main thread.
       - Mis-composition mid-flight → recompose once and say it.
-      - Four floors: ① your/dev claims always independently observed, never self-attested ② coordination stays in the main thread ③ perspectives come from prompts, names are contract handles ④ gates are composition-independent — never publish/comment/merge/destructive by default; an explicit user instruction ("comment on the PR") is the decision, so execute directly without re-asking; team output returns to three-channel verification. Full-flow signals → suggest `/kixpower-*`, wait for confirmation.
+      - Four floors: ① your/dev claims always independently observed, never self-attested ② coordination stays in the main thread ③ perspectives come from prompts, names are contract handles ④ gates are composition-independent — never publish/comment/merge/destructive by default; an explicit user instruction ("comment on the PR") already is the decision — execute without re-asking; team output returns to three-channel verification. Full-flow signals → suggest `/kixpower-*`, wait for confirmation.
 
       ## Cost Discipline
-      - Tiers: lite (mechanical 8K, on demand) → subagent (default 64K) → subagent_cross (cross-vendor 64K) → subagent_thinker (128K, high-risk).
+      - Tiers: lite (mechanical 8K) → subagent (default 64K) → subagent_cross (cross-vendor 64K) → subagent_thinker (128K, high-risk).
       - Mark dispatch `[EFFORT]`+`[BUDGET]`; observers 1 default, 2 for divergence/high-risk, ≤3 concurrent.
-      - No polling spin: spawn, then wait foreground or do other work; `job_output`/`list_agents` are checkpoints, not thinking points. Work exhausted but results missing → short status, end the turn; settlement/report wakes a new turn unconditionally. `sleep` only for tests/backoff/lock waits.
-      - Single-channel results: final message = full report (settlement carries it — do not `report` the same text); mid-run `report` only when truly needed. Prefer `outputSchema` for structured returns; reuse conclusions from progress.md/memories.
+      - No polling spin: spawn then wait foreground or read-only work; verified files frozen till observers settle; prompts: abs path+version anchors+forbid lists; `job_output`/`list_agents` are checkpoints, not thinking points. Work done, results missing → short status, end turn; settlement/report wakes a new turn unconditionally. `sleep` only for tests/backoff/lock waits.
+      - Single-channel results: final message = full report (settlement carries it; do not `report` it again); mid-run `report` only when truly needed. Prefer `outputSchema` for structured returns; reuse conclusions from progress.md/memories.
+      - Main-session budget (㉑-㉕): kix-budget reads model window and `agent/pre-step.step`; budget caps at 150K; after step 41 or overflow `tools/pre-execute` rejects ordinary main-thread tools until `subagent_lite`/`create_goal` handoff; per-result pruning follows the host threshold; defer deactivation to turn end.
+      - Child effort by complexity (v5.11): a first-pre-step zero-token classifier reads the child prompt — trivial → thinking off (high confidence only); standard keeps high; deep (cap >8K) → max; lite never silently becomes thinker; non-DeepSeek is capability-gated via `llm.resolveModelInfo` (trivial → off, else low; deep → max, only if the model's efforts list them; unknown/standard unchanged); explicit complexity:/effort/tier/maxTokens win; classify once per child (no header churn).
 
       ## DSH Adaptation
-      - Dispatch: `subagent` with `agents/*.agent.md` role body + Tri-Block; `subagent_fork` to inherit session context. Cross-vendor → `subagent_cross`; vision → `subagent_vision` (path + question); `📷 [图片自动识别]` is vision-bridge output, not user words.
+      - Dispatch: `subagent` with `agents/*.agent.md` role body + Tri-Block; `subagent_fork` inherits session context. Cross-vendor → `subagent_cross`; vision → `subagent_vision` (path + question); `📷 [图片自动识别]` is vision-bridge output, not user words.
       - Mounted gates: kix-guards (dangerous git/SQL/control-plane/unknown-exec), kix-discipline, kix-orchestration; `/kixpower-*` zero-token.
-      - Tool surface: kix-focus keeps file/execution, ask_user_question/todo_write/skill, subagent + subagent_cross, subagent control, background jobs (jobs resident), discovery resident. Lite/thinker/vision/fork/reviewer/qa/dev and goal are unmounted by default and **auto-activate on first use** — `kix_capability_call { tool: subagent_qa, arguments: {…} }` mounts and runs it, directly callable from the next turn; explicit `kix_tool_activate` still works, `kix_tool_deactivate` unloads. web_search and MCP via `kix_capability_call`; workflow needs `disabled` removed + restart.
+      - Tool surface: kix-focus keeps file/execution, ask_user_question/todo_write/skill, subagent + subagent_cross, subagent control, background jobs + discovery resident. Lite/thinker/vision/fork/reviewer/qa/dev and goal are unmounted by default and **auto-activate on first use** — `kix_capability_call { tool: subagent_qa, arguments: {…} }` mounts and runs it, directly callable next turn; `kix_tool_activate`/`kix_tool_deactivate` pre-activate/unload. web_search and MCP via `kix_capability_call`; workflow needs `disabled` removed + restart.
+      - Child orchestration plane (v5.10, ledger-based): child surfaces are trimmed of the orchestration menu (subagents/agent control — static deny + kix-cost child guard; run_code stays as the reserved Code Mode transport; file/exec/search/jobs/report/MCP kept) — further delegation belongs in the report to the main thread; `kix_tool_deactivate` lands at turn end (surface churn breaks the prefix cache).
       - Native first: workflow for multi-stage, goal for long-horizon, plan mode for planning, run_in_background + job_output for long tasks. Verification/observation stay native (evidence replayable); on deny, stop.
 
       ## Resources
-      `instructions/kixparadigm-core.instructions.md`; skills `skills/kixparadigm`, `skills/kixpower`; flows `prompts/kixpower-*`; memories `memories/*.md`. Deep-mechanism docs remain Chinese originals in this edition (see TRANSLATION-STATUS.md).
+      `instructions/kixparadigm-core.instructions.md`; `skills/kixparadigm`, `skills/kixpower`, `skills/pwsh-reliable` (Windows); `prompts/kixpower-*`; `memories/*.md`. Deep-mechanism docs stay Chinese in this edition (TRANSLATION-STATUS.md).
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
   config:
@@ -233,6 +238,22 @@
   config:
     - id: compaction-basic
       name: '@deepseek-ai/dsh-compaction-basic'
+      config:
+        # v5.9 (2026-08-17, ledger-measured): the default 0.8 on a 1M window is
+        # an 800K threshold — the kixpower remediation session climbed to 466K
+        # without ever triggering it, burning 100.8M re-read tokens through
+        # O(N²) context growth. Global drop to 0.45; the two measured 1M-window
+        # models pinned at 0.18 (=180K, aligned with the kix-budget advisory
+        # line). Unlisted models fall back to 0.45 while kix-budget's dynamic
+        # budget (min(35%×window, 180K)) still tracks the real window.
+        thresholdRatio: 0.45
+        modelPolicies:
+          - provider: deepseek-official
+            model: deepseek-v4-pro
+            thresholdRatio: 0.18
+          - provider: zai-coding-cn
+            model: glm-5.3
+            thresholdRatio: 0.18
 
     - id: command-compact
       name: '@deepseek-ai/dsh-command-compact'
@@ -240,9 +261,16 @@
     - id: tool-result-pruner
       name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
       config:
-        thresholdChars: 8192
-        headChars: 4096
-        tailChars: 1024
+        thresholdChars: 2048
+        headChars: 1024
+        tailChars: 512
+
+    # v5.9 main-session budget (㉑-㉓): advisories + eager pruning. Must sit in
+    # this realm — ctx.get('toolResultPruner') is visible only inside the
+    # isolate realm (same constraint as compaction-basic); tokenMeter/llm stay
+    # on the host plane and resolve fine from here.
+    - id: kix-budget
+      name: ./plugins/kix-budget.js
 
 # ── delegation and workflows ────────────────────────────────────────────────
 
@@ -279,6 +307,24 @@
         provider: spawn
         toolName: subagent
         backgroundMode: continuable
+        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
+        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call all ZERO uses) — child
+        # orchestration-surface trim. The deny list holds 9 permanently
+        # mounted orchestration names only (restrict throws on unknown
+        # names); conditionally-mounted tiers/workflow are covered by the
+        # kix-cost child guard. Denied names vanish from both the tools
+        # array and the system TypeScript mirror. run_code is NOT in the
+        # deny list: it is the reserved Code Mode transport — restrict
+        # cannot name it (WSL2 live-fire finding) — and as a legitimate
+        # execution channel it stays visible on the child surface, its
+        # tool mirror included. subagent×2/agent control are duties of
+        # the main thread (kix invariant "coordination stays on the
+        # main thread"). File/exec/search/jobs/skill/report/MCP
+        # (capability_call) all stay — this trims the orchestration plane
+        # children never own, not capability.
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           # v5.8 budget cap: completion-side (thinking+answer) safety ceiling (s1 budget forcing)
           maxTokens: 65536
@@ -342,6 +388,24 @@
         provider: spawn
         toolName: subagent_thinker
         backgroundMode: continuable
+        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
+        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call all ZERO uses) — child
+        # orchestration-surface trim. The deny list holds 9 permanently
+        # mounted orchestration names only (restrict throws on unknown
+        # names); conditionally-mounted tiers/workflow are covered by the
+        # kix-cost child guard. Denied names vanish from both the tools
+        # array and the system TypeScript mirror. run_code is NOT in the
+        # deny list: it is the reserved Code Mode transport — restrict
+        # cannot name it (WSL2 live-fire finding) — and as a legitimate
+        # execution channel it stays visible on the child surface, its
+        # tool mirror included. subagent×2/agent control are duties of
+        # the main thread (kix invariant "coordination stays on the
+        # main thread"). File/exec/search/jobs/skill/report/MCP
+        # (capability_call) all stay — this trims the orchestration plane
+        # children never own, not capability.
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           model: kix-route:thinker
           maxTokens: 131072
@@ -370,6 +434,24 @@
         provider: spawn
         toolName: subagent_cross
         backgroundMode: continuable
+        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
+        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call all ZERO uses) — child
+        # orchestration-surface trim. The deny list holds 9 permanently
+        # mounted orchestration names only (restrict throws on unknown
+        # names); conditionally-mounted tiers/workflow are covered by the
+        # kix-cost child guard. Denied names vanish from both the tools
+        # array and the system TypeScript mirror. run_code is NOT in the
+        # deny list: it is the reserved Code Mode transport — restrict
+        # cannot name it (WSL2 live-fire finding) — and as a legitimate
+        # execution channel it stays visible on the child surface, its
+        # tool mirror included. subagent×2/agent control are duties of
+        # the main thread (kix invariant "coordination stays on the
+        # main thread"). File/exec/search/jobs/skill/report/MCP
+        # (capability_call) all stay — this trims the orchestration plane
+        # children never own, not capability.
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           model: kix-route:cross
           maxTokens: 65536
@@ -393,6 +475,24 @@
         provider: spawn
         toolName: subagent_vision
         backgroundMode: continuable
+        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
+        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call all ZERO uses) — child
+        # orchestration-surface trim. The deny list holds 9 permanently
+        # mounted orchestration names only (restrict throws on unknown
+        # names); conditionally-mounted tiers/workflow are covered by the
+        # kix-cost child guard. Denied names vanish from both the tools
+        # array and the system TypeScript mirror. run_code is NOT in the
+        # deny list: it is the reserved Code Mode transport — restrict
+        # cannot name it (WSL2 live-fire finding) — and as a legitimate
+        # execution channel it stays visible on the child surface, its
+        # tool mirror included. subagent×2/agent control are duties of
+        # the main thread (kix invariant "coordination stays on the
+        # main thread"). File/exec/search/jobs/skill/report/MCP
+        # (capability_call) all stay — this trims the orchestration plane
+        # children never own, not capability.
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           model: kix-route:vision
           # vision models commonly cap output at 4K (settings zai-vision maxTokens 4096);
@@ -406,6 +506,24 @@
         provider: fork
         toolName: subagent_fork
         backgroundMode: continuable
+        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
+        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call all ZERO uses) — child
+        # orchestration-surface trim. The deny list holds 9 permanently
+        # mounted orchestration names only (restrict throws on unknown
+        # names); conditionally-mounted tiers/workflow are covered by the
+        # kix-cost child guard. Denied names vanish from both the tools
+        # array and the system TypeScript mirror. run_code is NOT in the
+        # deny list: it is the reserved Code Mode transport — restrict
+        # cannot name it (WSL2 live-fire finding) — and as a legitimate
+        # execution channel it stays visible on the child surface, its
+        # tool mirror included. subagent×2/agent control are duties of
+        # the main thread (kix invariant "coordination stays on the
+        # main thread"). File/exec/search/jobs/skill/report/MCP
+        # (capability_call) all stay — this trims the orchestration plane
+        # children never own, not capability.
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           # v5.8 budget cap: context-inheriting children get the same ceiling
           maxTokens: 65536
@@ -426,6 +544,24 @@
         provider: spawn
         toolName: subagent_reviewer
         backgroundMode: continuable
+        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
+        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call all ZERO uses) — child
+        # orchestration-surface trim. The deny list holds 9 permanently
+        # mounted orchestration names only (restrict throws on unknown
+        # names); conditionally-mounted tiers/workflow are covered by the
+        # kix-cost child guard. Denied names vanish from both the tools
+        # array and the system TypeScript mirror. run_code is NOT in the
+        # deny list: it is the reserved Code Mode transport — restrict
+        # cannot name it (WSL2 live-fire finding) — and as a legitimate
+        # execution channel it stays visible on the child surface, its
+        # tool mirror included. subagent×2/agent control are duties of
+        # the main thread (kix invariant "coordination stays on the
+        # main thread"). File/exec/search/jobs/skill/report/MCP
+        # (capability_call) all stay — this trims the orchestration plane
+        # children never own, not capability.
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         persona: |-
           You are kixpower-reviewer: an independent read-only adversarial reviewer.
           Hard constraints:
@@ -476,6 +612,24 @@
         provider: spawn
         toolName: subagent_qa
         backgroundMode: continuable
+        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
+        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call all ZERO uses) — child
+        # orchestration-surface trim. The deny list holds 9 permanently
+        # mounted orchestration names only (restrict throws on unknown
+        # names); conditionally-mounted tiers/workflow are covered by the
+        # kix-cost child guard. Denied names vanish from both the tools
+        # array and the system TypeScript mirror. run_code is NOT in the
+        # deny list: it is the reserved Code Mode transport — restrict
+        # cannot name it (WSL2 live-fire finding) — and as a legitimate
+        # execution channel it stays visible on the child surface, its
+        # tool mirror included. subagent×2/agent control are duties of
+        # the main thread (kix invariant "coordination stays on the
+        # main thread"). File/exec/search/jobs/skill/report/MCP
+        # (capability_call) all stay — this trims the orchestration plane
+        # children never own, not capability.
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         persona: |-
           You are kixpower-qa (Ivy): acceptance testing, bug filing, and QA
           signoff — never business source code.
@@ -505,6 +659,24 @@
         provider: spawn
         toolName: subagent_dev
         backgroundMode: continuable
+        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
+        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call all ZERO uses) — child
+        # orchestration-surface trim. The deny list holds 9 permanently
+        # mounted orchestration names only (restrict throws on unknown
+        # names); conditionally-mounted tiers/workflow are covered by the
+        # kix-cost child guard. Denied names vanish from both the tools
+        # array and the system TypeScript mirror. run_code is NOT in the
+        # deny list: it is the reserved Code Mode transport — restrict
+        # cannot name it (WSL2 live-fire finding) — and as a legitimate
+        # execution channel it stays visible on the child surface, its
+        # tool mirror included. subagent×2/agent control are duties of
+        # the main thread (kix invariant "coordination stays on the
+        # main thread"). File/exec/search/jobs/skill/report/MCP
+        # (capability_call) all stay — this trims the orchestration plane
+        # children never own, not capability.
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         persona: |-
           You are kixpower-dev (Nova frontend / Sage backend / Milo design —
           one contract, three hats): the coding member on the CEO team.

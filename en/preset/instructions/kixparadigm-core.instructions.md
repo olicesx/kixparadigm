@@ -69,6 +69,7 @@ Always run when touching **event handling / type conversions / platform boundari
 ## Environment Defaults (toolchain choice)
 
 - **Default to `pwsh` (7.x), not `powershell` (5.1), for scripts/commands**: 5.1 reads UTF-8-without-BOM .ps1 files as GBK (Chinese assertions garble) and wraps native stderr as `NativeCommandError`, which aborts under `$ErrorActionPreference='Stop'` — this once caused a false FAIL in the kixpower contract tests (evidence 2026-08-12)
+- **Windows command reliability follows the `skills/pwsh-reliable` skill** (absorbed 2026-08-17): pass native arguments as an array with the call operator, capture `$LASTEXITCODE` immediately, classify expected nonzero exits, respect each quoting boundary across parser layers (WSL compound scripts cross the bridge base64-encoded), clean up background processes by exact PID; on a shell failure, read the skill before retrying — never blind-escape
 - Same for other languages: prefer the platform's current major CLI; when unsure, confirm with `Get-Command` / `--version` instead of assuming defaults
 
 ## Process Routing Signals (meta-decision at task start, isomorphic to the Triple Requirement Check)
