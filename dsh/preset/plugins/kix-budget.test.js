@@ -11,7 +11,8 @@
 //   - 预算建议：ctx ≥ 预算 → 注入一次 ㉑ 建议（优先于 streak）；纯散文
 //     回合走 turn-stopping steer 通道
 //   - 急剪：单结果超过宿主字符阈值或 ctx ≥ 50% 预算 → pre-step 调 pruneSession
-//   - 主会话 context>动态预算，或动态计量不可用且 step>40 → 硬门禁，lite/goal 交接解除
+//   - 主会话 context>动态预算，或动态计量不可用且 step>40 → 硬门禁，
+//     foreground 交接（lite/goal/dev·qa·reviewer）解除；gate 期后台 transition 被拒
 //   - turn/start 重置回合内状态
 // 运行：node plugins/kix-budget.test.js
 
@@ -96,6 +97,22 @@ check('background lite 不完成交接', I.transitionCompletesHandoff({ name: 's
 check('foreground lite 完成交接', I.transitionCompletesHandoff({ name: 'subagent_lite', arguments: { run_in_background: false } }) === true)
 check('proxy foreground lite 完成交接', I.transitionCompletesHandoff({ name: 'kix_capability_call', arguments: { tool: 'subagent_lite', arguments: { run_in_background: false } } }) === true)
 check('create_goal 完成交接', I.transitionCompletesHandoff({ name: 'create_goal', arguments: {} }) === true)
+
+// ── v7 编曲保育（2026-08-19）：gate 定价中立，不干预成员选择 ─────────────
+check('HANDOFF_TARGETS 含全部角色档', I.HANDOFF_TARGETS.has('subagent_dev') && I.HANDOFF_TARGETS.has('subagent_qa') && I.HANDOFF_TARGETS.has('subagent_reviewer'))
+check('foreground dev 完成交接', I.transitionCompletesHandoff({ name: 'subagent_dev', arguments: { run_in_background: false } }) === true)
+check('foreground qa 完成交接', I.transitionCompletesHandoff({ name: 'subagent_qa', arguments: { run_in_background: false } }) === true)
+check('foreground reviewer 完成交接', I.transitionCompletesHandoff({ name: 'subagent_reviewer', arguments: { run_in_background: false } }) === true)
+check('background dev 不完成交接', I.transitionCompletesHandoff({ name: 'subagent_dev', arguments: { run_in_background: true } }) === false)
+check('proxy foreground qa 完成交接', I.transitionCompletesHandoff({ name: 'kix_capability_call', arguments: { tool: 'subagent_qa', arguments: { run_in_background: false } } }) === true)
+check('gate 期角色档激活属于发现（放行不 deny）', I.isHandoffDiscovery({ name: 'kix_tool_activate', arguments: { tool: 'subagent_dev' } }) === true)
+check('gate 期 goal 激活仍属发现', I.isHandoffDiscovery({ name: 'kix_tool_activate', arguments: { tool: 'goal' } }) === true)
+check('gate 期无关激活不属于发现', I.isHandoffDiscovery({ name: 'kix_tool_activate', arguments: { tool: 'browser' } }) === false)
+check('文案含重路径菜单（streak）', I.streakAdviceText(8).includes('dev·qa·reviewer') === true)
+check('文案含轻路径（streak）', I.streakAdviceText(8).includes('subagent_lite') === true)
+check('文案含重路径菜单（gate）', I.handoffText({ handoffReason: 'context', handoffBudget: 400000, handoffStep: 41 }).includes('subagent_dev') === true)
+check('文案中立声明（gate）', I.handoffText({ handoffReason: 'context', handoffBudget: 400000, handoffStep: 41 }).includes('成员选择是编曲决策') === true)
+check('文案含重路径菜单（context 提醒）', I.contextAdviceText(420000, 400000).includes('dev·qa·reviewer') === true)
 check('unrelated proxy argument substring 不算 transition', I.transitionToolOf({ name: 'kix_capability_call', arguments: { tool: 'web_search', arguments: { query: 'subagent_lite' } } }) === undefined)
 check('structured status: top-level success wins over report evidence', I.structuredResultStatus({ ok: true, result: 'report cites {"ok":false}' }) === 'success')
 check('structured status: canonical isError=false is success', I.structuredResultStatus({ isError: false, content: 'report' }) === 'success')
@@ -190,12 +207,25 @@ async function main() {
   check('普通工具被 gate 拒绝', (await preGate(mainAgent, 'read', {})).kind === 'deny')
   check('unrelated capability_call 参数仅提及 lite 仍被 gate 拒绝', (await preGate(mainAgent, 'kix_capability_call', { tool: 'web_search', arguments: { query: 'subagent_lite usage' } })).kind === 'deny')
   const backgroundLite = { tool: 'subagent_lite', arguments: { run_in_background: true } }
-  check('background lite transition 可启动', (await preGate(mainAgent, 'kix_capability_call', backgroundLite)).kind === 'allow')
-  await postExec(mainAgent, 'kix_capability_call', backgroundLite)
-  check('background spawn 不解除 gate', (await preGate(mainAgent, 'read', {})).kind === 'deny')
+  check('gate 期 background lite transition 被拒（结果回流加重溢出）', (await preGate(mainAgent, 'kix_capability_call', backgroundLite)).kind === 'deny')
   const foregroundLite = { tool: 'subagent_lite', arguments: { run_in_background: false } }
   await postExec(mainAgent, 'kix_capability_call', foregroundLite, { isError: false, value: { ok: true }, content: [{ type: 'text', text: '{"ok":true}' }] })
   check('foreground lite 完整回流后解除 gate', (await preGate(mainAgent, 'read', {})).kind === 'allow')
+
+  // ── v7 编曲保育（管线级）：角色档分派在 gate 下对称可达 ─────────────────
+  listeners['session/event'][0](mainAgent.session, { type: 'turn/start', data: { turn: 4 } })
+  listeners['session/event'][0](mainAgent.session, {
+    type: 'assistant/message',
+    data: { usage: { inputTokens: 250000, cacheReadTokens: 180000 } },
+  })
+  await postExec(mainAgent, 'edit', { file_path: 'y' })
+  check('gate 重新激活', (await preGate(mainAgent, 'read', {})).kind === 'deny')
+  check('gate 期角色档激活（发现）放行', (await preGate(mainAgent, 'kix_tool_activate', { tool: 'subagent_dev' })).kind === 'allow')
+  const backgroundDev = { tool: 'subagent_dev', arguments: { run_in_background: true } }
+  check('gate 期 background dev transition 被拒（防 64K 角色档后台空耗）', (await preGate(mainAgent, 'kix_capability_call', backgroundDev)).kind === 'deny')
+  const foregroundDev = { tool: 'subagent_dev', arguments: { run_in_background: false } }
+  await postExec(mainAgent, 'kix_capability_call', foregroundDev, { isError: false, value: { ok: true }, content: [{ type: 'text', text: '{"ok":true}' }] })
+  check('foreground dev 完整回流后解除 gate（管线级）', (await preGate(mainAgent, 'read', {})).kind === 'allow')
   const nestedAgent = makeAgent('s-nested', 'zai-coding-cn', 'glm-5.3')
   listeners['session/event'][0](nestedAgent.session, { type: 'turn/start', data: { turn: 1 } })
   await preStep(nestedAgent, 41)

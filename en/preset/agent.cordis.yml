@@ -88,7 +88,7 @@
       - Mark dispatch `[EFFORT]`+`[BUDGET]`; observers 1 default, 2 for divergence/high-risk, ≤3 concurrent.
       - No polling spin: use background only while independent work remains; the final verification required for publication must run foreground, and every critical observer must settle before final. While an observer runs, freeze only its exact claim + evidence cursor/measurement; other claims in the same file and main-thread synthesis remain readable. Prompts carry absolute paths, version anchors, and forbid lists; `sleep` is only for tests/backoff/locks.
       - Single-channel results: small results return one complete final message and never duplicate it via `report`; large results write one complete artifact, then final returns only its absolute path, conclusion, and status. Prefer `outputSchema`; reuse conclusions from progress.md/memories.
-      - Main-session budget (㉑-㉕): when both the dynamic model window and usage/tokenMeter are available, only the tiered token budget is a hard gate; 150K/41 steps are fallback boundaries when either measurement plane is missing. A breach requires foreground subagent_lite/create_goal handoff; background spawn does not complete it.
+      - Main-session budget (㉑-㉕): when both the dynamic model window and usage/tokenMeter are available, only the tiered token budget is a hard gate; 150K/41 steps are fallback boundaries when either measurement plane is missing. A breach requires a foreground handoff — light path lite/goal or heavy path dev·qa·reviewer both release it (the gate only guarantees offload and never picks members); background spawn does not complete it.
       - Child effort (v5.11): explicit complexity:/effort/tier/maxTokens labels win; otherwise the tier is auto-picked from prompt complexity.
 
       ## DSH Adaptation
@@ -971,3 +971,18 @@
 # enable after real-project evidence. Enable by uncommenting the two lines below.
 # - id: kix-stalled
 #   name: ./plugins/kix-stalled.js
+
+# ── kix-signal (spec-draft single signal; 2026-08-18 born 3-signal / 08-19 converged) ──
+# S3 spec-draft: first source edit without a discipline contract → inject a
+# five-field draft template (turns writing from scratch into fill-in-the-blank).
+# Design evidence: reminder-channel compliance 2/2 vs model self-drive 13%
+# (349-session corpus). Co-triggers with kix-discipline red-remind — one notice
+# each (discipline nags, this one scaffolds), complementary.
+# S1 poll-guard / S2 orchestration-trigger retired: overlap with host
+# repeat-tool-reminder / kix-budget streak+gate (full death certificate in the
+# plugin header). Fully advisory, zero deny. Rollback: comment the block below
+# and restart the host.
+- id: kix-signal
+  name: ./plugins/kix-signal.js
+  config:
+    specDraft: true

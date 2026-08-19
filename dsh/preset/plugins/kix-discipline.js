@@ -55,6 +55,36 @@ const lib = require('./consistency-lib.cjs')
 // ── 常量 ───────────────────────────────────────────────────────────────────
 const SPEC_FILENAME = 'spec.md'
 const SPEC_DIRNAME = 'kix-discipline'
+
+// solo 挑战信号（v7 编曲保育 ②，2026-08-19）：goal+path 合并文本出现这些
+// 语义时，mode=solo 视为可疑（需辩护理由或改组合）。保守取向——只收明确的
+// 跨模块/多文件/独立验收词汇，措辞模糊不触发（宁可漏放，不可误拦）。
+const SOLO_CHALLENGE_RES = [
+  /跨模块|多文件|多个文件|多个模块|全部界面|所有模块/,
+  /独立验证|独立验收|独立审查|独立复核/,
+  /并修复|且修复|审计.*修复/,
+  /\bdev\b.*\bqa\b|\bqa\b.*独立|验证关键/,
+]
+
+/** mode=solo 与任务信号一致性挑战；返回 undefined = 放行（含：mode 非 solo /
+ *  二次提交含辩护理由 / 信号未命中）。挑战一次即放（retryAllowed）。 */
+function soloModeChallenge(spec) {
+  const mode = String((spec && spec.mode) || '')
+  // 只挑战「solo」自评（含中文写法）；空 mode 走 persona 路由提醒，不在此拦
+  if (!/solo|单线程|主线程独|自己干/i.test(mode)) return undefined
+  const text = `${spec.goal || ''}\n${spec.path || ''}`
+  if (!SOLO_CHALLENGE_RES.some((re) => re.test(text))) return undefined
+  // mode 里已带辩护理由（括号/冒号/破折号后的说明）→ 二次提交，放行
+  const rationale = mode.replace(/^[\w\u4e00-\u9fff]+\s*[（(:：—-]?\s*/, '')
+  if (rationale.length >= 8 && !/^(solo|主线程|单线程)/i.test(rationale)) return undefined
+  return [
+    'kix-discipline: mode=solo 与任务信号不一致——goal/path 显示跨模块/多文件/独立验证语义，',
+    'solo 的适用面是「字面明确、低风险、可逆」（如单文件修复）。两种解除方式：',
+    '① 改 mode 为实际组合（如 "dev+qa：跨模块改动需独立验收"，成员经 kix_capability_call 直达）；',
+    '② 确认 solo 后重交，并在 mode 里附一句辩护理由（如 "solo：改动实际只涉及单文件且已有 green 测试覆盖"）。',
+  ].join('')
+}
+
 // 测试命令模式（bash/pwsh 文本匹配；与 kix-guards 的 KNOWN_SAFE 同层判断）
 const TEST_COMMAND_PATTERNS = [
   /(?:^|[;&|]\s*)(?:(?:pnpm|npm|npx|yarn|bun)(?:\s+run)?\s+(?:test|vitest|jest|mocha)(?:\s|$))/,
@@ -376,6 +406,16 @@ module.exports = {
         if (!complete) {
           return { ok: false, error: 'spec 契约不完整：goal/xy/assumptions/path/acceptance 五字段均必填（需求三检必须全部落定才算契约）。' }
         }
+        // v7 编曲保育 ②（2026-08-19 实测修正）：mode=solo 与任务信号一致性挑战。
+        // 实测（b2da1f02）：跨模块+验证关键任务自评 solo，103 步零分派零编曲决策——
+        // mode 自评失真是组队召回率的最后一公里断点。挑战补足非限制：信号不匹配时
+        // 拒绝本次落档并说明理由（模型要么改 mode 要么给 solo 辩护理由，二次提交放行），
+        // 不拦思考、不替代成员选择。信号判定保守：goal/path 里出现明确的跨模块/
+        // 多文件/独立验证语义才触发；纯措辞模糊不算。
+        const challenge = soloModeChallenge(spec)
+        if (challenge) {
+          return { ok: false, error: challenge, retryAllowed: true }
+        }
         const agent = exec && exec.agent
         const st = stateFor(agent)
         const saved = await st.saveSpec(spec)
@@ -544,6 +584,7 @@ module.exports.__internals = {
   specComplete,
   renderSpec,
   parseSpec,
+  soloModeChallenge,
   makeState,
   isDeflection,
   lastAssistantText,

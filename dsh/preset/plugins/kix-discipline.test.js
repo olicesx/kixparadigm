@@ -428,6 +428,40 @@ await ok('弹问: 无 sessionQuery → 静默跳过', (async () => {
 
 fs.rmSync(sessionRoot, { recursive: true, force: true })
 
+// ── v7 编曲保育 ②：mode=solo 信号一致性挑战（2026-08-19，b2da1f02 实证）──
+{
+  const I = plugin.__internals
+  await ok('挑战: 实证违规样本（跨模块+审计修复自评 solo）→ 拦截', I.soloModeChallenge({
+    goal: '游戏 UI 存在大量对真实用户不可见/不可操作的细节问题；要的是：以真实用户交互审计全部界面并修复',
+    path: '主线程写真实用户审计脚本 → vision 看截图取证 → 主线程修复 js/ui+css → 复审计',
+    mode: 'solo 主线程（浏览器交互需主线程驱动）',
+  }) !== undefined)
+  await ok('挑战: 正当 solo（单文件小修）→ 放行', I.soloModeChallenge({
+    goal: '修复 README 里的错别字', path: '直接 edit 单文件', mode: 'solo：字面明确单文件修复',
+  }) === undefined)
+  await ok('挑战: 带辩护理由的二次提交 → 放行', I.soloModeChallenge({
+    goal: '跨模块审计并修复', path: '主线程统一处理',
+    mode: 'solo：改动实际只涉及单文件且已有 green 测试覆盖，无需组队',
+  }) === undefined)
+  await ok('挑战: 组队 mode（dev+qa）→ 不拦', I.soloModeChallenge({
+    goal: '跨模块修复', path: '多文件', mode: 'dev+qa：跨模块需独立验收',
+  }) === undefined)
+  await ok('挑战: 空 mode → 不拦（persona 路由提醒管辖）', I.soloModeChallenge({
+    goal: '跨模块修复', path: '多文件', mode: '',
+  }) === undefined)
+  await ok('挑战: 措辞模糊无信号词 → 放行（保守取向）', I.soloModeChallenge({
+    goal: '看看这个功能怎么回事', path: '先调研再说', mode: 'solo',
+  }) === undefined)
+  // 端到端：execute 路径返回 retryAllowed 的挑战错误
+  const challengeSpec = {
+    goal: '以真实用户交互审计全部界面并修复', xy: '要真实可用', assumptions: '可测',
+    path: '主线程修复 js/ui+css 并复审计', acceptance: '审计 0 blocking', mode: 'solo 主线程',
+  }
+  const specToolChal = registeredTools.find((t) => t.name === 'kix_discipline_spec')
+  const rr = specToolChal ? await specToolChal.execute(challengeSpec, { name: 'kix_discipline_spec', arguments: challengeSpec, token: 't', callId: 'cc', agent: { id: 's-chal', session: { header: { cwd: '/tmp' } } } }) : null
+  await ok('挑战: execute 端到端返回 retryAllowed 错误（非静默落档）', rr && rr.ok === false && rr.retryAllowed === true && /solo 与任务信号不一致/.test(rr.error || ''))
+}
+
 // ── 汇总 ──────────────────────────────────────────────────────────────────
 console.log('\n──────────────────────────────')
 console.log(`kix-discipline: ${passed} passed, ${failed} failed`)
