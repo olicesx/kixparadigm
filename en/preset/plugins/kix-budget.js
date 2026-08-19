@@ -18,7 +18,9 @@
 //   - agent/pre-step（waterfall）：动态上下文超预算即交接；窗口或 usage 计量缺失时才以 40 步作硬兜底；新结果按宿主 pruner 字符阈值剪裁
 //     调 toolResultPruner.pruneSession —— 单结果超阈值立即剪，过半预算仍作为兜底
 //     （㉓）。原始事件由宿主 session surface 保留，插件不自行写文件。
-//   - tools/pre-execute：主会话 handoffRequired 时拒绝普通工具，只放行 lite/goal 交接；tools/post-execute 保留 streak 提醒
+//   - tools/pre-execute：主会话 handoffRequired 时拒绝普通工具与后台 transition，
+//     放行 foreground 交接（lite/goal/dev·qa·reviewer）与发现（search/激活）；
+//     tools/post-execute 保留 streak 提醒
 //     与动态预算 gate；agent/turn-stopping 对未完成交接发出可回放 steer。
 
 //   - agent/turn-stopping：纯散文回合也会收到一次 gate steer，交接完成后状态解除。
@@ -46,6 +48,13 @@
 //   - 本插件必须挂在 compaction 组 realm 内（isolate: toolResultPruner）：
 //     ctx.get('toolResultPruner') 只在同 realm 可见（compaction-basic 同款
 //     约束）；tokenMeter/llm 留在宿主面，realm 内照常解析。
+//
+//   - v7 编曲保育红线（2026-08-19，实测提炼）：本插件只定价、不路由——gate
+//     强制「主线程卸载发生」，从不干预「卸载给谁」；成员选择（lite 机械档 /
+//     dev·qa·reviewer 角色档 / goal）是编曲决策。放行集对全部卸载通道对称
+//     开放，防止成本梯度压制自主组队（实测 08-16→19 角色分派 3→2→0 衰减，
+//     审计见 scripts/audit-delegation-history.cjs；教训入
+//     memories/orchestration-lessons.md ⑥）。
 //
 // 挂载：preset agent.cordis.yml compaction 组内一行：
 //   - id: kix-budget
@@ -201,22 +210,26 @@ function prunerThreshold(pruner, cfg) {
     : Number(cfg.resultThresholdChars) || DEFAULTS.resultThresholdChars
 }
 
+// 卸载通道全集（v7 编曲保育）：lite 机械档 + 全部角色档 + goal。gate 对
+// 卸载通道对称放行——成员选择是编曲决策，成本机制不路由。
+const HANDOFF_TARGETS = new Set(['subagent_lite', 'subagent_dev', 'subagent_qa', 'subagent_reviewer', 'create_goal'])
+
 function transitionToolOf(exec) {
   const name = String(exec && exec.name || '')
-  if (name === 'subagent_lite' || name === 'create_goal') return name
+  if (HANDOFF_TARGETS.has(name)) return name
   if (name !== 'kix_capability_call') return undefined
   let args = exec && (exec.arguments ?? exec.args)
   if (typeof args === 'string') {
     try { args = JSON.parse(args) } catch { args = undefined }
   }
   const target = args && typeof args === 'object' ? String(args.tool || '') : ''
-  return target === 'subagent_lite' || target === 'create_goal' ? target : undefined
+  return HANDOFF_TARGETS.has(target) ? target : undefined
 }
 
 function transitionCompletesHandoff(exec) {
   const transition = transitionToolOf(exec)
   if (transition === 'create_goal') return true
-  if (transition !== 'subagent_lite') return false
+  if (!transition) return false
 
   let args = exec && (exec.arguments ?? exec.args)
   if (typeof args === 'string') {
@@ -292,18 +305,22 @@ function isHandoffDiscovery(exec) {
     try { args = JSON.parse(args) } catch { args = undefined }
   }
   const target = args && typeof args === 'object' ? String(args.tool || '') : ''
-  return target === 'subagent_lite' || target === 'goal'
+  return HANDOFF_TARGETS.has(target) || target === 'goal'
 }
 
 function handoffText(st) {
   const trigger = st.handoffReason === 'context'
     ? `上下文已达到动态预算 ${Math.round(st.handoffBudget / 1000)}K tokens`
     : `动态上下文计量不可用，当前回合已达到兜底边界 ${st.handoffStep} 步`
-  return `kix-budget gate: 主会话 ${trigger}。机械/长任务交接是强制边界：下一步只能调用 foreground subagent_lite（run_in_background:false）或 create_goal（可先用 capability_search 发现参数），不要继续主线程逐项取证；判断留在主线程。后台 spawn 不算完成，完整回流或 goal 交接后 gate 自动解除。`
+  return `kix-budget gate: 主会话 ${trigger}。机械/长任务交接是强制边界：完成一次 foreground 交接后 gate 自动解除——轻路径 subagent_lite（run_in_background:false）或 create_goal；重路径按编曲模型选 subagent_dev·subagent_qa·subagent_reviewer（foreground 完成即卸载；可先用 capability_search 发现参数）。成员选择是编曲决策，gate 只保证卸载发生。后台 spawn 不算完成。`
 }
 
 function handoffDenyText(st) {
-  return `${handoffText(st)} 当前工具调用已拒绝，原因：必须先完成可回放的 lite/goal 交接。`
+  return `${handoffText(st)} 当前工具调用已拒绝，原因：必须先完成一次 foreground 交接（lite/goal/dev·qa·reviewer 均可）。`
+}
+
+function backgroundTransitionDenyText(transition) {
+  return `kix-budget gate: 后台 ${transition} 分派被拒——后台 spawn 不卸载主线程，结果回流还会加重已溢出的上下文。请用 run_in_background:false 完成一次 foreground 交接（lite/goal/dev·qa·reviewer 均可解除 gate），或改用 create_goal。`
 }
 
 function satisfyHandoff(st) {
@@ -325,12 +342,12 @@ function makeUserMessage(text, form = 'notice') {
 }
 
 function streakAdviceText(n) {
-  return `kix-budget: 主线程已连续 ${n} 步只读检索/核对；这是收敛建议，不是交接完成。已知文件的机械并发/聚合用 run_code；仍需语义检索或判断时改派 subagent_lite（并行 ≤2）。小结果由最终消息完整回流；仅大结果写 artifact 并回路径+结论。判断与编排留在主线程，停止继续开新任务面。本回合不再重复提醒。`
+  return `kix-budget: 主线程已连续 ${n} 步只读检索/核对；这是收敛建议，不是交接完成。轻路径：已知文件的机械并发/聚合用 run_code，语义检索改派 subagent_lite（并行 ≤2）。重路径（编曲模型）：跨模块/验证关键任务选 dev·qa·reviewer（kix_capability_call 直达，首用自动挂载）。小结果由最终消息完整回流；仅大结果写 artifact 并回路径+结论。判断与编排留在主线程。本回合不再重复提醒。`
 }
 
 function budgetAdviceText(ctxTokens, budgetTokens) {
   const k = (n) => Math.round(n / 1000)
-  return `kix-budget: 上下文已达 ${k(ctxTokens)}K tokens（本会话动态预算 ${k(budgetTokens)}K；窗口由运行时模型目录解析）。① 已知文件机械聚合用 run_code，语义检索改派 subagent_lite ② 小结果最终消息完整回流，仅大结果写 artifact 并回路径+结论 ③ 本回合收尾，长任务用 goal 或 /kixpower-continue。本回合不再重复提醒。`
+  return `kix-budget: 上下文已达 ${k(ctxTokens)}K tokens（本会话动态预算 ${k(budgetTokens)}K；窗口由运行时模型目录解析）。① 已知文件机械聚合用 run_code，语义检索改派 subagent_lite ② 跨模块/验证关键任务按编曲模型选 dev·qa·reviewer（重路径卸载更强）③ 小结果最终消息完整回流，仅大结果写 artifact 并回路径+结论 ④ 本回合收尾，长任务用 goal 或 /kixpower-continue。本回合不再重复提醒。`
 }
 
 // ── 插件 ───────────────────────────────────────────────────────────────────
@@ -510,7 +527,15 @@ module.exports = {
       if (!session || !isMainAgent(agent) || cfg.hardHandoff === false) return next()
       const st = stateFor(session.id)
       if (!st.handoffRequired) return next()
-      if (transitionToolOf(exec) || isHandoffDiscovery(exec)) return next()
+      const transition = transitionToolOf(exec)
+      // v7 编曲保育 ②（观察者实测修正）：gate 期拒绝后台 transition 启动——
+      // 后台 spawn 既不卸载主线程，其结果回流还会加重已溢出的上下文；且
+      // 64K 角色档后台循环空耗是最坏 8× 成本放大面。foreground 交接与
+      // 发现（capability_search / 激活）照常放行，成员选择仍归编曲决策。
+      if (transition && transition !== 'create_goal' && !transitionCompletesHandoff(exec)) {
+        return { kind: 'deny', reason: backgroundTransitionDenyText(transition) }
+      }
+      if (transition || isHandoffDiscovery(exec)) return next()
       return { kind: 'deny', reason: handoffDenyText(st) }
     })
 
@@ -590,6 +615,7 @@ module.exports = {
   },
   __internals: {
     DEFAULTS,
+    HANDOFF_TARGETS,
     isReadOnlyCommand,
     isReadOnlyTool,
     resolveBudgetTokens,
@@ -606,7 +632,9 @@ module.exports = {
     isHandoffDiscovery,
     handoffText,
     handoffDenyText,
+    backgroundTransitionDenyText,
     streakAdviceText,
     budgetAdviceText,
+    contextAdviceText: budgetAdviceText,
   },
 }

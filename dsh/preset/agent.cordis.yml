@@ -88,7 +88,7 @@
       - prompt 标 [EFFORT]+[BUDGET]；观察者默认1，分歧/高风险2，并发≤3。
       - 禁轮询空转：仍有独立工作才后台；发布依赖的最后验证必须 foreground，final 前关键观察者均已结算。观察者在飞时只冻结其 exact claim + evidence cursor/measurement；同文件不同 claim 与主线程综合可读。派发 prompt 带绝对路径+版本锚+禁读清单；job_output/list_agents 取结果即走；sleep 只用于测试/退避/等锁。
       - 子代理结果单通道：小结果 final-only 完整回流，勿再 report 全文；大结果写完整 artifact，final 只回绝对路径+结论+状态。结构化回流优先 outputSchema；结论复用查 progress.md/memories。
-      - 主会话预算（㉑-㉕）：动态窗口与 usage/tokenMeter 有效时只按 token 分档预算 hard gate；任一计量面缺失时才用 150K/41 步 fallback。超限强制 foreground subagent_lite/create_goal 交接；后台 spawn 不算完成。
+      - 主会话预算（㉑-㉕）：动态窗口与 usage/tokenMeter 有效时只按 token 分档预算 hard gate；任一计量面缺失时才用 150K/41 步 fallback。超限强制 foreground 交接——轻路径 lite/goal 或重路径 dev·qa·reviewer 均可解除（gate 只保证卸载，不干预成员选择）；后台 spawn 不算完成。
       - 子代理 effort（v5.11）：显式 complexity:/effort/档位/maxTokens 标注优先；未标则按 prompt 复杂度自动定档。
 
       ## DSH 适配
@@ -855,35 +855,21 @@
 - id: kix-focus
   name: ./plugins/kix-focus.js
 
-# ── kix-browser（浏览器自动化原生工具，2026-08-18）───────────────────────
-# 背景：MCP 五跳链路在本宿主解析损坏（navigate/click ToolNotFound，根因未证）
-#   且形态错（--headless 内置 Chromium 非用户浏览器）；playwright-core 脚本
-#   直驱已实证（dsh-capability-map.md「浏览器自动化」行）。高频能力 → 原生化。
-# 单工具 browser{action}（17 action 全覆盖必要操作）：open/snapshot/text/
-#   click/type/press/select/hover/back/forward/reload/wait/screenshot/upload/
-#   tabs/dialog/close；CDP attach 优先（Edge/Chrome --remote-debugging-port=9222
-#   后接管真实浏览器，登录态保留），launch headless 兜底；会话跨调用持久；
-#   URL 门禁（仅 http/https/about:blank）；弹窗默认自动驳回、dialog{auto}
-#   改策略、结果携带 lastDialog；playwright-core 懒 require（未安装不影响
-#   插件装载，错误消息带安装指引）。**故意不含**：页内任意 JS（evaluate——
-#   kix blast-radius 红线，真需要走 pwsh 直驱脚本=代码级可审查）、网络拦截/
-#   cookie/PDF/拖拽（低频，脚本路径可覆盖）。env：KIX_BROWSER_CDP（默认
-#   http://127.0.0.1:9222，空串禁用 attach）/KIX_BROWSER_HEADLESS（默认 true）
-#   /KIX_BROWSER_CORE（显式路径）/KIX_BROWSER_TIMEOUT（默认 15000ms）。
-# 单元测试：node plugins/kix-browser.test.js（12 断言组：门禁/形状/队列/新
-#   action 校验/dialog 策略）。
-# 渐进披露（2026-08-18 与用户确认的合规形态）：默认**不装载**——browser 工具
-# 不占非浏览器会话的常驻 schema。发现与激活走 kix-focus：capability_search
-# 可见 browser-native 组；kix_capability_call { tool:"browser" } 首用自动
-# 挂载（ACTIVATABLE_TOOLS.browser → pkgPath 本地解析），下一轮直呼，
-# kix_tool_deactivate 卸载。需要常驻（每次会话都开箱可用）才取消下面两行
-# 注释并重启宿主。
-# - id: kix-browser
-#   name: ./plugins/kix-browser.js
-
 # ── kix-stalled（L3 档 A：stalled 机械检测，2026-08-15，默认注释 = opt-in）──
 # 只读、无状态、无常驻：/kixst-check <项目根> 命令（零 token）+ kix_stalled_check
 # 模型工具。candidate 状态（1 次夹具 E2E），真实项目证据后再考虑默认启用。
 # 启用：取消下面两行注释（或运行 scripts/install-kix-stalled.ps1，由用户 shell 执行）。
 # - id: kix-stalled
 #   name: ./plugins/kix-stalled.js
+
+# ── kix-signal（spec-draft 单信号，2026-08-18 三信号生 / 08-19 两轮收敛）──
+# S3 spec-draft：首次源编辑无需求契约 → 注入五字段草稿模板（写作题变改错题）。
+# 设计依据：提醒通道合规 2/2 vs 模型自驱 13%（349 会话对照）；与 kix-discipline
+# 的 red-remind 同触发各提醒一次（discipline 提醒 + 此处脚手架），语义互补。
+# S1 poll-guard / S2 orchestration-trigger 已退役（与宿主 repeat-tool-reminder /
+# kix-budget streak+gate 重叠，三层证据判退——完整死亡证明见插件头注释）。
+# 全 advisory 零 deny。回滚：注释下面整块并重启宿主。
+- id: kix-signal
+  name: ./plugins/kix-signal.js
+  config:
+    specDraft: true
