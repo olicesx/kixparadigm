@@ -245,7 +245,7 @@ async function softCase(label, name, args) {
   assert.ok(I, '__internals 已导出')
 
   // resolveCommitBudget
-  assert.strictEqual(I.resolveCommitBudget({}), 3, '无上下文 → 默认 3')
+  assert.strictEqual(I.resolveCommitBudget({}), 3, '无上下文 → 默认 3（v15 回退 v14 无证据提升）')
   assert.strictEqual(I.resolveCommitBudget({ progressMd: '---\nblast_radius:\n  commit_budget: 7\n---\nx' }), 7, 'progress.md 优先')
   assert.strictEqual(I.resolveCommitBudget({ planMd: 'task_sizing:\n  derived_commit_budget: 5' }), 5, 'plan.md 回退')
   assert.strictEqual(I.resolveCommitBudget({ progressMd: '---\nblast_radius:\n  commit_budget: 7\n---\n', planMd: 'task_sizing:\n  derived_commit_budget: 5' }), 7, 'progress 覆盖 plan')
@@ -344,6 +344,12 @@ async function softCase(label, name, args) {
   assert.ok(!I.targetsControlPlane('C:\\work\\kixparadigm\\en\\preset\\agent.cordis.yml'), 'Windows 反斜杠 en 源路径不拦')
   assert.ok(!I.targetsControlPlane('./dsh/preset/agent.cordis.yml'), './ 前缀源路径不拦')
   assert.ok(I.targetsControlPlane('C:/Users/x/.dsh/.agent-presets/kixparadigm/agent.cordis.yml'), '安装副本仍拦')
+  // v15.1：变体目录同样豁免（出生证明：2026-08-20 会话实弹 preset-null 误 remind）
+  assert.ok(!I.targetsControlPlane('dsh/preset-null/agent.cordis.yml'), 'preset-null 源路径不拦（v15.1）')
+  assert.ok(!I.targetsControlPlane('dsh/preset-classic/plugins/kix-guards.js'), 'preset-classic 源路径不拦（v15.1）')
+  assert.ok(!I.targetsControlPlane('en/preset-classic-en/agent.cordis.yml'), 'preset-classic-en 源路径不拦（v15.1）')
+  assert.ok(!I.targetsControlPlane('C:\\work\\kixparadigm\\dsh\\preset-null\\agent.cordis.yml'), 'Windows 反斜杠变体源路径不拦（v15.1）')
+  assert.ok(I.targetsControlPlane(`${HOME}/.dsh/.agent-presets/kixparadigm-classic/agent.cordis.yml`), '安装面变体仍拦（豁免不放行安装副本）')
   assert.ok(I.targetsControlPlane('agent.cordis.yml'), '裸文件名仍拦（无法证明是源仓库）')
   assert.ok(I.targetsControlPlane('dsh/preset/../../.dsh/.agent-presets/kixparadigm/agent.cordis.yml'), '源路径+.. 不能绕过安装面')
   passed += 8
@@ -444,7 +450,7 @@ async function softCase(label, name, args) {
   passed += 4
 
   // 9c. commitBudgetSource：来源标注（deny 消息 / 冷启动 warn）
-  assert.strictEqual(I.commitBudgetSource({}), '冷启动默认 3', '无上下文 → 冷启动')
+  assert.strictEqual(I.commitBudgetSource({}), '冷启动默认 3', '无上下文 → 冷启动（v15 回退）')
   assert.strictEqual(I.commitBudgetSource({ progressMd: '---\nblast_radius:\n  commit_budget: 7\n---\n' }), 'progress.md blast_radius.commit_budget')
   assert.strictEqual(I.commitBudgetSource({ planMd: 'task_sizing:\n  derived_commit_budget: 5\n' }), 'plan.md task_sizing.derived_commit_budget')
   assert.strictEqual(I.commitBudgetSource({ planMd: 'blast_radius:\n  max_commits: 5\n' }), 'plan.md blast_radius.max_commits')
@@ -518,6 +524,63 @@ async function softCase(label, name, args) {
     check('commit：message 含 push/main 字样 → allow（v3 消息域不误拦，分支检查放行）', await dispatchIn(gitRepo, 'pwsh', { command: 'git commit -m "push main docs"' }), false)
     fsg.rmSync(gitRepo, { recursive: true, force: true })
     fsg.rmSync(nonRepo, { recursive: true, force: true })
+  }
+
+  // ══ 11. v15：预算线结算 steer（超预算放行+一次对账提醒；fuse 硬帽不变）══
+  // 哲学依据见插件头 v15 死亡证明：预算线只会计不失控 → steer；churn 熔断保留。
+  {
+    const { execFileSync } = require('node:child_process')
+    const fsh = require('node:fs')
+    const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+    const repo = fsh.mkdtempSync(path.join(os.tmpdir(), 'kix-guards-v15-'))
+    git(['init', '-q'], repo)
+    git(['checkout', '-q', '-b', 'feature'], repo)
+    git(['config', 'user.email', 't@kix.local'], repo)
+    git(['config', 'user.name', 'kix-test'], repo)
+    const docs = path.join(repo, 'docs', 'sprint-1')
+    fsh.mkdirSync(docs, { recursive: true })
+    fsh.writeFileSync(path.join(repo, 'docs', '.kixpower-current-sprint'), '1')
+    fsh.writeFileSync(path.join(docs, 'progress.md'), '---\nblast_radius:\n  commit_budget: 2\n---\n')
+    fsh.writeFileSync(path.join(repo, 'a.txt'), '1')
+    git(['add', 'a.txt'], repo)
+    git(['commit', '-qm', 'init'], repo)
+    fsh.writeFileSync(path.join(repo, 'b.txt'), '2')
+    git(['add', 'b.txt'], repo)
+    git(['commit', '-qm', 'second'], repo)
+    // commits=2 = budget=2：第 3 次 commit 意图超线 → v15 放行 + 结算提醒
+    const dispatchInRemind = async (cwd, name, args) => {
+      const exec = { name, arguments: args, token: 't', callId: nextCallId(), agent: { id: 'test-agent', session: { header: { cwd } } } }
+      const pre = await preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+      const post = await postExecute[0](exec, { kind: 'success' }, () => Promise.resolve({ kind: 'accept' }))
+      return { pre, post }
+    }
+    const third = await dispatchInRemind(repo, 'pwsh', { command: 'git commit -am "third"' })
+    const steerText = third.post && Array.isArray(third.post.additionalContexts)
+      && third.post.additionalContexts[0] && third.post.additionalContexts[0].content
+      && third.post.additionalContexts[0].content[0] && third.post.additionalContexts[0].content[0].text
+    const preAllowed = !third.pre || third.pre.kind !== 'deny'
+    const steerOk = typeof steerText === 'string' && steerText.includes('结算提醒') && steerText.includes('commits=2') && steerText.includes('预算 2') && steerText.includes('sprint-1')
+    console.log(`${preAllowed && steerOk ? 'PASS' : 'FAIL'}  v15 超预算 commit → 放行 + post 注入结算提醒（含 commits=2/预算 2/来源）`)
+    preAllowed && steerOk ? passed++ : failed++
+    // 每会话一次：再次超预算 → 仍放行、不再二次提醒
+    const fourth = await dispatchInRemind(repo, 'pwsh', { command: 'git commit -am "fourth"' })
+    const noSecond = fourth.post && !fourth.post.additionalContexts
+    const preAllowed2 = !fourth.pre || fourth.pre.kind !== 'deny'
+    console.log(`${preAllowed2 && noSecond ? 'PASS' : 'FAIL'}  v15 再次超预算 → 放行且 remindOnce（无二次提醒）`)
+    preAllowed2 && noSecond ? passed++ : failed++
+    // fuse 不变：churn 到硬帽（纯 commit 条目 ×10）→ 硬 DENY
+    for (let i = 0; i < 8; i++) {
+      fsh.writeFileSync(path.join(repo, `f${i}.txt`), String(i))
+      git(['add', '.'], repo)
+      git(['commit', '-qm', `c${i}`], repo)
+    }
+    check('v15 fuse：churn ≥ 10 次/小时 → 仍硬 DENY（失控熔断保留）', await dispatchIn(repo, 'pwsh', { command: 'git commit -am "one more"' }), true)
+    // 纯函数：结算消息含 stale 标注
+    const staleMsg = I.budgetSteerMessage({ commits: 5, budget: 3, source: 'progress.md blast_radius.commit_budget', sprintDir: 'sprint-2', staleAll: true })
+    const staleOk = staleMsg.includes('commits=5') && staleMsg.includes('已完结的 sprint-2') && staleMsg.includes('10 次/小时')
+    console.log(`${staleOk ? 'PASS' : 'FAIL'}  v15 budgetSteerMessage 纯函数（数值/stale/硬帽提示）`)
+    staleOk ? passed++ : failed++
+    fsh.rmSync(repo, { recursive: true, force: true })
   }
 
   console.log(`\n${passed} passed, ${failed} failed`)

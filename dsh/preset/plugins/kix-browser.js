@@ -358,7 +358,13 @@ module.exports = {
         return run
       },
     })
-    ctx.effect(() => {
+    // cordis 语义：effect 回调在注册时立即执行，返回的函数才是卸载钩子
+    // （2026-08-20 WSL2 E2E 实锤修复：原花括号体 `ctx.effect(() => { dispose() … })`
+    // 在注册瞬间就注销了刚注册的工具——apply 正常完成、disposer 正常返回，
+    // 但工具即刻消失，agent 视图永远查不到（kix-focus"激活成功但复查
+    // undefined"悬案同根因）。对照 kix-mem 的 `ctx.effect(() => dispose)`
+    // 表达式体；单测 mock 曾只 push 不执行回调，盲区——已补镜像语义回归）。
+    ctx.effect(() => () => {
       dispose()
       // 插件卸载时静默收尾（不等待）
       closeSession().catch(() => undefined)
