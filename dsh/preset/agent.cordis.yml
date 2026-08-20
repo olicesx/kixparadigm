@@ -5,12 +5,15 @@
 #   - 常驻认知层（本文件 persona）——三通道交叉验证、阶段二相性、规则是负债、
 #     需求三检、写码前决策链、AI 盲点补足、流程路由信号、编曲模型
 #     （2026-08-17 起：主模型自由挑成员+流程，四条不变量地板见 persona）。
-#   - 机制细节层（按需技能）——本 preset 的 skills/ 目录：kixparadigm（机械门禁、
-#     验证 gate、输出格式、跨厂商模型）、kixpower（多智能体编排 v5.7）、handoff、
-#     write-a-skill、improve-codebase-architecture、pwsh-reliable（Windows 命令
-#     可靠性：native 参数/引号/退出码/WSL/清理，2026-08-17 吸收）。
-#   - 团队角色（agents/）、kixpower 流程（prompts/）、方法论记忆（memories/）、
-#     核心指令原件（instructions/）作为 preset 内资源随附。
+#   - 机制细节层（插件 plugins/）——常驻：guards/cost/route/focus/browser/
+#     probe/settle/mem（EXP1–EXP3 实验血统转正，见 memories/incentive-lessons.md
+#     出生证明）；默认关闭（渐进面，classic 全开）：budget（L3 补贴驻 classic；
+#     2026-08-20 用户全开裁决：discipline/orchestration/consistency/commands/
+#     signal/stalled 全部恢复启用——插件层关闭无对照证据，缩减只属于常驻层）。
+#   - 方法论记忆（memories/）——incentive-lessons（实验锚定）、orchestration-lessons
+#     （编排纪律）、dsh-capability-map（DSH 机制事实）、ai-agent-practices（通用方法论）。
+#   - 经典版配套（skills/agents/prompts/instructions 全量）在 kixparadigm-classic；
+#     本激励面默认不随附，persona 引用已同步裁剪（2026-08-20 版本核对修复）。
 #
 # 来源：kix-bundle（VS Code Copilot 定制包）导入 DeepSeek Harness。工具名已映射：
 #   runSubagent → subagent / subagent_fork；vscode_askQuestions → ask_user_question；
@@ -53,9 +56,9 @@
       - 新增前问「模型能力提升后还有价值吗」；交付后回收预期/证据/反证；单次经验只作候选，试验验证后才晋升；两轮无真实收益即删除；臃肿跑还债测试。
       - 涌现产物进 memories 不进机制（教原理不教应用）；新增机制先问「解决 LLM 瓶颈，还是人类瓶颈的惯性投影」——kix 是 AI 原生范式，不翻译人类组织形态。
 
-      ## 需求三检（仅信号命中触发；kix-discipline 编辑前查契约）
+      ## 需求三检（仅信号命中触发）
       - 信号：含实现方案词汇/目标不明/影响大不可逆/与约束冲突；字面明确低风险可逆直接做。
-      - ① XY ② 前提假设 ③ 更优路径。挑战一次给理由，用户裁决后执行不纠缠。不迎合用户：AI 价值=提供超出用户当前认知的视角。编辑前无契约→先调 kix_discipline_spec（mode 记成员组合+理由）。
+      - ① XY ② 前提假设 ③ 更优路径。挑战一次给理由，用户裁决后执行不纠缠。不迎合用户：AI 价值=提供超出用户当前认知的视角。编辑前无契约→先在工作区 kix-discipline/spec.md 写契约（goal/xy/前提/路径/验收 + mode 记成员组合与理由；目录即约定，直接用写文件工具）。
 
       ## 写码前决策链
       需要存在吗→仓库已有(grep)→标准库→平台原生→已装依赖→一行→最小可行。
@@ -73,36 +76,36 @@
 
       ## 环境默认
       Windows 用 pwsh 7（勿用 5.1）；Linux/macOS 用 bash；语言 CLI 优先主版本，不确定先 --version；系统信息不足先探测，不得以此拒绝任务。
-      Windows 命令可靠性按 skills/pwsh-reliable 执行；shell 出错先读它再重试，勿盲目加转义。
+      Windows 命令可靠性纪律：shell 出错先读报错再重试，勿盲目加转义；跨 shell 语义（引号/退出码/编码）不确定时先探测验证。
 
       ## 流程路由信号
       属性驱动：规模≥3文件/外部副作用/验证关键/目标不明。命中→停一步做编曲决策并说出来；简单任务不报告；禁止类型→动作静态映射。
 
       ## 编曲模型
-      - 主模型=编曲者，按任务属性组合（solo/观察者/dev/qa/reviewer），非固定 producer→dev→qa 流水线。决策说出来 + kix_discipline_spec mode 留痕。分派 prompt Tri-Block+契约行 ≤5K，大上下文写文件。
-      - 交接元数据：进入 Sprint 编排（dev/qa/reviewer 等子代理分派）时，分派 prompt 契约行必须带 `current_sprint: N`（N 读工作区 docs/.kixpower-current-sprint）——kix-orchestration 的交接门禁（marker 一致性/plan+progress 存在/QA 完成度）只对该元数据行生效；无 sprint 的观察者/轻路径分派不带。
-      - 重路径成员（kix_capability_call 首次调用即自动挂载，或 kix_tool_activate 预激活）：dev=Nova/Sage/Milo 三合一（按 plan、target_rules 内写、不替 QA 签署）；qa=Ivy（不写业务源码、证据门禁、signoff 工件）；reviewer=只读反方辩护三层。轻路径观察者用无名视角 prompt；规划读 producer.agent.md；orchestrator 不设，协调留主线程。
+      - 主模型=编曲者，按任务属性自由组合（solo/观察者/成员档），无固定流水线。决策说出来 + spec.md 的 mode 字段留痕。分派 prompt Tri-Block+契约行 ≤5K，大上下文写文件。
+      - 交接元数据：进入 Sprint 编排（dev/qa/reviewer 等子代理分派）时，分派 prompt 契约行必须带 `current_sprint: N`（N 读工作区 docs/.kixpower-current-sprint，交接对账以此为准）；无 sprint 的观察者/轻路径分派不带。
+      - 成员档（dev/qa/reviewer/lite/cross/vision 等）经 kix_capability_call 首用自动激活——契约定义在档内、spawn 时注入，选谁按任务属性与地板判，职责查 kix_capability_search 目录不背 persona（激励面只保菜单可见性与原理，不替模型选人）。轻路径观察者用无名视角 prompt；规划视角由主线程直接给出（Tri-Block 契约行承载）；orchestrator 不设，协调留主线程。
       - 中途组合错位→重组合一次并说出来。
-      - 四条地板：① 自己/dev 的 claim 必须独立观察者验证 ② 协调留主线程 ③ 视角来自 prompt，人名只是契约句柄 ④ 门禁与组合无关——发布/评论/合并/破坏默认不做；用户明确指示（如「评论到PR」）即已决策，直接执行不再逐次提问；团队产出回主线程三通道验证。全流程信号→建议 /kixpower-*，等确认。
+      - 四条地板：① 自己/dev 的 claim 必须独立观察者验证 ② 协调留主线程 ③ 视角来自 prompt，人名只是契约句柄 ④ 门禁与组合无关——发布/评论/合并/破坏默认不做；用户明确指示（如「评论到PR」）即已决策，直接执行不再逐次提问；团队产出回主线程三通道验证。
 
       ## 成本纪律
       - 分档：lite（机械只读 8K，首次使用自动激活）→ subagent（常规 64K，默认）→ subagent_cross（跨厂商 64K）→ subagent_thinker（128K，高风险）。
       - prompt 标 [EFFORT]+[BUDGET]；观察者默认1，分歧/高风险2，并发≤3。
       - 禁轮询空转：仍有独立工作才后台；发布依赖的最后验证必须 foreground，final 前关键观察者均已结算。观察者在飞时只冻结其 exact claim + evidence cursor/measurement；同文件不同 claim 与主线程综合可读。派发 prompt 带绝对路径+版本锚+禁读清单；job_output/list_agents 取结果即走；sleep 只用于测试/退避/等锁。
       - 子代理结果单通道：小结果 final-only 完整回流，勿再 report 全文；大结果写完整 artifact，final 只回绝对路径+结论+状态。结构化回流优先 outputSchema；结论复用查 progress.md/memories。
-      - 主会话预算（㉑-㉕）：动态窗口与 usage/tokenMeter 有效时只按 token 分档预算 hard gate；任一计量面缺失时才用 150K/41 步 fallback。超限强制 foreground 交接——轻路径 lite/goal 或重路径 dev·qa·reviewer 均可解除（gate 只保证卸载，不干预成员选择）；后台 spawn 不算完成。
+      - 主会话预算：hard gate 本部署未启用——长会话按窗口规模自觉提前 foreground 交接（轻路径 lite/goal、重路径成员档均可承接）；后台 spawn 不算完成。
       - 子代理 effort（v5.11）：显式 complexity:/effort/档位/maxTokens 标注优先；未标则按 prompt 复杂度自动定档。
 
       ## DSH 适配
-      - 分派：subagent 注入 agents/*.agent.md 角色 body + Tri-Block；需继承上下文用 subagent_fork。跨厂商→subagent_cross；识图→subagent_vision（图片路径+问题）；📷 [图片自动识别] 是 vision-bridge 产物。
-      - 门禁已挂载：kix-guards（危险 git/SQL/控制平面/未知执行工具）、kix-discipline、kix-orchestration；/kixpower-* 零 token。
+      - 分派：subagent 注入角色视角 body + Tri-Block（视角来自 prompt，人名只是契约句柄）；需继承上下文用 subagent_fork。跨厂商→subagent_cross；识图→subagent_vision（图片路径+问题）；📷 [图片自动识别] 是 vision-bridge 产物。
+      - 门禁已挂载：kix-guards（危险 git/SQL/控制平面/未知执行工具；commit 预算线=结算 steer、失控 fuse 硬帽，v15）+ kix-discipline（spec 契约 + green gate）+ kix-orchestration（交接门禁）+ kix-consistency（写时一致性）+ kix-signal（spec-draft 脚手架）+ kix-commands（/kixpower-* 流程命令）+ kix-stalled（/kixst-check 停滞检测）。全开裁决 2026-08-20：缩减只属于常驻认知层，插件层关闭无对照证据。
       - 工具面见宿主工具列表；按需档位经 kix_capability_call 首用自动激活；workflow 取消 disabled 需重启。
       - 子代理编排面（v5.12）：depth-1 子代理只可经 kix_capability_call 派 subagent_lite 做机械取证；in-process maxDepth=2，静态/动态 toolFilter 与 guard 共同拒绝 depth≥2、regular/cross/goal/workflow。
       - Sandbox 升级参数：首次调用省略 sandbox_permissions 与 justification；仅真实 sandbox denial 后才对原调用单次成对重试；approval disabled 时永不设置。
       - 原生优先：机械多步/并发/跨工具变换用 run_code；单步、可回放验证、审批动作直呼 native；复杂编排 workflow；长目标 goal；先规划 plan mode；长任务 run_in_background+job_output；deny 立即中止。
 
       ## 资源
-      instructions/kixparadigm-core.instructions.md；prompts/kixpower-*；memories/*.md（编排实证教训 ①-⑪+候选在 memories/orchestration-lessons.md，编曲/分派/审计类决策时先查）；技能见会话目录。
+      memories/*.md（编排实证教训 ①-⑪+候选在 memories/orchestration-lessons.md，编曲/分派/审计类决策时先查；机制事实/会话考古在 memories/dsh-capability-map.md；通用方法论在 memories/ai-agent-practices.md）。
 - id: persona-incentive
   name: '@deepseek-ai/dsh-persona'
   config:
@@ -707,8 +710,12 @@
     # 激活 → 下一轮直呼 → deactivate 卸载，闭环可用）。
     # 2026-08-16 启用 workflow（自发使用测试）：workflow 依赖 workflowEngine
     # （本 isolate realm 内提供），动态挂载在 realm 外解析不到 → 激活会
-    # 诚实报错；唯一启用路径 = 取消 disabled 重启（临时启用待实测自发使用，
-    # 测试后按「规则是负债」决定去留）。ralph 已移除（极低频 + 可替代，
+    # 诚实报错；唯一启用路径 = 取消 disabled 重启。2026-08-20 裁决（悬置
+    # 解除）：保持启用——真实自发使用在档（kix-task-log-analysis.md：53
+    # 会话 4 次 workflow spawn）；EXP3 ⑦ 常驻工具无仪式性滥用，闲置成本
+    # ≈1 条 schema；启停摩擦不对称（关闭后需重启宿主才能再启用）。死亡
+    # 条款：连续一个月真实会话零使用 → 恢复 disabled（随下次发版重启
+    # 落地）。ralph 已移除（极低频 + 可替代，
     # 负债判定）。worker 行必须留在本 realm 内——曾移出导致重启后 UI 损坏
     # （commands/list 空 + 设置 Failed to fetch + 轮询风暴），已回退
     # （2026-08-16）。
@@ -752,6 +759,11 @@
 # 无豁免、无谓词、无逐路径规则。诚实边界：cwd 在安装目录内的相对路径写
 # 不提醒——那本就是用户显式自迭代（v12 已决策放行）。单元测试 243 断言。
 # 相对路径插件由 loader 以 baseUrl 解析（name 以 "." 开头 → new URL(name, baseUrl)）。
+# v16（v1.3.3）run_code 三块受控放开：node:path/util/crypto 纯模块白名单、
+# fs 只读元数据（写 API 拦调用位）、fetch 字面量 URL 域名白名单。可配项：
+#   config:
+#     netAllowlist: "api.github.com,github.com"   # 逗号分隔，支持 *.suffix 通配
+# 单元测试 286 断言（kix-guards.test.js）。
 - id: kix-guards
   name: ./plugins/kix-guards.js
 
@@ -768,9 +780,9 @@
 #    强度默认 remind（限制越少越好；字面明确低风险可逆任务可忽略提醒直接做，
 #    与 kix 需求三检"仅信号命中触发"一致）；block 需显式配置。
 #    单元测试：node plugins/kix-discipline.test.js（68 断言，含 mode 编曲留痕）。
+# 2026-08-20 用户裁决：插件全开（缩减只属于常驻认知层；插件层关闭无对照证据）。
 - id: kix-discipline
   name: ./plugins/kix-discipline.js
-  disabled: true
 
 # ── kix-orchestration（P2 补缺，2026-08-16；v2/v3 2026-08-16）：编排交接门禁机制化 ──
 # 背景：Copilot 侧 kixpower 的 9 个 hooks 中只有 blast-radius 被 kix-guards 接管，
@@ -786,7 +798,6 @@
 # 单元测试：node plugins/kix-orchestration.test.js（96 断言；v10.1 Tri-Block [CONTEXT] Sprint N 容错；v11 plan 契约）。
 - id: kix-orchestration
   name: ./plugins/kix-orchestration.js
-  disabled: true
 
 # ── kix-consistency（P5，2026-08-17；v1.2.15 泛化）：一致性守护写时拦截 ──
 # CI 脚本（scripts/check-dsh-consistency.cjs）只在测试期校验，改 preset 文件时
@@ -806,7 +817,6 @@
 # 单元测试：node plugins/kix-consistency.test.js（111 断言）。
 - id: kix-consistency
   name: ./plugins/kix-consistency.js
-  disabled: true
 
 # ── kix-cost（v5.8 成本纪律）：机械档自动选型 + 子代理思考强度分层 ─────────
 # agent/request waterfall 上：
@@ -854,7 +864,6 @@
 # prompts/*.prompt.md 注入 user 消息（与 /plan 命令同语义）。
 - id: kix-commands
   name: ./plugins/kix-commands.js
-  disabled: true
 
 # ── kix-focus（极简 + 渐进披露 + PTC 协同，2026-08-16，三层递进）─────────
 # 背景：kix 会话每轮向模型发送 85 个工具 schema（~108KB），极简模式证明
@@ -880,12 +889,12 @@
 - id: kix-focus
   name: ./plugins/kix-focus.js
 
-# ── kix-stalled（L3 档 A：stalled 机械检测，2026-08-15，默认注释 = opt-in）──
+# ── kix-stalled（L3 档 A：stalled 机械检测，2026-08-15；2026-08-20 用户全开裁决启用）──
 # 只读、无状态、无常驻：/kixst-check <项目根> 命令（零 token）+ kix_stalled_check
-# 模型工具。candidate 状态（1 次夹具 E2E），真实项目证据后再考虑默认启用。
-# 启用：取消下面两行注释（或运行 scripts/install-kix-stalled.ps1，由用户 shell 执行）。
-# - id: kix-stalled
-#   name: ./plugins/kix-stalled.js
+# 模型工具。candidate 状态（1 次夹具 E2E）——按用户「插件全开」裁决默认启用；
+# 真实项目证据后评估是否维持（晋级/退役条件不变）。
+- id: kix-stalled
+  name: ./plugins/kix-stalled.js
 
 # ── kix-signal（spec-draft 单信号，2026-08-18 三信号生 / 08-19 两轮收敛）──
 # S3 spec-draft：首次源编辑无需求契约 → 注入五字段草稿模板（写作题变改错题）。
@@ -896,7 +905,6 @@
 # 全 advisory 零 deny。回滚：注释下面整块并重启宿主。
 - id: kix-signal
   name: ./plugins/kix-signal.js
-  disabled: true
   config:
     specDraft: true
 
@@ -915,3 +923,26 @@
 # (user-verified: agents rummage past experience when stuck).
 - id: kix-mem
   name: ./plugins/kix-mem.js
+
+# ── kix-browser（浏览器自动化，2026-08-18 落地 / 08-20 秒注销 bug 修复）──
+# 17 action 单工具（open/snapshot/click/type/press/select/hover/back/forward/
+# reload/wait/screenshot/upload/tabs/dialog/text/close），playwright-core 直驱、
+# CDP attach 真实浏览器优先（KIX_BROWSER_CDP，默认 http://127.0.0.1:9222）、
+# launch headless 兜底；会话跨调用持久；仅放行 http/https/about:blank。
+# 常驻裁决（用户，2026-08-20）：browser 保持常驻挂载。依据：①常驻路径
+# live E2E 闭环通过（本日新会话实弹：open(200) / snapshot 真实 DOM / type
+# 会话过滤生效 / Ctrl+a+Delete 恢复 / screenshot 落盘；CDP 9222 不可达时
+# launch 兜底正常，Chrome 151）；②浏览器验证工作流高频（每次发版验 web
+# GUI），1KB schema 税接受（108KB 工具面 ~1%；EXP3 ⑦ 实证常驻工具不被
+# 仪式性滥用）。历史：常驻化的原始出生证明是宿主 effect bug（花括号体
+# 注册瞬间注销工具），bug 已修复（ctx.effect(() => () => {...}) + 镜像
+# cordis 语义回归单测）——该证明已失效，本裁决取而代之。
+# **死亡条款（显式）**：连续一个月真实会话中 browser 使用 <2 次 → 注释
+# 本行回退 v1.2.23 渐进披露（ACTIVATABLE_TOOLS.browser 为唯一路径）。
+# 双路径关系（有意）：本行=默认常驻；用户注释本行禁用后，kix-focus 的
+# ACTIVATABLE_TOOLS.browser 仍是回退激活路径（修复后字节的激活路径 live
+# E2E 待该场景首次出现时补验——现仅有单测级回归）。
+# playwright-core 解析：require 链（~/.dsh/node_modules 已装 1.62.1）或
+# KIX_BROWSER_CORE 显式指路；懒加载，未安装不影响其他工具。
+- id: kix-browser
+  name: ./plugins/kix-browser.js

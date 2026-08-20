@@ -192,7 +192,7 @@ async function softCase(label, name, args) {
   check('run_code: process.env 访问 → deny', await dispatch('run_code', { code: 'return process.env.HOME' }), true)
   check('run_code: WebSocket( → deny', await dispatch('run_code', { code: 'const ws = new WebSocket("ws://x")' }), true)
   check('run_code: require("fs") 直写 → deny (v3)', await dispatch('run_code', { code: "require('fs').writeFileSync('x','y')" }), true)
-  check('run_code: import("fs") → deny (v3)', await dispatch('run_code', { code: 'const fs = await import("fs"); return fs' }), true)
+  check('run_code: import("fs") 裸加载无写调用 → allow（v16 语义翻转：fs 只读面放开）', await dispatch('run_code', { code: 'const fs = await import("fs"); return typeof fs' }), false)
   check('run_code: writeFileSync( → deny (v3)', await dispatch('run_code', { code: 'const fs = require("node:fs"); fs.writeFileSync("a","b")' }), true)
   check('run_code: 纯 tools.* 编排 → allow', await dispatch('run_code', { code: 'const a = await tools.read({file_path:"a.ts"}); return a' }), false)
   check('run_code: 受限词作为字符串数据 → allow', await dispatch('run_code', { code: "const patch = \"child_process process.env fs.writeFileSync(\\\"x\\\",\\\"y\\\")\"; return patch" }), false)
@@ -209,6 +209,58 @@ async function softCase(label, name, args) {
   check('run_code: Function code generation denied → deny', await dispatch('run_code', { code: "return Function(\"return process.env.HOME\")()" }), true)
   check('run_code: constructor code generation denied → deny', await dispatch('run_code', { code: "return (async()=>{}).constructor(\"return process.env.HOME\")()" }), true)
   check('run_code: tagged template ambiguity fails closed → deny', await dispatch('run_code', { code: "return String.raw`process.env`" }), true)
+
+  // ══ 4b. run_code v16 三块受控放开 ═════════════════════════════════════
+  // ① 纯函数模块白名单（node:path / node:util / node:crypto）
+  check('run_code v16: require node:path + join → allow', await dispatch('run_code', { code: "const p = require('node:path'); return p.join('a','b')" }), false)
+  check('run_code v16: path 链式 posix.join → allow', await dispatch('run_code', { code: "return require('node:path').posix.join('/a','b')" }), false)
+  check('run_code v16: node:crypto createHash → allow', await dispatch('run_code', { code: "const c = await import('node:crypto'); return c.createHash('sha256').update('x').digest('hex')" }), false)
+  check('run_code v16: node:util format 链 → allow', await dispatch('run_code', { code: "return require('node:util').format('%s-%d', 'a', 1)" }), false)
+  check('run_code v16: path + child_process 混用 → deny（纯模块不豁免其他受限）', await dispatch('run_code', { code: "require('node:path'); require('child_process'); return 1" }), true)
+  check('run_code v16: path.constructor 代码生成 → deny（链守卫 trim 到加载调用）', await dispatch('run_code', { code: "require('node:path').constructor('return process')()" }), true)
+  // ② fs 只读放行 / 写 API 拦截
+  check('run_code v16: fs statSync/readdirSync → allow', await dispatch('run_code', { code: "const fs = require('node:fs'); return [fs.statSync('/x').isFile(), fs.readdirSync('/y').length]" }), false)
+  check('run_code v16: fs/promises readFile → allow', await dispatch('run_code', { code: "const fp = await import('node:fs/promises'); return fp.readFile('/a','utf8')" }), false)
+  check('run_code v16: require(node:fs).writeFileSync 直链 → deny（v15 保留）', await dispatch('run_code', { code: "require('node:fs').writeFileSync('a','b')" }), true)
+  check('run_code v16: fs.rmSync → deny', await dispatch('run_code', { code: "const fs = require('node:fs'); fs.rmSync('/x', {recursive:true}); return 1" }), true)
+  check('run_code v16: fs.promises.mkdir → deny', await dispatch('run_code', { code: "const fp = await import('node:fs/promises'); await fp.mkdir('/x'); return 1" }), true)
+  check('run_code v16: fs.renameSync → deny', await dispatch('run_code', { code: "const fs = require('node:fs'); fs.renameSync('a','b'); return 1" }), true)
+  check('run_code v16: fs 未加载时字符串提及写 API → allow（数据面不拦）', await dispatch('run_code', { code: 'const tip = "fs.writeFileSync only via write tool"; return tip' }), false)
+  // ③ fetch 域名白名单（默认 api.github.com,github.com）
+  check('run_code v16: fetch api.github.com 字面量 → allow', await dispatch('run_code', { code: "return await fetch('https://api.github.com/repos/x')" }), false)
+  check('run_code v16: fetch 轮询循环（白名单域）→ allow', await dispatch('run_code', { code: "let n=0; for(let i=0;i<3;i++){ const r=await fetch('https://github.com/api/x'); n+=r.status?1:0 } return n" }), false)
+  check('run_code v16: fetch 非白名单域 → deny', await dispatch('run_code', { code: "return await fetch('https://evil.example.com/x')" }), true)
+  check('run_code v16: fetch 变量 URL → deny（fail-closed）', await dispatch('run_code', { code: "const u = 'https://api.github.com/x'; return fetch(u)" }), true)
+  check('run_code v16: fetch 模板 URL → deny（${} 表达式不可静态判定）', await dispatch('run_code', { code: 'return fetch(`https://api.github.com/${p}`)' }), true)
+  check('run_code v16: fetch 相对 URL → deny', await dispatch('run_code', { code: "return fetch('/api/x')" }), true)
+  check('run_code v16: fetch 白名单域 + 第二参 process.env → deny', await dispatch('run_code', { code: "return fetch('https://api.github.com/x', { headers: process.env.HOME })" }), true)
+  check('run_code v16: a.fetch 属性调用 → deny（`.` 前缀不豁免）', await dispatch('run_code', { code: "return a.fetch('https://api.github.com/x')" }), true)
+  // v16 纯函数：hostAllowed 通配/精确
+  ;(() => {
+    const h = plugin.__internals.hostAllowed
+    const ok = h('api.github.com', ['*.github.com']) && !h('github.com', ['*.github.com']) && h('github.com', ['github.com']) && !h('evil-github.com', ['*.github.com', 'github.com'])
+    console.log(`${ok ? 'PASS' : 'FAIL'}  run_code v16: hostAllowed 通配子域命中/顶域不命中/精确命中/伪后缀不命中`)
+    ok ? passed++ : failed++
+  })()
+  // v16 配置：netAllowlist 自定义（apply(ctx, config) 第二实例）
+  {
+    const listeners2 = {}
+    const ctx2 = {
+      logger: { info() {}, warn() {}, error() {} },
+      get: () => undefined,
+      on(event, cb) { (listeners2[event] ||= []).push(cb) },
+    }
+    plugin.apply(ctx2, { netAllowlist: 'example.com' })
+    const pre2 = listeners2['tools/pre-execute'][0]
+    const d2 = (name, args2) => pre2({ name, arguments: args2, token: 't', callId: 'c2', agent: { id: 'a2' } }, () => Promise.resolve({ kind: 'allow' }))
+    const [a1, a2] = await Promise.all([
+      d2('run_code', { code: "return fetch('https://example.com/x')" }),
+      d2('run_code', { code: "return fetch('https://api.github.com/x')" }),
+    ])
+    const ok = (!a1 || a1.kind !== 'deny') && a2 && a2.kind === 'deny'
+    console.log(`${ok ? 'PASS' : 'FAIL'}  run_code v16: cfg.netAllowlist=example.com → example.com allow / api.github.com deny`)
+    ok ? passed++ : failed++
+  }
 
   // ══ 5. 未知执行工具 ══════════════════════════════════════════════════
   check('python3 直呼（未登记）→ deny', await dispatch('python3', { code: 'print(1)' }), true)
@@ -245,7 +297,7 @@ async function softCase(label, name, args) {
   assert.ok(I, '__internals 已导出')
 
   // resolveCommitBudget
-  assert.strictEqual(I.resolveCommitBudget({}), 3, '无上下文 → 默认 3')
+  assert.strictEqual(I.resolveCommitBudget({}), 3, '无上下文 → 默认 3（v15 回退 v14 无证据提升）')
   assert.strictEqual(I.resolveCommitBudget({ progressMd: '---\nblast_radius:\n  commit_budget: 7\n---\nx' }), 7, 'progress.md 优先')
   assert.strictEqual(I.resolveCommitBudget({ planMd: 'task_sizing:\n  derived_commit_budget: 5' }), 5, 'plan.md 回退')
   assert.strictEqual(I.resolveCommitBudget({ progressMd: '---\nblast_radius:\n  commit_budget: 7\n---\n', planMd: 'task_sizing:\n  derived_commit_budget: 5' }), 7, 'progress 覆盖 plan')
@@ -344,6 +396,12 @@ async function softCase(label, name, args) {
   assert.ok(!I.targetsControlPlane('C:\\work\\kixparadigm\\en\\preset\\agent.cordis.yml'), 'Windows 反斜杠 en 源路径不拦')
   assert.ok(!I.targetsControlPlane('./dsh/preset/agent.cordis.yml'), './ 前缀源路径不拦')
   assert.ok(I.targetsControlPlane('C:/Users/x/.dsh/.agent-presets/kixparadigm/agent.cordis.yml'), '安装副本仍拦')
+  // v15.1：变体目录同样豁免（出生证明：2026-08-20 会话实弹 preset-null 误 remind）
+  assert.ok(!I.targetsControlPlane('dsh/preset-null/agent.cordis.yml'), 'preset-null 源路径不拦（v15.1）')
+  assert.ok(!I.targetsControlPlane('dsh/preset-classic/plugins/kix-guards.js'), 'preset-classic 源路径不拦（v15.1）')
+  assert.ok(!I.targetsControlPlane('en/preset-classic-en/agent.cordis.yml'), 'preset-classic-en 源路径不拦（v15.1）')
+  assert.ok(!I.targetsControlPlane('C:\\work\\kixparadigm\\dsh\\preset-null\\agent.cordis.yml'), 'Windows 反斜杠变体源路径不拦（v15.1）')
+  assert.ok(I.targetsControlPlane(`${HOME}/.dsh/.agent-presets/kixparadigm-classic/agent.cordis.yml`), '安装面变体仍拦（豁免不放行安装副本）')
   assert.ok(I.targetsControlPlane('agent.cordis.yml'), '裸文件名仍拦（无法证明是源仓库）')
   assert.ok(I.targetsControlPlane('dsh/preset/../../.dsh/.agent-presets/kixparadigm/agent.cordis.yml'), '源路径+.. 不能绕过安装面')
   passed += 8
@@ -444,7 +502,7 @@ async function softCase(label, name, args) {
   passed += 4
 
   // 9c. commitBudgetSource：来源标注（deny 消息 / 冷启动 warn）
-  assert.strictEqual(I.commitBudgetSource({}), '冷启动默认 3', '无上下文 → 冷启动')
+  assert.strictEqual(I.commitBudgetSource({}), '冷启动默认 3', '无上下文 → 冷启动（v15 回退）')
   assert.strictEqual(I.commitBudgetSource({ progressMd: '---\nblast_radius:\n  commit_budget: 7\n---\n' }), 'progress.md blast_radius.commit_budget')
   assert.strictEqual(I.commitBudgetSource({ planMd: 'task_sizing:\n  derived_commit_budget: 5\n' }), 'plan.md task_sizing.derived_commit_budget')
   assert.strictEqual(I.commitBudgetSource({ planMd: 'blast_radius:\n  max_commits: 5\n' }), 'plan.md blast_radius.max_commits')
@@ -518,6 +576,63 @@ async function softCase(label, name, args) {
     check('commit：message 含 push/main 字样 → allow（v3 消息域不误拦，分支检查放行）', await dispatchIn(gitRepo, 'pwsh', { command: 'git commit -m "push main docs"' }), false)
     fsg.rmSync(gitRepo, { recursive: true, force: true })
     fsg.rmSync(nonRepo, { recursive: true, force: true })
+  }
+
+  // ══ 11. v15：预算线结算 steer（超预算放行+一次对账提醒；fuse 硬帽不变）══
+  // 哲学依据见插件头 v15 死亡证明：预算线只会计不失控 → steer；churn 熔断保留。
+  {
+    const { execFileSync } = require('node:child_process')
+    const fsh = require('node:fs')
+    const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+    const repo = fsh.mkdtempSync(path.join(os.tmpdir(), 'kix-guards-v15-'))
+    git(['init', '-q'], repo)
+    git(['checkout', '-q', '-b', 'feature'], repo)
+    git(['config', 'user.email', 't@kix.local'], repo)
+    git(['config', 'user.name', 'kix-test'], repo)
+    const docs = path.join(repo, 'docs', 'sprint-1')
+    fsh.mkdirSync(docs, { recursive: true })
+    fsh.writeFileSync(path.join(repo, 'docs', '.kixpower-current-sprint'), '1')
+    fsh.writeFileSync(path.join(docs, 'progress.md'), '---\nblast_radius:\n  commit_budget: 2\n---\n')
+    fsh.writeFileSync(path.join(repo, 'a.txt'), '1')
+    git(['add', 'a.txt'], repo)
+    git(['commit', '-qm', 'init'], repo)
+    fsh.writeFileSync(path.join(repo, 'b.txt'), '2')
+    git(['add', 'b.txt'], repo)
+    git(['commit', '-qm', 'second'], repo)
+    // commits=2 = budget=2：第 3 次 commit 意图超线 → v15 放行 + 结算提醒
+    const dispatchInRemind = async (cwd, name, args) => {
+      const exec = { name, arguments: args, token: 't', callId: nextCallId(), agent: { id: 'test-agent', session: { header: { cwd } } } }
+      const pre = await preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+      const post = await postExecute[0](exec, { kind: 'success' }, () => Promise.resolve({ kind: 'accept' }))
+      return { pre, post }
+    }
+    const third = await dispatchInRemind(repo, 'pwsh', { command: 'git commit -am "third"' })
+    const steerText = third.post && Array.isArray(third.post.additionalContexts)
+      && third.post.additionalContexts[0] && third.post.additionalContexts[0].content
+      && third.post.additionalContexts[0].content[0] && third.post.additionalContexts[0].content[0].text
+    const preAllowed = !third.pre || third.pre.kind !== 'deny'
+    const steerOk = typeof steerText === 'string' && steerText.includes('结算提醒') && steerText.includes('commits=2') && steerText.includes('预算 2') && steerText.includes('sprint-1')
+    console.log(`${preAllowed && steerOk ? 'PASS' : 'FAIL'}  v15 超预算 commit → 放行 + post 注入结算提醒（含 commits=2/预算 2/来源）`)
+    preAllowed && steerOk ? passed++ : failed++
+    // 每会话一次：再次超预算 → 仍放行、不再二次提醒
+    const fourth = await dispatchInRemind(repo, 'pwsh', { command: 'git commit -am "fourth"' })
+    const noSecond = fourth.post && !fourth.post.additionalContexts
+    const preAllowed2 = !fourth.pre || fourth.pre.kind !== 'deny'
+    console.log(`${preAllowed2 && noSecond ? 'PASS' : 'FAIL'}  v15 再次超预算 → 放行且 remindOnce（无二次提醒）`)
+    preAllowed2 && noSecond ? passed++ : failed++
+    // fuse 不变：churn 到硬帽（纯 commit 条目 ×10）→ 硬 DENY
+    for (let i = 0; i < 8; i++) {
+      fsh.writeFileSync(path.join(repo, `f${i}.txt`), String(i))
+      git(['add', '.'], repo)
+      git(['commit', '-qm', `c${i}`], repo)
+    }
+    check('v15 fuse：churn ≥ 10 次/小时 → 仍硬 DENY（失控熔断保留）', await dispatchIn(repo, 'pwsh', { command: 'git commit -am "one more"' }), true)
+    // 纯函数：结算消息含 stale 标注
+    const staleMsg = I.budgetSteerMessage({ commits: 5, budget: 3, source: 'progress.md blast_radius.commit_budget', sprintDir: 'sprint-2', staleAll: true })
+    const staleOk = staleMsg.includes('commits=5') && staleMsg.includes('已完结的 sprint-2') && staleMsg.includes('10 次/小时')
+    console.log(`${staleOk ? 'PASS' : 'FAIL'}  v15 budgetSteerMessage 纯函数（数值/stale/硬帽提示）`)
+    staleOk ? passed++ : failed++
+    fsh.rmSync(repo, { recursive: true, force: true })
   }
 
   console.log(`\n${passed} passed, ${failed} failed`)
