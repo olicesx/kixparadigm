@@ -70,8 +70,10 @@ const { readFileSync, statSync } = require('node:fs')
 // scope-local 名，代理反而失败）。故 SCOPE_RESIDENT 把它们纳入语义常驻集，
 // 目录/统计口径与实际可见面一致；capability_call 对它们拒绝（"请直接调用"）。
 // RESTRICT_ALLOW 是 allow 时代的白名单（现改用 deny 模式）；保留作统计/文档。
-// 2026-08-16：web_search 低频（库文档已由 context7 MCP 承担）→ 移出常驻，
-// 加入 deny 清单（经 capability_call 代理）。
+// 2026-08-16：web_search 低频（库文档已由 context7 MCP 承担）→ 移出常驻。
+// 2026-08-20 修正（系统提示词瘦身）：deny 方案从未生效——tool-web 是 preset
+// 行注册（scope-local），restrict 只作用于全局工具；真实裁法是 cordis 行
+// disabled + ACTIVATABLE_TOOLS.web_search 自动激活（见 ACTIVATABLE_TOOLS）。
 const RESTRICT_ALLOW = [
   // 全局基础工具（host 平面注册）
   'edit', 'write', 'read', 'grep', 'glob', 'pwsh', 'bash',
@@ -153,7 +155,7 @@ const CAPABILITY_GROUPS = [
   {
     id: 'jobs',
     title: '后台任务（job_output/job_list/job_kill）',
-    hint: '常驻、可直接调用：长任务用 pwsh run_in_background: true 启动，job_output/job_list/job_kill 回收与停止',
+    hint: '常驻、可直接调用：长任务用 pwsh run_in_background: true 启动；job_list 确认任务存在 → job_output 读结果 → job_kill 停止',
     tools: ['job_output', 'job_list', 'job_kill'],
   },
   {
@@ -171,7 +173,7 @@ const CAPABILITY_GROUPS = [
   {
     id: 'search',
     title: '网络搜索（web_search）',
-    hint: '低频（库文档优先 context7 MCP），默认按需：用 kix_capability_call 代理调用 web_search',
+    hint: '常驻可直接调用：外部信息检索用 web_search（库文档优先 context7 MCP）',
     tools: ['web_search'],
   },
   {
@@ -318,6 +320,9 @@ function makeUserMessage(text) {
 const CHILD_MAX_DEPTH = 2
 const CHILD_TOOL_DENY = ['exit_plan_mode', 'subagent', 'subagent_cross', 'interrupt_agent', 'send_message', 'list_agents', 'ask_user_question', 'kix_tool_activate', 'kix_tool_deactivate']
 const ACTIVATABLE_TOOLS = {
+  // 2026-08-20 三分法回滚：web_search 曾加入此处（渐进披露），评估否决——
+  // 低频 + 断 KV 缓存成本远超省下的常驻税，恢复 cordis tool-web 常驻。
+  // 见 dsh/preset/agent.cordis.yml tool-web 行注释（回滚理由完整记录）。
   workflow: { package: '@deepseek-ai/dsh-tool-workflow', config: {} },
   goal: { package: '@deepseek-ai/dsh-tool-goal', config: {} },
   // 2026-08-18 渐进披露扩容：kix-browser（本地插件，17 action 浏览器自动化）
@@ -628,7 +633,8 @@ module.exports = {
     function applyRestrict() {
       if (!enableRestrict) return
       const globals = globalSchemas()
-      // deny 目标 = 全部 MCP 全局工具 + web_search（低频，2026-08-16 移出常驻）
+      // deny 目标 = 全部 MCP 全局工具（scope-local 工具裁不到——web_search
+      // 2026-08-20 起由 cordis disabled + ACTIVATABLE 激活承担，见文件头）
       const denyTargets = globals.filter((s) => s.name && (s.name.startsWith('mcp__') || s.name === 'web_search')).map((s) => s.name)
       const fresh = denyTargets.filter((n) => !denied.has(n))
       if (fresh.length === 0) return // 无新增目标（或尚未注册），等 tools/change / 定时重试
@@ -640,7 +646,7 @@ module.exports = {
         restrictError = null
         clearRetry()
         ctx.effect(() => dispose)
-        ctx.logger?.info?.(`[kix-focus] 工具已裁剪：deny 累计 ${denied.size} 个全局工具（MCP+web_search，restrict 增量），scope 工具照常可见`)
+        ctx.logger?.info?.(`[kix-focus] 工具已裁剪：deny 累计 ${denied.size} 个全局工具（MCP，restrict 增量），scope 工具照常可见（按需工具走 cordis disabled + ACTIVATABLE 激活）`)
       } catch (e) {
         restrictError = e && e.message ? e.message : String(e)
         restrictDenyCount = denied.size
@@ -693,7 +699,7 @@ module.exports = {
     // ── Phase 2：kix_capability_call（代理执行 + 首次使用自动激活，常驻）──
     const disposeCall = tools.register({
       name: 'kix_capability_call',
-      description: '代理调用一个按需披露的工具（渐进披露的调用面）：执行目标工具并返回其结果。走完整 pre-execute→guards→execute→post-execute 管线（kix 门禁依然拦截）。MCP/cordis_* 等全局按需工具直接代理执行；未挂载的 subagent 细分档位与 goal（subagent_lite/thinker/vision/fork/reviewer/qa/dev、create_goal 等）会**首次使用自动激活**——本调用即挂载并执行、下一轮起可直接调用；scope 常驻工具（workflow/job_* 等）请直接调用，本工具会拒绝。',
+      description: '代理调用按需披露工具（走完整 pre-execute→guards→execute 管线，门禁仍拦）。MCP/cordis_* 全局按需工具直接代理执行；未挂载的 subagent 细分档位与 goal（subagent_lite/thinker/vision/fork/reviewer/qa/dev、create_goal 等）首次使用自动激活（本调用即挂载并执行、下一轮起直呼）；scope 常驻工具（workflow/job_* 等）请直接调用，本工具会拒绝。',
       parameters: {
         // tools.register 原样投影 parameters（不做 ValueSchemaSpec 转换）：
         // 必须传合法 JSON Schema，含顶层 type: 'object'。arguments 用 object +
@@ -877,7 +883,7 @@ module.exports = {
       // 2026-08-17 枚举 bug 修复：描述枚举曾漏 subagent_reviewer（集合有、
       // 描述无——模型照描述行事即永远激活不了它）；现与 ACTIVATABLE_TOOLS
       // 键集合同步（测试有回归防线），新增 qa/dev 一并列入。
-      description: '显式预激活一个默认未挂载的 scope 工具（细分档位与 goal）：goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev / browser（本地 kix-browser 插件，17 action 浏览器自动化，pkgPath 解析）；qa/dev/reviewer = 编曲成员菜单（Ivy 验收签署 / Nova·Sage·Milo 三合一编码 / 反方辩护三层只读审查）。2026-08-17 起这些工具首次使用时已由 kix_capability_call 自动激活，本工具仅用于想提前挂载的场景（jobs 已常驻、无需激活）。workflow 依赖 isolate realm 服务、动态激活不可用（激活会报错，直接挂载可用）。运行时挂载其工具包，激活后下一轮请求即可直接调用（无需代理）。用 kix_tool_deactivate 卸载。',
+      description: '显式预激活默认未挂载工具：goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev / browser。qa·dev·reviewer=编曲成员（Ivy 验收签署 / Nova·Sage·Milo 编码 / 反方辩护审查）。通常无需手动调用——kix_capability_call 首次使用即自动激活，本工具仅用于想提前挂载的场景；jobs 常驻无需；workflow 动态激活不可用（直接挂载）。激活后下一轮直呼，kix_tool_deactivate 卸载。',
       parameters: {
         type: 'object',
         properties: {
@@ -906,7 +912,7 @@ module.exports = {
 
     const disposeDeactivate = tools.register({
       name: 'kix_tool_deactivate',
-      description: '卸载一个已激活的 scope 工具（goal/subagent 细分档位含编曲成员 qa/dev/reviewer，及 browser 浏览器插件）。v5.10 起为延迟卸载：入队后本回合内仍可直呼，回合结束后才真正卸载（工具面中途变更会打断请求前缀缓存）。jobs 已常驻、无需也卸载不了。',
+      description: '卸载一个已激活的按需工具（goal/subagent 细分档位含编曲成员 qa/dev/reviewer、browser 浏览器插件）。延迟卸载：入队后本回合内仍可直呼，回合结束才生效（防工具面中途变更打断前缀缓存）。jobs 常驻、无需也卸载不了。',
       parameters: {
         type: 'object',
         properties: {

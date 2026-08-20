@@ -372,7 +372,7 @@ module.exports = {
     // ── 模型工具：记录需求三检契约 ────────────────────────────────────────
     const disposeSpecTool = tools.register({
       name: 'kix_discipline_spec',
-      description: '记录当前任务的需求三检契约（kix 需求三检：XY Problem / 前提假设 / 更优路径），写入工作区 kix-discipline/spec.md。需求三检后、开始实现编辑前调用；契约可跨会话复用。mode 字段（可选）= 编曲留痕：成员组合 + 一句理由，如 "dev+qa：跨模块改动需独立验收" / "solo：字面明确单文件修复"。',
+      description: '记录需求三检契约（XY Problem / 前提假设 / 更优路径）到工作区 kix-discipline/spec.md。需求三检后、编辑前调用；跨会话复用。mode（可选）= 编曲留痕：成员组合+一句理由，如 "dev+qa：跨模块改动需独立验收" / "solo：字面明确单文件修复"。',
       parameters: {
         // tools.register 原样投影 parameters：必须含顶层 type: 'object'
         type: 'object',
