@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.3.1（2026-08-20）kix-guards v15：预算线结算 steer（v14 死亡证明）
+
+- **哲学自检驱动**（`kix-discipline/philosophy-selfcheck-v131.md` F1 裁决）：commit 预算线从硬 DENY 降为**结算 steer**——超预算不拦 commit（可逆、本地），post 成功后注入一次对账提醒（v12 控制平面同款 pending 机制，每会话一次）：①迭代节奏真实变快（CI 修复链）→ 同步 commit_budget 到 progress.md；②预算合理而提交超速 → 收敛粒度或拆分 Sprint。硬帽 fuse（`COMMIT_HARD_CAP`=10 次/小时，含 amend，不可配）保留硬 DENY——失控 thrash 不响应 steer，由 fuse 熔断（41-step gate / token 预算 hard gate 同族）。
+- **删除 v14 `detectFailureDrivenBonus`**（出生/死亡证明见插件头注释）：commit message regex 分类推断「失败驱动」意图无出生证明（无「预算线拦断合法修复链」事故记录）；文本启发式意图分类与 v1.2.15 判死删除的 shell 命令机械提取同类负债（`chore:`/`test:` 常规提交误计为失败驱动、`.ci-failed` 等标记文件无创建者=死代码、零单测）；病根是定价错误——预算线 DENY 拦可逆 commit 只为强迫记账，把会计问题定价成失控问题，v14 是误定价逼出的代偿。
+- **`COMMIT_BUDGET_DEFAULT` 6→3 回退**：v14 的提升无实测数据支撑；steer 化后错误默认的代价只是一次提醒，不再是拦断。near-miss 结构化日志（commits/budget/source）为测度点，攒 sprint 数据后校准默认值与 fuse 阈值。退役条件：实测出现「steer 无响应且 fuse 前已造成不可逆破坏」→ 预算线回硬 DENY 并记第二轮出生证明。
+- **en 版本锚同步**：`en/scripts/check-consistency.cjs` 期望版本 1.3.0→1.3.1（自检 H2 修复；kix-guards 四份镜像失步 H1 随本条同步一并消除）。
+- **单测**：kix-guards 新增 v15 组——超预算放行+结算提醒注入（含 commits/budget/来源断言）、remindOnce 无二次提醒、fuse 硬帽回归、`budgetSteerMessage` 纯函数；常数断言回退 3。
+- **kix-guards v15.1（源仓库豁免覆盖变体目录）**：`isSourceRepoPresetPath` 正则 `/preset(?:\/|$)/` → `/preset[-\w]*(?:\/|$)/`——`dsh/preset-null/`、`dsh/preset-classic/`、`en/preset-classic-en/` 源路径编辑不再被裸 `agent.cordis.yml` 兜底分支误 remind（出生证明：本日会话实弹编辑 preset-null yml 触发误报）。安装面检查先于豁免执行，安装副本路径仍拦；新增 5 断言含 Windows 反斜杠变体与安装面反例。
+- **browser 常驻裁决（用户，2026-08-20）**：默认/null preset 的 kix-browser 行保持常驻。依据：常驻路径 live E2E 闭环通过（open(200)/snapshot 真实 DOM/type 过滤生效/Ctrl+a+Delete 恢复/screenshot 落盘；CDP 不可达时 launch 兜底正常）+ 浏览器验证工作流高频 + 1KB schema 税接受（EXP3 ⑦ 常驻工具不被仪式性滥用）。出生证明从「宿主 effect bug 绕行」改写为本裁决（原证明已随 bug 修复失效）；死亡条款：连续一个月真实使用 <2 次 → 注释回退渐进披露。en-classic 保持注释态渐进披露（与 zh-classic 冻结锚一致）。
+- **persona 悬空声明裁剪（F2，默认 preset）**：v1.3.0 重排后 persona 教了四个未挂载机制（kix_discipline_spec 工具 / 门禁已挂载 kix-discipline·orchestration / /kixpower-* 命令 / kix-budget hard gate），本会话工具面逐一证伪。修正：需求三检契约改为「工作区 kix-discipline/spec.md 目录即约定」（不依赖未挂载插件）；门禁清单只列实际挂载的 kix-guards（含 v15 语义）；预算句改诚实表述「本部署未启用，自觉提前交接」；/kixpower-* 指派句删除；头部插件清单按实际挂载/关闭状态重写。
+- **发布卫生（F3）**：删除 `dsh/preset-classic/plugins/kix-guards.js.backup`（54.7kB，原会进 npm tarball）与 `en/package.json.backup`；`git rm` 四个跟踪杂物（placeholder/temp_zstd/test_fix/tmp_test_temp.txt）；.gitignore 增 `*.backup`、`tmp_*.txt` 等防复发段。
+
 
 ## v1.3.0（2026-08-20）实验驱动发版：契约优先 + 激励面机制三件套 + 成本分层模型
 
