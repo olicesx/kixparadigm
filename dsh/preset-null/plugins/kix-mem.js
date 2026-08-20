@@ -15,7 +15,7 @@ const path = require('node:path')
 const MEM_DIR = path.resolve(__dirname, '..', 'memories')
 
 const DESCRIPTION =
-  'Browse a crisis-indexed library of hard-won empirical lessons from past sessions (contract clarity, verification, cost relocation, harness pitfalls). Entries cite the experiment or incident they came from. action=list returns the catalog; action=get returns one full note. The files can also be read directly.'
+  'Browse a crisis-indexed library of hard-won empirical lessons from past sessions. action=list returns the catalog; action=get returns one full note; files can also be read directly. Use when stuck or after an incident to learn from past experience; for how-to task guidance use skill instead.'
 
 function listEntries() {
   const out = []
