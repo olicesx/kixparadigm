@@ -50,11 +50,42 @@ test('apply registers browser tool with compact schema, disposable', () => {
   assert.match(blocks[0].text, /"ok":true/)
   // execute 存在且是异步
   assert.equal(typeof t.execute, 'function')
-  // dispose 生效
+  // dispose 生效（2026-08-20 语义适配：effect 回调返回卸载钩子）
   assert.equal(effects.length, 1)
-  effects[0]()
+  const teardown = effects[0]()
+  assert.equal(typeof teardown, 'function', 'effect callback must return the disposer')
+  teardown()
   assert.equal(registered.length, 0)
   assert.ok(logs.some((l) => l.includes('kix-browser')))
+})
+
+// ── 回归（2026-08-20）：effect 回调注册即执行，工具不得被秒注销 ────────
+// cordis 语义：ctx.effect(cb) 的 cb 在注册时立即执行，cb 返回的函数才是
+// 卸载钩子。曾因此翻车：花括号体 `ctx.effect(() => { dispose() … })` 在
+// apply 瞬间注销工具（apply 正常返回、agent 视图永远查不到）。本测试用
+// 镜像运行时的 mock（注册即执行回调）锁死该形态。
+test('effect registration runs the callback immediately — tool must survive it', () => {
+  const registered = []
+  const disposers = []
+  const ctx = {
+    tools: {
+      register(def) {
+        registered.push(def)
+        return () => registered.splice(registered.indexOf(def), 1)
+      },
+    },
+    // 镜像 cordis：回调注册即执行，返回函数被收集为卸载钩子
+    effect: (fn) => disposers.push(fn()),
+    logger: { info: () => {} },
+  }
+  plugin.apply(ctx)
+  // 注册存续：effect 注册（回调已执行）后工具仍可见——旧 bug 在此归零
+  assert.equal(registered.length, 1, 'tool was unregistered during apply (immediate-dispose bug)')
+  // 卸载钩子：调用收集到的函数才注销
+  assert.equal(disposers.length, 1)
+  assert.equal(typeof disposers[0], 'function', 'effect callback must return the disposer')
+  disposers[0]()
+  assert.equal(registered.length, 0)
 })
 
 // ── URL 门禁：放行/拒绝清单 ──────────────────────────────────────────

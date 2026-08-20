@@ -1,4 +1,30 @@
-// kix-guards — kixparadigm 机械门禁的 DSH 原生实现（v13，v1.2.22）
+// kix-guards — kixparadigm 机械门禁的 DSH 原生实现（v15，v1.3.1）
+//
+// v15（2026-08-20，哲学自检 F1 裁决）：commit 预算线从硬 DENY 降为**结算 steer**
+// （放行 + post 成功注入一次对账提醒，v12 控制平面同款 pending 机制），硬帽 fuse
+// （COMMIT_HARD_CAP，不可配）保留硬 DENY。同时删除 v14 的
+// detectFailureDrivenBonus（commit message regex 分类推断「失败驱动」意图）。
+// 出生/死亡证明：
+//   - v14 无出生证明：仓库与 CHANGELOG 均无「预算线拦断合法修复链」的事故记录，
+//     属为想象中的问题放松真实存在的守卫；
+//   - message 文本启发式意图分类与 v1.2.15 判死删除的 shell 命令文本机械提取
+//     同类负债：覆盖差 / 误报真实（`chore:`/`test:` 常规提交被计为失败驱动，
+//     正常节奏即把冷启动预算抬满 +3）/ `.ci-failed` 等标记文件无任何创建者
+//     =死代码路径 / 零单测覆盖；
+//   - 病根是定价错误：预算线 DENY 拦下可逆的本地 commit 只为强迫记账（DENY
+//     消息自述「请同步预算到 sprint 文档」），把会计问题定价成失控问题，v14
+//     的意图推断是误定价逼出的代偿——只删代偿不动定价，同压力会再生 v15'。
+//     修正定价：超额不禁止但必须在结算时显式交代（同步预算，或在交付说明
+//     中声明失败驱动链）——失败修复链合法通过，静默漂移变贵（让隐藏变贵、
+//     让测量变免费）；失控 thrash 不响应 steer，由 fuse 熔断（41-step gate /
+//     token 预算 hard gate 同族先例）。commit 计数与预算比对是确定性谓词，
+//     steer 触发条件 0% 误报；
+//   - 测度点：每次 steer 触发记 near-miss 结构化日志（commits/budget/source），
+//     攒真实 sprint 数据后校准 COMMIT_BUDGET_DEFAULT 与 fuse 阈值（6 未见
+//     实测数据，v15 回退保守值 3——steer 化后错误默认的代价只是一次提醒，
+//     不再是拦断）；
+//   - 退役条件：若实测出现「模型对 steer 无响应、fuse 触发前已造成不可逆
+//     破坏」的事故，预算线可回硬 DENY 并在此记录第二轮出生证明。
 //
 // 移植自 kixpower 的 blast-radius-check.ps1 / block-source-edit.ps1 核心门禁，
 // 以 DSH `tools/pre-execute` 监听器形态自动拦截（等价 Copilot PreToolUse hook）。
@@ -110,8 +136,8 @@ const { promisify } = require('node:util')
 const execFileP = promisify(execFile)
 
 // ── 常量（blast-radius ps1 同源）───────────────────────────────────────────
-const COMMIT_HARD_CAP = 10          // 9 Ways 防线：绝对硬上限，不可配
-const COMMIT_BUDGET_DEFAULT = 3     // 冷启动兜底（δ 未知时的保守值）
+const COMMIT_HARD_CAP = 10          // 9 Ways 防线：绝对硬上限，不可配（失控熔断，v15 起预算线 steer 化后是唯一硬拦截）
+const COMMIT_BUDGET_DEFAULT = 3     // 冷启动兜底（δ 未知时的保守值；v15 回退 v14 的无证据提升 6——见头部 v15 死亡证明）
 
 // ── v3 纯判定函数（模块级：单元测试经 __internals 直接验证）───────────────
 
@@ -541,7 +567,12 @@ function isLocalDestructiveAsk(text) {
 //   副本——bare `agent.cordis.yml` 子串会把维护者对自己仓库的编辑当成
 //   CONTROL PLANE 误伤。安装副本仍走 .agent-presets / ~/.dsh 命中。
 function isSourceRepoPresetPath(low) {
-  return /(?:^|\/)(?:dsh|en)\/preset(?:\/|$)/.test(low)
+  // v15.1：豁免覆盖全部 preset 变体目录（preset / preset-classic /
+  // preset-classic-en / preset-null）。出生证明：2026-08-20 会话实弹——
+  // 编辑 dsh/preset-null/agent.cordis.yml（源仓库事实源）被裸 agent.cordis.yml
+  // 兜底分支误 remind；旧正则 /preset(?:\/|$)/ 匹配不到 preset-xxx 变体名。
+  // 安装面检查先于本豁免执行，~/.dsh 与 .agent-presets 路径不受影响。
+  return /(?:^|\/)(?:dsh|en)\/preset[-\w]*(?:\/|$)/.test(low)
 }
 function isInstallControlPlanePath(low) {
   const home = (process.env.USERPROFILE || process.env.HOME || '').toLowerCase().replace(/\\/g, '/')
@@ -716,6 +747,13 @@ function commitBudgetSource({ progressMd, planMd }) {
   return '冷启动默认 ' + COMMIT_BUDGET_DEFAULT
 }
 
+// v15 预算线结算 steer 的消息文本（纯函数，单测直接验证；结算式措辞——
+// 不指责、不推断意图，只要求显式对账：同步预算或声明失败驱动链）
+function budgetSteerMessage({ commits, budget, source, sprintDir, staleAll }) {
+  const staleNote = staleAll ? `；注意：预算基线来自已完结的 ${sprintDir || 'sprint'}` : ''
+  return `BLAST RADIUS 结算提醒（本会话一次）：commit 已放行——最近 1 小时窗口内 commits=${commits}，预算 ${budget}（来源：${sprintDir ? sprintDir + ' 的 ' : ''}${source}${staleNote}）。请在收尾前对账其一：① 迭代节奏真实变快（如 CI 修复链）→ 重算 commit_budget 并同步 progress.md frontmatter；② 预算合理而提交超速 → 收敛提交粒度或拆分 Sprint。硬上限 ${COMMIT_HARD_CAP} 次/小时（含 amend，不可配）仍直接拦截。`
+}
+
 // 找 active sprint 目录（ps1：docs/.kixpower-current-sprint 优先 → 最大数字）
 function activeSprintDir(docsRoot, currentSprint) {
   const fs = require('node:fs')
@@ -775,6 +813,9 @@ module.exports = {
     // v12：控制平面软提醒（每会话一次；投递成功才消耗）
     const pendingControlPlane = new Map()
     let controlPlaneReminded = false
+    // v15：预算线结算 steer（每会话一次；投递成功才消耗）
+    const pendingBudgetSteer = new Map()
+    let budgetSteerReminded = false
 
     function queueControlPlaneRemind(exec) {
       if (controlPlaneReminded) return
@@ -894,6 +935,17 @@ module.exports = {
       return out
     }
 
+    // ── v15: 预算线结算 steer ───────────────────────────────────────────────
+    // 超预算不拦 commit（可逆、本地），改为结算提醒：pre 放行 + 记 pending，
+    // post（工具真实成功后）注入一次对账文本（v12 控制平面同款机制）。
+    // 意图不被推断（v14 regex 分类已判死，见头部死亡证明）——超额本身在结算
+    // 时显式交代。near-miss 日志是 fuse 校准的测度点。
+    function queueBudgetSteer(exec, text) {
+      if (budgetSteerReminded) return
+      const callId = exec && exec.callId
+      if (callId) pendingBudgetSteer.set(callId, text)
+    }
+
     // ── git commit 前置检查（budget + feature branch）────────────────────
     // 返回 decision 或 undefined（无法解析仓库根 → 放行 + warn）
     async function checkGitCommit(text, exec) {
@@ -921,13 +973,14 @@ module.exports = {
       if (source.startsWith('冷启动')) {
         ctx.logger?.warn?.(`[kix-guards] commit 预算落到冷启动默认 ${COMMIT_BUDGET_DEFAULT}（未在 sprint 文档解析到 commit_budget / derived_commit_budget / max_commits）——请在新 sprint 的 progress.md frontmatter 写明 blast_radius.commit_budget。`)
       }
+      // v15: 预算线 = 结算 steer（放行 + 对账提醒），fuse 见上方 hard cap。
+      // 确定性谓词（commits >= budget），触发条件 0% 误报；每会话提醒一次。
       if (commits >= budget) {
-        const staleNote = staleAll ? `；注意：预算基线来自已完结的 ${sprintDir || 'sprint'}，请开新 sprint 并同步 commit_budget` : ''
-        return DENY(`BLAST RADIUS: 1 小时窗口内已 commit ${commits} 次（预算 ${budget}，来源：${sprintDir ? sprintDir + ' 的 ' : ''}${source}${staleNote}）。请重算 commit 预算并同步到 sprint 文档（progress.md frontmatter 的 blast_radius.commit_budget）；派生值超过 ${COMMIT_HARD_CAP} 时拆分 Sprint。`)
+        ctx.logger?.warn?.(`[kix-guards] budget-steer near-miss: commits=${commits} budget=${budget} source=${source} fuse=${COMMIT_HARD_CAP}（测度点：攒 sprint 数据校准默认值与 fuse）`)
+        queueBudgetSteer(exec, budgetSteerMessage({ commits, budget, source, sprintDir, staleAll }))
       }
       return undefined
     }
-
     // ── MCP GitHub 远程写保护（ps1 检查 5）────────────────────────────────
     // 只读工具（get_/list_/search_*）直接放行；write 类（写文件/推分支）必须
     // 显式提供非 main/master 的 branch；mutation 类：聊天内提问确认（v5）。
@@ -1064,18 +1117,36 @@ module.exports = {
     })
 
     ctx.on('tools/post-execute', async (exec, result, next) => {
-      if (pendingControlPlane.size === 0) return next()
-      const pending = pendingControlPlane.get(exec && exec.callId)
-      if (!pending) return next()
-      pendingControlPlane.delete(exec.callId)
-      if (controlPlaneReminded) return next()
-      controlPlaneReminded = true
+      const callId = exec && exec.callId
+      // v12 控制平面提醒 / v15 预算结算 steer：同一投递通道，各自独立 once。
+      // 只在工具真实成功后注入（失败/被拦的调用不产生结算义务）。
+      let from = null
+      let pending
+      if (callId) {
+        if (pendingControlPlane.has(callId)) {
+          from = 'controlPlane'
+          pending = pendingControlPlane.get(callId)
+          pendingControlPlane.delete(callId)
+        } else if (pendingBudgetSteer.has(callId)) {
+          from = 'budgetSteer'
+          pending = pendingBudgetSteer.get(callId)
+          pendingBudgetSteer.delete(callId)
+        }
+      }
+      if (from === null) return next()
+      if (from === 'budgetSteer') {
+        if (budgetSteerReminded) return next()
+        budgetSteerReminded = true
+      } else {
+        if (controlPlaneReminded) return next()
+        controlPlaneReminded = true
+      }
       return { kind: 'accept', additionalContexts: [makeUserMessage(pending)] }
     })
 
     // 记录挂载
     ctx.on('ready', () => {
-      ctx.logger?.info?.('[kix-guards] 机械门禁监听器已挂载（v12：控制平面写 remind；硬 deny 仅不可逆破坏）')
+      ctx.logger?.info?.('[kix-guards] 机械门禁监听器已挂载（v15：预算线=结算 steer，硬 deny 仅 fuse/不可逆破坏）')
     })
   },
 }
@@ -1099,6 +1170,7 @@ module.exports.__internals = {
   repoRootFromText,
   resolveCommitBudget,
   commitBudgetSource,
+  budgetSteerMessage,
   countReflogCommits,
   activeSprintDir,
   resolveSprintContextPaths,
