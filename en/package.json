@@ -23,7 +23,7 @@
   "files": [
     "bin/",
     "scripts/",
-    "preset/",
+    "preset-classic-en/",
     "bridge/",
     "README.md",
     "LICENSE"
@@ -33,18 +33,19 @@
     "test:installer": "node --test scripts/install-lib.test.js",
     "test:consistency": "node scripts/check-consistency.cjs",
     "test:vision": "node --test bridge/test.js",
-    "test": "npm run test:installer && node scripts/check-consistency.cjs && node --test bridge/test.js && cd preset/plugins && node --test"
+    "test": "npm run test:installer && node scripts/check-consistency.cjs && node --test bridge/test.js && cd preset-classic-en/plugins && node --test"
   },
   "engines": {
     "node": ">=20.16.0"
   },
   "kixparadigm": {
     "presetId": "kixparadigm-en",
-    "presetDir": "preset",
+    "presetDir": "preset-classic-en",
     "bridgeDir": "bridge"
   },
   "repository": {
     "type": "git",
+    "github": "olicesx/kixparadigm",
     "url": "git+https://github.com/olicesx/kixparadigm.git"
   },
   "bugs": {
@@ -52,4 +53,3 @@
   },
   "homepage": "https://github.com/olicesx/kixparadigm#readme"
 }
-
