@@ -5,17 +5,24 @@
 ## 一键导入（npm，推荐给使用者）
 
 ```bash
-npm i -g kixparadigm     # 自动装 preset + vision-bridge + 检查 settings.yaml
+npm i -g kixparadigm     # 自动装默认模式 + 经典模式 + vision-bridge
 ```
 
-安装器源码见 `scripts/install-lib.js`；日常维护仍用下方同步脚本。
+v1.3.4 起安装器按 `package.json#kixparadigm.variants` 逐变体拷贝：
+
+- `dsh/preset/` → `~/.dsh/.agent-presets/kixparadigm/`（默认激励面）
+- `dsh/preset-classic/` → `~/.dsh/.agent-presets/kixparadigm-classic/`（经典模式）
+
+`dsh/preset-null/` 是消融对照，不随 npm 安装。重启 `dsh web` 后在模式列表选择。安装器源码见 `scripts/install-lib.js`；日常维护仍用下方同步脚本。
 
 ```
 kix-bundle/
 ├── (根目录 = VS Code Copilot 分发，原样保留)
 └── dsh/
     ├── README-DSH.md        ← 本文件（DSH 安装/同步说明）
-    └── preset/              ← → ~/.dsh/.agent-presets/kixparadigm/ 的镜像（唯一事实源）
+    ├── preset/              ← → ~/.dsh/.agent-presets/kixparadigm/（默认）
+    ├── preset-classic/      ← → ~/.dsh/.agent-presets/kixparadigm-classic/（经典）
+    └── preset-null/         ← 消融对照（不随 npm 安装）
 ```
 
 ## 唯一事实源声明（2026-08-15 归一）

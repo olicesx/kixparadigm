@@ -1,4 +1,24 @@
-// kix-guards — kixparadigm 机械门禁的 DSH 原生实现（v15，v1.3.1）
+// kix-guards — kixparadigm 机械门禁的 DSH 原生实现（v16，v1.3.3）
+//
+// v16（2026-08-20，用户指示）：run_code 门禁 1b 三块受控能力放开——
+//   ① 纯函数内置模块白名单（node:path / node:util / node:crypto，含无前缀形）
+//   ② fs 只读元数据（允许加载 fs；写 API 按调用模式拦截，stat/readdir/
+//     readFile/access/realpath 等只读面放行）
+//   ③ fetch 字面量 URL 域名白名单（cfg.netAllowlist，默认 api.github.com,
+//     github.com；支持 '*.suffix' 通配；非字面量/模板/拼接 URL fail-closed）
+//   实现机制：白名单 span 等长空白化预处理（collectAllowedSpans →
+//   runCodeSurface），先于 executableJsSurface 的数据面剥离——span 为字符级
+//   精确匹配（完整闭合调用 + 字面量参数），不越语法边界；blank 只放宽数据面。
+//   设计不变量：非白名单模块/域名不 blank → 命中黑名单 → deny；URL 与模块名
+//   必须字面量，歧义按原文 fail-closed；fs 写 API 检查仅在代码加载了 fs 时
+//   启用（未加载 fs 时同名自定义函数零误伤）。
+//   出生证明：v15 前一刀切拦截迫使组合层绕道 bash 文本解析（脆弱、格式 drift）
+//   或逐工具往返（丢上下文经济性）——三块均为纯函数/只读/可静态判定的低风险
+//   面，无不可逆副作用。已知局限（与门禁同级定位：API 塑形，非安全边界，
+//   真机械层是 sandbox）：解构后调用拦调用位、属性拼接（fs['wr'+'iteFile']）
+//   字符串剥离后不可见——覆盖正常滥用模式。
+//   退役条件：若实测出现经这三块放开口子的真实破坏事故（如 fs 写绕过、
+//   白名单域名的 SSRF 面被利用），回退到 v15 一刀切并在此记录。
 //
 // v15（2026-08-20，哲学自检 F1 裁决）：commit 预算线从硬 DENY 降为**结算 steer**
 // （放行 + post 成功注入一次对账提醒，v12 控制平面同款 pending 机制），硬帽 fuse
@@ -519,6 +539,258 @@ function executableJsSurface(source) {
   code(0, false)
   return ambiguous ? input : output.join('')
 }
+
+// ── v16：run_code 三块受控放开（白名单 span 等长空白化预处理）─────────────
+// 顺序：collectAllowedSpans（字符级精确匹配白名单模块调用 / 白名单域名
+// fetch 字面量调用）→ blankSpans → executableJsSurface（数据面剥离）→
+// 黑名单匹配。span 不 blank 时其原文保留，照旧命中黑名单 → deny（fail-closed）。
+// 局限（API 塑形非安全边界）：span 匹配是字符级启发，混淆拼接种类恒定有限，
+// 无法穷尽——与既有门禁同级，真机械层是 sandbox。
+
+// fs 写 API 调用模式（fs 已加载时启用；别名/动态属性访问不可静态判定，
+// 属已知局限——与 v15 同级覆盖）。opendir 是只读，不在名单。
+const FWRITE_RE = /\.(?:appendFile|appendFileSync|chmod|chmodSync|chown|chownSync|copyFile|copyFileSync|cp|cpSync|createWriteStream|fchmod|fchmodSync|fchown|fchownSync|fdatasync|fdatasyncSync|ftruncate|ftruncateSync|futimes|futimesSync|link|linkSync|lutimes|lutimesSync|mkdir|mkdirSync|mkdtemp|mkdtempSync|open|openSync|rename|renameSync|rm|rmSync|rmdir|rmdirSync|symlink|symlinkSync|truncate|truncateSync|unlink|unlinkSync|utimes|utimesSync|writeFile|writeFileSync|writev|writevSync|write|writeSync)\s*\(/
+
+// 白名单模块 spec 形（v16 一号表；别名引用在 span 匹配层拦截）
+const PURE_MODULE_SPECS_RE = [
+  /\brequire\s*\(\s*(['"])(node:path(?:\/(?:posix|win32))?|node:util(?:\/types)?|node:crypto|path(?:\/(?:posix|win32))?|util(?:\/types)?|crypto)\1\s*\)/g,
+  /\brequire\.resolve\s*\(\s*(['"])(node:path(?:\/(?:posix|win32))?|node:util(?:\/types)?|node:crypto|path(?:\/(?:posix|win32))?|util(?:\/types)?|crypto)\1\s*\)/g,
+  /\bimport\s*\(\s*(['"])(node:path(?:\/(?:posix|win32))?|node:util(?:\/types)?|node:crypto|path(?:\/(?:posix|win32))?|util(?:\/types)?|crypto)\1\s*\)/g,
+]
+
+// fs 加载 spec 形（v16 二号表：加载放行，写 API 另拦）
+const FS_MODULE_SPECS_RE = [
+  /\brequire\s*\(\s*(['"])(?:node:)?fs(?:\/promises)?\1\s*\)/g,
+  /\brequire\.resolve\s*\(\s*(['"])(?:node:)?fs(?:\/promises)?\1\s*\)/g,
+  /\bimport\s*\(\s*(['"])(?:node:)?fs(?:\/promises)?\1\s*\)/g,
+]
+
+// 字符级工具：跳过引号/注释取"完整调用表达式"的闭合范围（v16 span 匹配用）
+function skipStringAt(s, i) {
+  const q = s[i]
+  let j = i + 1
+  while (j < s.length) {
+    if (s[j] === '\\') { j += 2; continue }
+    if (s[j] === q) return j + 1
+    j++
+  }
+  return s.length
+}
+function skipLineCommentAt(s, i) {
+  let j = i
+  while (j < s.length && s[j] !== '\n' && s[j] !== '\r' && s[j] !== '\u2028' && s[j] !== '\u2029') j++
+  return j
+}
+function skipBlockCommentAt(s, i) {
+  let j = i + 2
+  while (j < s.length) {
+    if (s[j] === '*' && s[j + 1] === '/') return j + 2
+    j++
+  }
+  return s.length
+}
+// 从调用开括号 idx（s[idx] === '('）起取完整实参列的闭合位置（含嵌套
+// 括号/字符串/模板；模板内 ${} 不再嵌套检查——span 匹配仅用于放宽数据面，
+// 误判的代价是多 blank 一段，后文黑名单仍在）
+function callClose(s, idx) {
+  let depth = 0
+  let i = idx
+  while (i < s.length) {
+    const ch = s[i]
+    if (ch === "'" || ch === '"') { i = skipStringAt(s, i); continue }
+    if (ch === '`') {
+      i++
+      while (i < s.length && s[i] !== '`') {
+        if (s[i] === '\\') { i += 2; continue }
+        i++
+      }
+      i++
+      continue
+    }
+    if (ch === '/' && s[i + 1] === '/') { i = skipLineCommentAt(s, i); continue }
+    if (ch === '/' && s[i + 1] === '*') { i = skipBlockCommentAt(s, i); continue }
+    if (ch === '(') { depth++; i++; continue }
+    if (ch === ')') {
+      depth--
+      i++
+      if (depth === 0) return i
+      continue
+    }
+    i++
+  }
+  return -1
+}
+
+// 成员链延伸：`require('node:path').posix.join('a','b')` → 从 specEnd 起
+// 消费 `.member` / `?.member` / `(args)` 序列，返回链终点；无法解析 → -1。
+// span 起点 = spec 匹配点（regex 已锚定 \brequire/\bimport；调用方另做
+// `.` 前缀守卫排除 a.require(...) 属性调用）。
+function chainEndAfter(s, specEnd) {
+  let i = specEnd
+  let guard = 0
+  while (i < s.length && guard++ < 64) {
+    while (i < s.length && /\s/.test(s[i])) i++
+    if (i >= s.length) return i
+    if (s[i] === '.' || (s[i] === '?' && s[i + 1] === '.')) {
+      i += s[i] === '?' ? 2 : 1
+      const m = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(s.slice(i))
+      if (!m) return -1
+      i += m[0].length
+      continue
+    }
+    if (s[i] === '(') {
+      const close = callClose(s, i)
+      if (close < 0) return -1
+      i = close
+      continue
+    }
+    return i
+  }
+  return -1
+}
+
+// URL 主机判定：白名单条目支持 '*.suffix' 通配与精确域名。
+function hostAllowed(hostname, allowlist) {
+  if (!hostname) return false
+  const host = String(hostname).toLowerCase()
+  for (const entry of allowlist) {
+    if (entry.startsWith('*.')) {
+      const suffix = entry.slice(1) // '.suffix'
+      if (host.endsWith(suffix) && host.length > suffix.length) return true
+    } else if (host === entry) return true
+  }
+  return false
+}
+
+// 收集白名单 span（在原文上做字符级匹配；起点须在代码区——字符串/注释/
+// 模板 raw 内的提及属数据面，executableJsSurface 已剥离，无需 span）。
+// 返回 { spans, fsLoaded }；非白名单内容不进 spans → 原文保留 → 黑名单
+// 拦截（fail-closed）。
+function collectAllowedSpans(code, netAllowlist) {
+  const s = String(code || '')
+  const spans = []
+  let fsLoaded = false
+  const dataRanges = stringAndCommentRanges(s)
+  const inData = (i) => dataRanges.some(([a, b]) => i >= a && i < b)
+  // `.`/`?.` 前缀 = 属性调用（a.require / a.fetch），非全局能力 → 不 blank，
+  // 保留原文交黑名单 fail-closed（与 v15 行为一致）。
+  const dotPrefixed = (i) => {
+    let j = i - 1
+    while (j >= 0 && /\s/.test(s[j])) j--
+    return j >= 0 && (s[j] === '.' || (s[j] === '?' && s[j - 1] === '.'))
+  }
+
+  // ── ① 白名单纯模块：span = 加载调用 + 安全成员链 ──
+  for (const re of PURE_MODULE_SPECS_RE) {
+    re.lastIndex = 0
+    let m
+    while ((m = re.exec(s))) {
+      if (inData(m.index) || dotPrefixed(m.index)) continue
+      const specEnd = m.index + m[0].length
+      let end = chainEndAfter(s, specEnd)
+      if (end < 0) end = specEnd
+      else if (/(?:\bprocess\s*(?:\?\.|\.|\[)|\bconstructor\b|\bfetch\s*\(|\bWebSocket\b|\beval\s*\()/.test(s.slice(specEnd, end))) {
+        // 链内出现受限模式（如 path.constructor("…")() 代码生成、模板实参
+        // ${process.env}）→ 只 blank 加载调用本身，链保留给黑名单。
+        end = specEnd
+      }
+      spans.push({ start: m.index, end })
+    }
+  }
+
+  // ── ② fs：span = 仅加载调用（不延伸链——.writeFileSync( 等链上写 API
+  //    保留在语法面，交 FWRITE_RE 在 fs 加载时拦截）──
+  for (const re of FS_MODULE_SPECS_RE) {
+    re.lastIndex = 0
+    let m
+    while ((m = re.exec(s))) {
+      if (inData(m.index) || dotPrefixed(m.index)) continue
+      fsLoaded = true
+      spans.push({ start: m.index, end: m.index + m[0].length })
+    }
+  }
+
+  // ── ③ fetch 字面量 URL（'…" 引号字符串；模板/变量/拼接 URL 一律不
+  //    blank——URL 不可静态判定，fail-closed）──
+  const fetchRe = /\bfetch\s*\(/g
+  let m
+  while ((m = fetchRe.exec(s))) {
+    if (inData(m.index) || dotPrefixed(m.index)) continue
+    const open = m.index + m[0].length - 1
+    const close = callClose(s, open)
+    if (close < 0) continue
+    const argText = s.slice(open + 1, close - 1)
+    const urlMatch = /^\s*(['"])((?:[^\\]|\\.)*)\1/.exec(argText)
+    // 模板字面量 URL（反引号）含 ${} 表达式，blank 会隐藏实参代码 → 拒绝
+    if (!urlMatch || urlMatch[1] === '`') continue
+    const restArgs = argText.slice(urlMatch[0].length)
+    if (/(?:\bprocess\s*(?:\?\.|\.|\[)|\bconstructor\b|\beval\s*\(|\bWebSocket\b)/.test(restArgs)) continue
+    let host = null
+    try {
+      host = new URL(urlMatch[2].replace(/\\(['"`\\])/g, '$1')).hostname
+    } catch {
+      host = null
+    }
+    if (!hostAllowed(host, netAllowlist)) continue
+    spans.push({ start: m.index, end: close })
+  }
+
+  return { spans, fsLoaded }
+}
+
+// span 内字符串/注释检查用轻量扫描器：返回 s 中字符串与注释区间列表
+function stringAndCommentRanges(s) {
+  const ranges = []
+  let i = 0
+  while (i < s.length) {
+    const ch = s[i]
+    if (ch === "'" || ch === '"') {
+      const end = skipStringAt(s, i)
+      ranges.push([i, end])
+      i = end
+    } else if (ch === '`') {
+      let j = i + 1
+      while (j < s.length && s[j] !== '`') {
+        if (s[j] === '\\') { j += 2; continue }
+        j++
+      }
+      const end = Math.min(s.length, j + 1)
+      ranges.push([i, end])
+      i = end
+    } else if (ch === '/' && s[i + 1] === '/') {
+      const end = skipLineCommentAt(s, i)
+      ranges.push([i, end])
+      i = end
+    } else if (ch === '/' && s[i + 1] === '*') {
+      const end = skipBlockCommentAt(s, i)
+      ranges.push([i, end])
+      i = end
+    } else {
+      i++
+    }
+  }
+  return ranges
+}
+
+// v16 主入口：run_code 代码体 → { surface, denyAll }
+//   顺序：executableJsSurface 剥离数据面（等长，偏移稳定）→ span 等长空白化
+//   → fs 写 API 检查（fsLoaded 时；数据面已剥离，字符串提及零误伤）。
+//   denyAll='fsWrite' → 直接 deny；黑名单其余项照旧匹配 surface。
+function runCodeSurface(code, netAllowlist) {
+  const s = String(code || '')
+  const { spans, fsLoaded } = collectAllowedSpans(s, netAllowlist)
+  const stripped = executableJsSurface(s) // 等长：空格替换或歧义时原文
+  const arr = stripped.split('')
+  for (const sp of spans) {
+    for (let i = Math.max(0, sp.start); i < Math.min(s.length, sp.end); i++) arr[i] = ' '
+  }
+  const surface = arr.join('')
+  if (fsLoaded && FWRITE_RE.test(surface)) {
+    return { surface: '', denyAll: 'fsWrite' }
+  }
+  return { surface, denyAll: null }
+}
+
 
 // ps1 检查 3：force push 完整检测（--force / -f / push +refs 语法 / --mirror）。
 // 只在真实 push 子命令上下文判定；带 (?<![\w-]) 前缀断言（abc--force 不算）。
@@ -1050,11 +1322,18 @@ module.exports = {
         return deny(`BLAST RADIUS: 未登记的工具 ${name} 无法验证副作用，拒绝执行。`)
       }
 
-      // 1b. run_code 代码体受限能力检查（P0 修复 2026-08-15；v3 补 fs 直写）
+      // 1b. run_code 代码体受限能力检查（P0 修复 2026-08-15；v3 补 fs 直写；
+      //     v16 三块受控放开：纯模块白名单 / fs 只读 / fetch 域名白名单）
       if (tool === 'run_code' && args && typeof args.code === 'string') {
-        const surface = executableJsSurface(args.code)
+        // v16 默认网络白名单（cfg.netAllowlist 可配，逗号分隔）
+        const netAllowlist = String(cfg.netAllowlist || 'api.github.com,github.com')
+          .split(',').map((x) => x.trim().toLowerCase()).filter(Boolean)
+        const { surface, denyAll } = runCodeSurface(args.code, netAllowlist)
+        if (denyAll === 'fsWrite') {
+          return deny('BLAST RADIUS: run_code 加载了 fs 并调用写 API（writeFile/rm/mkdir/open/…Sync 全系）。fs 只读面（stat/readdir/readFile/…）已放行（v16）；写操作请改用 write/edit 工具经门禁执行。')
+        }
         if (/\b(?:require|import)\s*\(|\bchild_process\b|\b(?:fetch|WebSocket)\b|\bprocess\s*(?:\?\.|\.|\[)|\bwriteFileSync\s*\(|\b(?:eval|Function|constructor)\b/.test(surface)) {
-          return deny('BLAST RADIUS: run_code 可执行语法面包含受限能力（module import/require、child_process、network、process、fs 直写或动态代码生成）。字符串/注释/非 tagged template raw 可作为数据；regex/division 或 tagged template 歧义按原文 fail-closed。真实能力请改用 native 工具经门禁执行。')
+          return deny('BLAST RADIUS: run_code 可执行语法面包含受限能力（module import/require、child_process、network、process、fs 直写或动态代码生成）。v16 放开面：node:path|util|crypto 纯模块、fs 只读 API、白名单域名 fetch 字面量（api.github.com,github.com，cfg.netAllowlist 可配）；其余字符串/注释数据不拦，regex/division/tagged-template 歧义 fail-closed。真实能力请改用 native 工具经门禁执行。')
         }
       }
 
@@ -1181,6 +1460,13 @@ module.exports.__internals = {
   stableArgs,
   escapeRegex,
   executableJsSurface,
+  hostAllowed,
+  chainEndAfter,
+  callClose,
+  stringAndCommentRanges,
+  collectAllowedSpans,
+  runCodeSurface,
+  FWRITE_RE,
   COMMIT_HARD_CAP,
   COMMIT_BUDGET_DEFAULT,
   CONTROL_PLANE_REMIND,

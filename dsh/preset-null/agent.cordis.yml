@@ -699,7 +699,6 @@
 #    单元测试：node plugins/kix-discipline.test.js（68 断言，含 mode 编曲留痕）。
 - id: kix-discipline
   name: ./plugins/kix-discipline.js
-  disabled: true
 
 # ── kix-orchestration（P2 补缺，2026-08-16；v2/v3 2026-08-16）：编排交接门禁机制化 ──
 # 背景：Copilot 侧 kixpower 的 9 个 hooks 中只有 blast-radius 被 kix-guards 接管，
@@ -715,7 +714,6 @@
 # 单元测试：node plugins/kix-orchestration.test.js（96 断言；v10.1 Tri-Block [CONTEXT] Sprint N 容错；v11 plan 契约）。
 - id: kix-orchestration
   name: ./plugins/kix-orchestration.js
-  disabled: true
 
 # ── kix-consistency（P5，2026-08-17；v1.2.15 泛化）：一致性守护写时拦截 ──
 # CI 脚本（scripts/check-dsh-consistency.cjs）只在测试期校验，改 preset 文件时
@@ -735,7 +733,6 @@
 # 单元测试：node plugins/kix-consistency.test.js（111 断言）。
 - id: kix-consistency
   name: ./plugins/kix-consistency.js
-  disabled: true
 
 # ── kix-cost（v5.8 成本纪律）：机械档自动选型 + 子代理思考强度分层 ─────────
 # agent/request waterfall 上：
@@ -783,7 +780,6 @@
 # prompts/*.prompt.md 注入 user 消息（与 /plan 命令同语义）。
 - id: kix-commands
   name: ./plugins/kix-commands.js
-  disabled: true
 
 # ── kix-focus（极简 + 渐进披露 + PTC 协同，2026-08-16，三层递进）─────────
 # 背景：kix 会话每轮向模型发送 85 个工具 schema（~108KB），极简模式证明
@@ -809,12 +805,12 @@
 - id: kix-focus
   name: ./plugins/kix-focus.js
 
-# ── kix-stalled（L3 档 A：stalled 机械检测，2026-08-15，默认注释 = opt-in）──
+# ── kix-stalled（L3 档 A：stalled 机械检测，2026-08-15；2026-08-20 用户全开裁决启用）──
 # 只读、无状态、无常驻：/kixst-check <项目根> 命令（零 token）+ kix_stalled_check
-# 模型工具。candidate 状态（1 次夹具 E2E），真实项目证据后再考虑默认启用。
-# 启用：取消下面两行注释（或运行 scripts/install-kix-stalled.ps1，由用户 shell 执行）。
-# - id: kix-stalled
-#   name: ./plugins/kix-stalled.js
+# 模型工具。candidate 状态（1 次夹具 E2E）——按用户「插件全开」裁决默认启用；
+# 真实项目证据后评估是否维持（晋级/退役条件不变）。
+- id: kix-stalled
+  name: ./plugins/kix-stalled.js
 
 # ── kix-signal（spec-draft 单信号，2026-08-18 三信号生 / 08-19 两轮收敛）──
 # S3 spec-draft：首次源编辑无需求契约 → 注入五字段草稿模板（写作题变改错题）。
@@ -825,7 +821,6 @@
 # 全 advisory 零 deny。回滚：注释下面整块并重启宿主。
 - id: kix-signal
   name: ./plugins/kix-signal.js
-  disabled: true
   config:
     specDraft: true
 

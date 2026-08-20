@@ -7,8 +7,9 @@
 #     （2026-08-17 起：主模型自由挑成员+流程，四条不变量地板见 persona）。
 #   - 机制细节层（插件 plugins/）——常驻：guards/cost/route/focus/browser/
 #     probe/settle/mem（EXP1–EXP3 实验血统转正，见 memories/incentive-lessons.md
-#     出生证明）；默认关闭（渐进面，classic 全开）：budget/discipline/
-#     orchestration/consistency/commands/signal/stalled。
+#     出生证明）；默认关闭（渐进面，classic 全开）：budget（L3 补贴驻 classic；
+#     2026-08-20 用户全开裁决：discipline/orchestration/consistency/commands/
+#     signal/stalled 全部恢复启用——插件层关闭无对照证据，缩减只属于常驻层）。
 #   - 方法论记忆（memories/）——incentive-lessons（实验锚定）、orchestration-lessons
 #     （编排纪律）、dsh-capability-map（DSH 机制事实）、ai-agent-practices（通用方法论）。
 #   - 经典版配套（skills/agents/prompts/instructions 全量）在 kixparadigm-classic；
@@ -97,7 +98,7 @@
 
       ## DSH 适配
       - 分派：subagent 注入角色视角 body + Tri-Block（视角来自 prompt，人名只是契约句柄）；需继承上下文用 subagent_fork。跨厂商→subagent_cross；识图→subagent_vision（图片路径+问题）；📷 [图片自动识别] 是 vision-bridge 产物。
-      - 门禁已挂载：kix-guards（危险 git/SQL/控制平面/未知执行工具；commit 预算线=结算 steer、失控 fuse 硬帽，v15）。
+      - 门禁已挂载：kix-guards（危险 git/SQL/控制平面/未知执行工具；commit 预算线=结算 steer、失控 fuse 硬帽，v15）+ kix-discipline（spec 契约 + green gate）+ kix-orchestration（交接门禁）+ kix-consistency（写时一致性）+ kix-signal（spec-draft 脚手架）+ kix-commands（/kixpower-* 流程命令）+ kix-stalled（/kixst-check 停滞检测）。全开裁决 2026-08-20：缩减只属于常驻认知层，插件层关闭无对照证据。
       - 工具面见宿主工具列表；按需档位经 kix_capability_call 首用自动激活；workflow 取消 disabled 需重启。
       - 子代理编排面（v5.12）：depth-1 子代理只可经 kix_capability_call 派 subagent_lite 做机械取证；in-process maxDepth=2，静态/动态 toolFilter 与 guard 共同拒绝 depth≥2、regular/cross/goal/workflow。
       - Sandbox 升级参数：首次调用省略 sandbox_permissions 与 justification；仅真实 sandbox denial 后才对原调用单次成对重试；approval disabled 时永不设置。
@@ -758,6 +759,11 @@
 # 无豁免、无谓词、无逐路径规则。诚实边界：cwd 在安装目录内的相对路径写
 # 不提醒——那本就是用户显式自迭代（v12 已决策放行）。单元测试 243 断言。
 # 相对路径插件由 loader 以 baseUrl 解析（name 以 "." 开头 → new URL(name, baseUrl)）。
+# v16（v1.3.3）run_code 三块受控放开：node:path/util/crypto 纯模块白名单、
+# fs 只读元数据（写 API 拦调用位）、fetch 字面量 URL 域名白名单。可配项：
+#   config:
+#     netAllowlist: "api.github.com,github.com"   # 逗号分隔，支持 *.suffix 通配
+# 单元测试 286 断言（kix-guards.test.js）。
 - id: kix-guards
   name: ./plugins/kix-guards.js
 
@@ -774,9 +780,9 @@
 #    强度默认 remind（限制越少越好；字面明确低风险可逆任务可忽略提醒直接做，
 #    与 kix 需求三检"仅信号命中触发"一致）；block 需显式配置。
 #    单元测试：node plugins/kix-discipline.test.js（68 断言，含 mode 编曲留痕）。
+# 2026-08-20 用户裁决：插件全开（缩减只属于常驻认知层；插件层关闭无对照证据）。
 - id: kix-discipline
   name: ./plugins/kix-discipline.js
-  disabled: true
 
 # ── kix-orchestration（P2 补缺，2026-08-16；v2/v3 2026-08-16）：编排交接门禁机制化 ──
 # 背景：Copilot 侧 kixpower 的 9 个 hooks 中只有 blast-radius 被 kix-guards 接管，
@@ -792,7 +798,6 @@
 # 单元测试：node plugins/kix-orchestration.test.js（96 断言；v10.1 Tri-Block [CONTEXT] Sprint N 容错；v11 plan 契约）。
 - id: kix-orchestration
   name: ./plugins/kix-orchestration.js
-  disabled: true
 
 # ── kix-consistency（P5，2026-08-17；v1.2.15 泛化）：一致性守护写时拦截 ──
 # CI 脚本（scripts/check-dsh-consistency.cjs）只在测试期校验，改 preset 文件时
@@ -812,7 +817,6 @@
 # 单元测试：node plugins/kix-consistency.test.js（111 断言）。
 - id: kix-consistency
   name: ./plugins/kix-consistency.js
-  disabled: true
 
 # ── kix-cost（v5.8 成本纪律）：机械档自动选型 + 子代理思考强度分层 ─────────
 # agent/request waterfall 上：
@@ -860,7 +864,6 @@
 # prompts/*.prompt.md 注入 user 消息（与 /plan 命令同语义）。
 - id: kix-commands
   name: ./plugins/kix-commands.js
-  disabled: true
 
 # ── kix-focus（极简 + 渐进披露 + PTC 协同，2026-08-16，三层递进）─────────
 # 背景：kix 会话每轮向模型发送 85 个工具 schema（~108KB），极简模式证明
@@ -886,12 +889,12 @@
 - id: kix-focus
   name: ./plugins/kix-focus.js
 
-# ── kix-stalled（L3 档 A：stalled 机械检测，2026-08-15，默认注释 = opt-in）──
+# ── kix-stalled（L3 档 A：stalled 机械检测，2026-08-15；2026-08-20 用户全开裁决启用）──
 # 只读、无状态、无常驻：/kixst-check <项目根> 命令（零 token）+ kix_stalled_check
-# 模型工具。candidate 状态（1 次夹具 E2E），真实项目证据后再考虑默认启用。
-# 启用：取消下面两行注释（或运行 scripts/install-kix-stalled.ps1，由用户 shell 执行）。
-# - id: kix-stalled
-#   name: ./plugins/kix-stalled.js
+# 模型工具。candidate 状态（1 次夹具 E2E）——按用户「插件全开」裁决默认启用；
+# 真实项目证据后评估是否维持（晋级/退役条件不变）。
+- id: kix-stalled
+  name: ./plugins/kix-stalled.js
 
 # ── kix-signal（spec-draft 单信号，2026-08-18 三信号生 / 08-19 两轮收敛）──
 # S3 spec-draft：首次源编辑无需求契约 → 注入五字段草稿模板（写作题变改错题）。
@@ -902,7 +905,6 @@
 # 全 advisory 零 deny。回滚：注释下面整块并重启宿主。
 - id: kix-signal
   name: ./plugins/kix-signal.js
-  disabled: true
   config:
     specDraft: true
 

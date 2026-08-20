@@ -593,6 +593,56 @@ function makePostExec(callId) {
       lib.appendContexts({ kind: 'accept', additionalContexts: [{ id: 'a' }] }, [{ id: 'b' }]).additionalContexts.length === 2)
   }
 
+  // ── v1.3.4：extractPersona 活跃层口径 + 预算单源 ──────────────────────
+  {
+    section('__internals: extractPersona 活跃层口径（disabled 不计）+ PERSONA_BUDGETS 单源')
+    const proot = mkdtemp('kix-cons-persona-')
+    const yml = [
+      '- id: persona',
+      '  name: classic-legacy',
+      '  disabled: true',
+      '  config:',
+      '    text: |-',
+      '      ' + '经'.repeat(4000),
+      '- id: persona-incentive',
+      '  name: incentive',
+      '  config:',
+      '    text: |-',
+      '      short active text',
+      '- id: agent-instructions',
+      '  name: ai',
+    ].join('\n')
+    fs.writeFileSync(path.join(proot, 'agent.cordis.yml'), yml, 'utf8')
+    const ex = lib.extractPersona(proot, 'agent.cordis.yml')
+    await ok('disabled 遗产块不计入 persona（仅活跃块文本）', !ex.error && ex.persona === 'short active text')
+    await ok('text 行内 "disabled: true" 字样不误判（6 空格缩进≠2 空格键）', (() => {
+      const yml2 = [
+        '- id: p', '  config:', '    text: |-',
+        '      disabled: true', '      real body',
+        '- id: agent-instructions', '  name: ai',
+      ].join('\n')
+      fs.writeFileSync(path.join(proot, 'b.yml'), yml2, 'utf8')
+      const r = lib.extractPersona(proot, 'b.yml')
+      return !r.error && r.persona === 'disabled: true\nreal body'
+    })())
+    await ok('checkPersonaBudget：活跃层在预算内 → 0 failures', lib.checkPersonaBudget({ root: proot, rel: 'agent.cordis.yml', maxChars: 4500, maxEstTokens: 2600 }).failures.length === 0)
+    await ok('checkPersonaBudget：活跃层超预算仍拦（口径修正≠放松）', (() => {
+      const r = lib.checkPersonaBudget({ root: proot, rel: 'agent.cordis.yml', maxChars: 9, maxEstTokens: 2600 })
+      return r.failures.length === 1 && r.failures[0].includes('exceeds budget 9')
+    })())
+    await ok('锚点缺失仍报错（结构损坏不放行）', (() => {
+      fs.writeFileSync(path.join(proot, 'c.yml'), '- id: p\n  config:\n    text: |-\n      x\n', 'utf8')
+      const r = lib.extractPersona(proot, 'c.yml')
+      return r.error && r.error.includes('anchor not found')
+    })())
+    await ok('PERSONA_BUDGETS 单源导出（zh 4500/2600、en 9500/2600）',
+      lib.PERSONA_BUDGETS && lib.PERSONA_BUDGETS.zh.maxChars === 4500 && lib.PERSONA_BUDGETS.zh.maxEstTokens === 2600 && lib.PERSONA_BUDGETS.en.maxChars === 9500)
+    const pluginSrc = fs.readFileSync(path.join(__dirname, 'kix-consistency.js'), 'utf8')
+    await ok('运行时插件消费单源预算（无本地 maxChars 字面量）', pluginSrc.includes('lib.PERSONA_BUDGETS') && !/maxChars:\s*\d/.test(pluginSrc))
+    const libSrc = fs.readFileSync(path.join(__dirname, 'consistency-lib.cjs'), 'utf8')
+    await ok('runAllZh 不再硬编码 6000/3400（双源漂移已单源化）', !/6000,\s*maxEstTokens:\s*3400/.test(libSrc) && /PERSONA_BUDGETS\.zh/.test(libSrc))
+  }
+
   // ── 收尾：清理夹具 ─────────────────────────────────────────────────────
   for (const dir of created) {
     try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* 忽略清理失败 */ }
