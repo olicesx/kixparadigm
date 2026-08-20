@@ -546,12 +546,7 @@ module.exports = {
       if (!session) return next()
       const st = stateFor(session.id)
       const args = exec && (exec.arguments ?? exec.args)
-      // L3 verify-subsidy (2026-08-19): verification executions reset the read-only
-      // streak like any mutation does — probing behavior is never what the
-      // marathon-handoff advice should punish.
-      const _nm = String(exec && exec.name || '').toLowerCase()
-      if (_nm === 'probe' || _nm === 'run_code') st.streak = 0
-      else if (isReadOnlyTool(exec && exec.name, args)) st.streak += 1
+      if (isReadOnlyTool(exec && exec.name, args)) st.streak += 1
       else st.streak = 0
 
       const transition = transitionToolOf(exec)

@@ -1,5 +1,12 @@
 # AI Agent 编码实践经验（通用，跨项目适用）
 
+> **DSH 适配注记（2026-08-16 插件化改造）**：本文件是方法论记忆（历史经验记录），其中
+> Copilot 工具名（`replace_string_in_file`→`edit`、`read_file`→`read`、`grep_search`→`grep`、
+> `run_in_terminal`→`pwsh`、`runSubagent`→`subagent`/`subagent_cross`、`vscode_askQuestions`→
+> `ask_user_question`）在 DeepSeek Harness 中按 preset 根 `DSH-ADAPTATION.md` §1 映射理解；
+> **经验语义原样适用**（编辑方式、GBK 伪象、WSL 双真相、token 纪律等教训不随工具名变化）。
+> 本文件按需读取，不常驻。
+
 ## 编辑方式
 
 - **源码文件编辑首选 `replace_string_in_file`**，不受 shell 转义影响
@@ -204,6 +211,7 @@ PR#26 教训是"没取证"。PR#2984 是**升级版失败**：取了证，但**�
 - **临时默认**：继续实证——每次合适 claim 跑跨厂商，累积 2-3 次实证后再定"全量 vs 按 claim 类型"策略
 - **确切 model 字符串（2026-08-05 实测）**：`GLM-5.2 (CodingPlan) (gcmp.zhipu)` / `DeepSeek-V4-Flash (gcmp.deepseek)`——按主 agent 厂商取反；技能中 model 字符串必须实测后写死，报错时以错误返回的 `Available models` 列表为准
 - **论文支撑**（机制详见 SKILL.md「跨厂商模型」）：cross-family 验证收益 > intra-family > self（Correlated Errors ICML 2026 2506.07962 + NYU 2512.02304）；verifier gain = precision − solver accuracy
+- **DSH 自动路由（v5.9，kix-route 插件，2026-08-15）**：「模型自动选择可用模型」在 DSH 的落点是三层：主模型按需**选工具**（`subagent_cross` = 跨厂商观察者）+ 工具行只钉 `kix-route:<tier>` **哨兵模型名** + `plugins/kix-route.js` 在子代理首次请求的 agent/request waterfall 里按 llm 实时目录（listProviders/listModels/resolveModelInfo）解析成可用路由——cross = 父厂商取反（父 GLM→deepseek 系 / 父 DeepSeek→zai 系）、vision = 首个 inputModalities 声明 image 的模型、thinker = deepseek 系首选。**边界语义（v5.9.1）**：cross 在单厂商部署、vision 在全目录无 image 模型时**启动即报错**（throw，错误信息附注册清单 + 改用建议，随 run 失败带回父模型——假独立性比失败更糟，且 host 日志告警父模型看不见）；thinker 无 deepseek 时降级 agentDefaultModel（大预算深思考角色仍成立）+ 一次性告警；解析失败不缓存，中途注册 provider 下一请求生效。**历史注记**：v5.8 及之前「必须钉精确 (provider, model) 对」是声明层约束（agentOptions 自定义键被 dsh-tool-subagent 的 zod 剥离，省略 model 继承父模型 → UNKNOWN_MODEL）——waterfall 层可整体改写配置（kix-cost lite 回退同缝已实证），哨兵名利用 model 是自由字符串这一点做档位标记。候选池 = settings.yaml `llm-pi-ai:` 清单（pi-ai 内置目录外的模型仍需在此声明）+ 内置目录；**模型线升级现在只改 settings，preset 永不再钉模型**；插件缺失时哨兵直达适配器 → UNKNOWN_MODEL 响亮失败（宁可断不假，防静默同厂商退化）
 
 ## 机制事实 ≠ finding 成立（2026-08-07 私有项目 C PR#24）
 
@@ -230,14 +238,8 @@ PR#26 教训是"没取证"。PR#2984 是**升级版失败**：取了证，但**�
 
 - 三段结构/真人简述/精简档/语言一致/不暴露方法论/不重复已发内容/API 调用纪律（POST 非幂等、emoji payload、exit 0 即成功）→ 权威定义在 `VSCODE_USER_PROMPTS_FOLDER/kixpower-review.prompt.md` §评论格式规范 + §发布纪律。发布 review 前加载该文件照抄
 
+## 验证链纪律（2026-08-19 自常驻层迁入的实证化石）
 
-## Windows 平台陷阱（2026-08-15 fetch-webpage/repo-ops 实测）
-
-- **node 24 + Windows：`fetch()` 后调 `process.exit()` 必崩**（`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\win\async.c`，退出码 -1073740791）。最小复现 4 变体实测：body 完整消费与否、`connection: close` 与否、AbortSignal 与否，全崩；唯一干净路径是 `process.exitCode` + 事件循环自然退出。规避：所有路径设 exitCode 后 return，配合 `connection: close` 防 keep-alive 挂住事件循环；挂死兜底交给调用层超时
-- **`execFileSync('npm')` 在 Windows 解析不了 `npm.cmd`**（CreateProcess 不解析 .cmd，抛 ENOENT 被 catch 吞 → 静默 fallback）。必须 `execFileSync(process.env.ComSpec ?? 'cmd.exe', ['/c', 'npm root -g'])` 或直接拼候选路径（`%APPDATA%\npm\node_modules`）。教训：fallback 路径被静默启用时，用输出特征验证走的是哪条路（本例 `<b>` 未转 `**` 才暴露）
-- **git `status --porcelain` 行首空格是语义**（` M file` = 未暂存）：对 git 输出禁 `trim()`，只去尾部换行；否则 ` M a.txt` → `M a.txt` 解析成 staged `.txt`
-- **杀进程按名字匹配是事故源**：`Stop-Process -Name node` 会连带杀掉同为 node 的 DSH 后端。必须 `Get-NetTCPConnection -LocalPort N` 反查 OwningProcess 后按 PID 杀
-- Node `Buffer.from(str, 'gbk')` 是无效编码（Buffer 只支持 utf8/latin1 等）；GBK 编码要 `TextDecoder('gbk')`（解码）或 pwsh `[Text.Encoding]::GetEncoding(936)`（生成字节）
-- **stub 链藏 bug 的实证**（2026-08 前端项目，自常驻层迁入）：FakePlatform 不调真实 move → float 崩溃未被发现。非平凡逻辑留一条真实链路端到端检查，不只测 stub；声称"已验证"时核对验证的是真实风险点还是表面（测调用链存在 ≠ 测被调用方语义）
-- **多次 CI 红都是 fmt/clippy 未过**（实证记录）：任何代码改动提交前本地跑 `cargo fmt --check` + `cargo clippy -D warnings` + 相关 test（TS 同理 eslint/prettier/typecheck）。固定命令不依赖读 CI；项目独有白名单/grep 门禁仅在改动该类代码时查一眼 CI
-- **转录/萃取归档前必须对源逐字复核**（候选·2026-08-19 本会话自省实证）：从上下文记忆转写表格入档，三代演化链 `eaa8→c227258f→T3` 被错叠成两代且丢了首代——错叠由主线程自查发现并修复；用户粘贴原文暴露的是第二层失败（压缩损耗×3：组合实证表/理论坐标/v8 对照）——归因经 cross 审计修正。根因：范式验证三问锚在"代码"语义上，萃取/转录类工作面没有触发"证据维度检查"；"读过"≠"记得"是 LLM 真实瓶颈（⑩ 所指自信偏差的微观形态）。规则：任何转录入档（化石附注/对话萃取/表格引用）= claim，落笔前 grep 源文件逐字核对
+- **stub 链藏 bug**：FakePlatform 不调真实 move → float 崩溃未被发现（前端项目实证）。非平凡逻辑留一条真实链路端到端检查，不只测 stub；"已验证"要核对验证的是真实风险点还是表面（测调用链存在 ≠ 测被调用方语义，测 FakePlatform ≠ 测真实 platform）
+- **多次 CI 红都是 fmt/clippy 未过**：代码改动提交前本地跑 `cargo fmt --check` + `cargo clippy --all-targets --all-features -- -D warnings` + 相关 test（TS：eslint/prettier/typecheck）。固定命令不依赖读 CI；项目独有白名单/grep 门禁仅在改动该类代码时查一眼 CI
+- **转录/萃取归档前必须对源逐字复核**（候选·2026-08-19 本会话自省实证）：从上下文记忆转写表格入档，三代演化链 `eaa8→c227258f→T3` 被错叠成两代且丢首代——错叠由主线程自查发现并修复；用户粘贴原文暴露的是第二层失败（压缩损耗×3）——归因经 cross 审计修正。根因：验证三问习惯性锚在"代码"面，萃取/转录类工作没触发"证据维度检查"；"读过"≠"记得"是 ⑩ 所指自信偏差的微观形态。规则：任何转录入档（化石附注/对话萃取/表格引用）= claim，落笔前 grep 源文件逐字核对

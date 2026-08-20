@@ -37,3 +37,5 @@ kix-discipline/
 # Playwright MCP 本地痕迹
 .playwright-mcp/
 
+colony-before.png
+docs/session-*.md
