@@ -381,16 +381,28 @@ function pluginNames(root) {
 // zh 全量（仓库级：dsh/preset + en/preset + README + 副本 + 链接 + 语法）
 function runAllZh(root) {
   return merge(
-    checkPersonaBudget({ root, rel: 'dsh/preset/agent.cordis.yml', maxChars: 4500, maxEstTokens: 2600 }),
-    checkPersonaBudget({ root, rel: 'en/preset/agent.cordis.yml', maxChars: 9500, maxEstTokens: 2600 }),
-    ...pluginNames(root).map((name) => checkPluginPair({ root, name })),
+    // v1.3.0 布局：默认 preset=激励面（含 disabled 经典 persona 遗产块）；classic 独立目录
+    checkPersonaBudget({ root, rel: 'dsh/preset/agent.cordis.yml', maxChars: 6000, maxEstTokens: 3400 }),
+    checkPersonaBudget({ root, rel: 'dsh/preset-classic/agent.cordis.yml', maxChars: 6000, maxEstTokens: 3400 }),
+    checkPersonaBudget({ root, rel: 'en/preset-classic-en/agent.cordis.yml', maxChars: 9500, maxEstTokens: 2600 }),
+    // v1.3.0 身分组豁免：kix-budget 默认侧含 L3 验证补贴补丁（设计差异）；
+    // probe/settle/mem 三件套仅存在于默认 preset（设计如此）。
+    ...pluginNames(root)
+      .filter((name) => !['kix-budget.js', 'kix-probe.js', 'kix-settle.js', 'kix-mem.js'].includes(name))
+      .map((name) => checkPluginPair({ root, name })),
+    checkFilesEqual({
+      root,
+      a: 'dsh/preset/plugins/kix-budget.js',
+      b: 'dsh/preset-null/plugins/kix-budget.js',
+      label: 'plugins/kix-budget.js (L3 pair: default+null only)',
+    }),
     checkVersionPair({ root }),
     checkMirrorTree({ root, left: 'dsh/vision-bridge', right: 'en/bridge', label: 'vision-bridge' }),
     checkIdenticalSet({ root, paths: ['scripts/install-lib.js', 'en/scripts/install-lib.js'], label: 'install-lib.js' }),
     checkMarkdownLinks({ root, rel: 'dsh/preset' }),
-    checkMarkdownLinks({ root, rel: 'en/preset' }),
+    checkMarkdownLinks({ root, rel: 'en/preset-classic-en' }),
     checkSyntax({ root, rel: 'dsh/preset', label: 'dsh/preset' }),
-    checkSyntax({ root, rel: 'en/preset', label: 'en/preset' }),
+    checkSyntax({ root, rel: 'en/preset-classic-en', label: 'en/preset-classic-en' }),
     checkSyntax({ root, rel: 'dsh/vision-bridge', label: 'dsh/vision-bridge' }),
     checkSyntax({ root, rel: 'en/bridge', label: 'en/bridge' }),
     checkSyntax({ root, rel: 'scripts', label: 'scripts' }),
