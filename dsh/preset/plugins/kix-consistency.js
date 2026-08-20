@@ -38,10 +38,9 @@ const MUTATION_TOOLS = new Set(['edit', 'write'])
 // 交给软启发：write/edit 工具的 parity hint 已把「其它根对应份」的维度立起来，
 // 模型在 shell 任务里同样带着这个意识；机械兜底由 CI 全量检查承担。
 
-const PERSONA_BUDGET = {
-  zh: { maxChars: 4500, maxEstTokens: 2600 },
-  en: { maxChars: 9500, maxEstTokens: 2600 },
-}
+// v1.3.4：预算单源进 consistency-lib（PERSONA_BUDGETS）——原此处本地常量
+// 与 runAllZh 硬编码 6000/3400 双源漂移，同一检查两套阈值。
+const PERSONA_BUDGET = lib.PERSONA_BUDGETS
 
 // ── 纯判定函数（模块级：单元测试经 __internals 直接验证）─────────────────
 

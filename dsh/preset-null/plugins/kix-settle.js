@@ -83,6 +83,25 @@ module.exports = {
       return typeof next === 'function' ? next() : result
     })
 
-    
+    // ── 交付结算：回合收尾时投递按零结算 steer（2026-08-20 补齐）────────────
+    // 出生证明补遗：初版（2026-08-19）只实现了 post-execute 状态记账，注释声称的
+    // "交付时（agent/turn-stopping）单发一条 steer 提醒" 从未落地——makeUserMessage/
+    // settleText 定义后零调用，reminded 字段预留未读。本次补齐投递端：
+    // 回合停止时若存在工作区编辑且最后一次编辑后无任何新进程执行 → 单发一次
+    // advisory 提醒（每会话一次，reminded 置位）。语义与 kix-discipline 的
+    // green gate 互补但更宽：任何执行证据（probe/run_code/python/pytest）都算清账。
+    ctx.on('agent/turn-stopping', async (payload) => {
+      try {
+        const agent = payload && payload.agent
+        if (!agent) return
+        const st = stateFor(agent)
+        if (!st) return
+        // 结算触发条件：有编辑 + 最后一次编辑后无执行 + 本会话未提醒过。
+        if (st.edits > 0 && !st.executedSinceLastEdit && !st.reminded) {
+          st.reminded = true
+          agent.steer(makeUserMessage(settleText(st.edits)))
+        }
+      } catch (_) { /* steer must never break the turn */ }
+    })
   },
 }

@@ -55,6 +55,8 @@
 //     开放，防止成本梯度压制自主组队（实测 08-16→19 角色分派 3→2→0 衰减，
 //     审计见 scripts/audit-delegation-history.cjs；教训入
 //     memories/orchestration-lessons.md ⑥）。
+//     劝告文案（streak/budget，2026-08-20）同样只定价：不点名卸载通道。
+//     出生证明：点名 lite/dev/qa 的建议层是决策代理，与 lite-only 放行集同构。
 //
 // 挂载：preset agent.cordis.yml compaction 组内一行：
 //   - id: kix-budget
@@ -342,12 +344,12 @@ function makeUserMessage(text, form = 'notice') {
 }
 
 function streakAdviceText(n) {
-  return `kix-budget: 主线程已连续 ${n} 步只读检索/核对；这是收敛建议，不是交接完成。轻路径：已知文件的机械并发/聚合用 run_code，语义检索改派 subagent_lite（并行 ≤2）。重路径（编曲模型）：跨模块/验证关键任务选 dev·qa·reviewer（kix_capability_call 直达，首用自动挂载）。小结果由最终消息完整回流；仅大结果写 artifact 并回路径+结论。判断与编排留在主线程。本回合不再重复提醒。`
+  return `kix-budget: 主线程已连续 ${n} 步只读检索/核对；这是收敛建议，不是交接完成。再开一轮只读的信息增量须超过其成本；直接给出可结算主张（或标明未验证）是合法动作。小结果由最终消息完整回流；仅大结果写 artifact 并回路径+结论。判断与编排留在主线程。本回合不再重复提醒。`
 }
 
 function budgetAdviceText(ctxTokens, budgetTokens) {
   const k = (n) => Math.round(n / 1000)
-  return `kix-budget: 上下文已达 ${k(ctxTokens)}K tokens（本会话动态预算 ${k(budgetTokens)}K；窗口由运行时模型目录解析）。① 已知文件机械聚合用 run_code，语义检索改派 subagent_lite ② 跨模块/验证关键任务按编曲模型选 dev·qa·reviewer（重路径卸载更强）③ 小结果最终消息完整回流，仅大结果写 artifact 并回路径+结论 ④ 本回合收尾，长任务用 goal 或 /kixpower-continue。本回合不再重复提醒。`
+  return `kix-budget: 上下文已达 ${k(ctxTokens)}K tokens（本会话动态预算 ${k(budgetTokens)}K；窗口由运行时模型目录解析）。再检索须买到能推翻或锁定结论的信息；直接给出可结算主张（或标明未验证）是合法动作。小结果最终消息完整回流，仅大结果写 artifact 并回路径+结论。本回合收尾。本回合不再重复提醒。`
 }
 
 // ── 插件 ───────────────────────────────────────────────────────────────────

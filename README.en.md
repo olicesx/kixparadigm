@@ -19,10 +19,12 @@ The fit turns the paradigm from "one person's local Copilot customization" into 
 ## Quick start (DSH, recommended)
 
 ```bash
-npm i -g kixparadigm     # preset + vision-bridge auto-install; restart dsh web and pick kixparadigm in the mode list
+npm i -g kixparadigm     # installs both default kixparadigm and classic kixparadigm-classic + vision-bridge; restart dsh web and pick a mode
 npx kixparadigm install  # no global install
-npm i -g kixparadigm-en  # English edition (separate package; translation status: en/preset/TRANSLATION-STATUS.md)
+npm i -g kixparadigm-en  # English classic mode kixparadigm-classic-en (separate package)
 ```
+
+> The v1.3.0 tarball already shipped classic sources, but the installer copied only the default preset. **From v1.3.4** `npm i -g kixparadigm` installs both variants under `~/.dsh/.agent-presets/`. The ablation control `kixparadigm-null` is not installed by npm.
 
 Custom DSH dir (`DSH_HOME`), `--preset-only`, ops commands (`doctor` / `uninstall` / `copilot`): see [dsh/README-DSH.md](dsh/README-DSH.md).
 

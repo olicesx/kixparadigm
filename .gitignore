@@ -39,3 +39,11 @@ kix-discipline/
 
 colony-before.png
 docs/session-*.md
+
+# 会话临时产物与编辑备份（不入库、不进 npm 包；v1.3.1 自检 F3）
+*.backup
+placeholder.txt
+temp_zstd.txt
+test_fix.txt
+tmp_test_temp.txt
+tmp_*.txt

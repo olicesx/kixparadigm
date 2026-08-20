@@ -19,10 +19,12 @@ kix 范式原是 VS Code Copilot 定制包。研究 DeepSeek Harness（DSH）后
 ## 快速开始（DSH，推荐）
 
 ```bash
-npm i -g kixparadigm     # preset + vision-bridge 全自动安装，重启 dsh web 后在模式列表选 kixparadigm
+npm i -g kixparadigm     # 同时安装默认模式 kixparadigm + 经典模式 kixparadigm-classic + vision-bridge；重启 dsh web 后在模式列表选择
 npx kixparadigm install  # 不全局安装
-npm i -g kixparadigm-en  # 英文版（独立包，翻译状态见 en/preset/TRANSLATION-STATUS.md）
+npm i -g kixparadigm-en  # 英文经典模式 kixparadigm-classic-en（独立包）
 ```
+
+> v1.3.0 的 npm 包已含经典模式源码，但安装器只拷了默认 preset。**v1.3.4 起** `npm i -g kixparadigm` 会把两个变体都装进 `~/.dsh/.agent-presets/`。消融对照 `kixparadigm-null` 不随 npm 安装。
 
 自定义 DSH 目录（`DSH_HOME`）、`--preset-only`、运维命令（`doctor` / `uninstall` / `copilot`）见 [dsh/README-DSH.md](dsh/README-DSH.md)。
 

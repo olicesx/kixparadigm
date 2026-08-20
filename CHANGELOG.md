@@ -1,5 +1,51 @@
 # Changelog
 
+## v1.3.4（2026-08-20）persona 预算口径修正 + 经典模式随 npm 安装（1.3.1–1.3.4 首次进 registry）
+
+- **发版收口**：npm 上一次是 `kixparadigm@1.3.0` / `kixparadigm-en@1.2.23`。1.3.0 tarball **含** `dsh/preset-classic/`，但安装器只认单一 `presetDir`，postinstall 只把默认激励面拷到 `~/.dsh/.agent-presets/kixparadigm/`——用户反馈「发布的包没有经典模式」= 安装面漏装，不是打包漏文件。本版 `package.json#kixparadigm.variants` 声明 `kixparadigm` + `kixparadigm-classic`，安装器逐变体拷贝；en 包安装 id 对齐 `kixparadigm-classic-en`。`npm i -g kixparadigm` 后模式列表应同时出现两者。en 包从 1.2.23 跳到 1.3.4（中间 1.3.0–1.3.3 未单独发 en）。
+- **背景**：kix-consistency 运行时报警「dsh/preset persona 5510 chars > 4500」。归因（git 考古 + 逐块测量）：**测量口径失真，非真实膨胀**——v1.3.0 激励面转正后，`dsh/preset` 含 disabled 经典 persona 遗产块 4160 chars（死文本，不注入会话），旧 `extractPersona`「首个 text 块到锚点」口径把它计入「常驻预算」，而真实活跃层（persona-incentive）仅 **1274 chars / 225 estTok**（预算 4500/2600 的 28%/9%）。四根实测：classic 4131/2271 ✅、null 190（无预算挂载）、en 9137/1651 ✅——**瘦身成果一直都在，被冤枉的是尺子**。
+- **修复①（测量口径）**：`extractPersona` 重写为「活跃常驻层」语义——只计 agent-instructions 锚点前**非 disabled** 条目的 text 块（6 空格缩进内容，不含条目脚手架）；条目级 `disabled: true` 按精确 2 空格缩进锚定，text 内容行内出现同字样不误判；锚点缺失仍报错（结构损坏不放行）；disabled 块全部存在时 persona='' 测量真值。
+- **修复②（预算单源）**：新 `PERSONA_BUDGETS` 常量进 lib（zh 4500/2600、en 9500/2600）——曾双源漂移：`runAllZh` 硬编码 **6000/3400**、运行时插件本地常量 **4500/2600**，同一检查两套阈值（CI 放行、运行时报警的分裂根源），这正是本库使命要消灭的双源形态，阈值自己却逃逸了单源。`runAllZh`/`runAllEn`/kix-consistency.js 三处消费点全部改饮 `lib.PERSONA_BUDGETS`。
+- **单测**：kix-consistency.test.js **122/122**（111 基线 + 8 新增：disabled 遗产块不计 / text 行内字样不误判 / 超预算仍拦（口径修正≠放松）/ 锚点缺失报错 / PERSONA_BUDGETS 导出 / 插件无本地字面量 / runAllZh 无 6000 硬编码）。三文件（consistency-lib.cjs / kix-consistency.js / kix-consistency.test.js）× 4 源副本 identical。
+- **一并收编**：kix-budget 劝告文案去通道点名（只定价不路由，与 v7 编曲保育同构）已同步 default+null（L3 配对一致）。`preset-null` 仍是消融对照，**不**随 npm 安装（只进 tarball 的 `dsh/` 树，variants 不声明）。
+- **上轮勘误**：曾报「CLI 不查 persona 预算（文档-实现漂移）」——误：CLI 经 `runAllZh` 查了，真实问题是阈值双源（本条修复②）。grep 单点证据导致的错误结论，已修正归因。
+
+## v1.3.3（2026-08-20）run_code 三块受控能力放开（kix-guards v16）
+
+- **背景（用户指示，接 run_code 能力面讨论）**：v13 一刀切拦截全部 require/import/fetch/fs 直写，组合层被迫绕道 bash 文本解析（格式脆弱）或逐工具往返（丢上下文经济性）。本次放开三块**低风险、可静态判定**的面，其余拦截不变：
+  ① **纯函数内置模块白名单**——`node:path`/`node:util`/`node:crypto`（含无前缀形与 `path/posix`、`util/types` 子路径），加载调用+安全成员链放行；链内出现 `constructor`/`process`/`fetch(`/`eval(`/`WebSocket` 守卫 trim 到仅加载调用（`path.constructor("…")()` 代码生成仍拦）。
+  ② **fs 只读元数据**——允许 `require/import('node:fs'|'node:fs/promises')`；stat/readdir/readFile/realpath/access 等只读面放行；写 API（writeFile/rm/mkdir/rename/open/…Sync 全系名单）按**调用模式**拦截——FWRITE_RE 在 fs 已加载时对**剥离数据面后的语法面**匹配（字符串提及零误伤），deny 引导改用 write/edit 工具。fs span 仅覆盖加载调用不延伸链，`require('node:fs').writeFileSync(…)` 直链写保留 v15 拦截语义。
+  ③ **fetch 字面量 URL 域名白名单**——`cfg.netAllowlist`（默认 `api.github.com,github.com`，支持 `*.suffix` 通配）；**仅引号字符串字面量**，模板 URL（`${}` 表达式不可静态判定、blank 会隐藏实参代码——自查发现的绕过路径）、变量/拼接 URL、相对 URL 一律不 blank → 命中黑名单 fail-closed deny；第二参含 `process`/`constructor`/`eval(` 同样不豁免。轮询+聚合场景（等 CI 状态）放开。
+- **实现机制**：`collectAllowedSpans` 在原文做字符级精确 span 匹配（起点在字符串/注释/模板 raw 内 = 数据面跳过；`.`/`?.` 前缀 = 属性调用 `a.fetch(` 不豁免）→ `runCodeSurface` 先 `executableJsSurface` 等长剥离（偏移稳定）再 span 等长空白化 → 黑名单照常匹配残留面。非白名单内容不进 spans → 原文保留 → 拦截（fail-closed 不变量）。v13 全部歧义规则（regex/division/tagged-template/U+2028）原样保留。
+- **不变量**：v15 deny 集除三块白名单外逐例保留（263 基线仅 1 例语义翻转：`import("fs")` 裸加载无写调用 deny→allow，按 v16 语义注明）；child_process/process/eval/Function/constructor/WebSocket/未知模块照旧 deny。
+- **已知局限（如实声明，API 塑形层非安全边界，真机械层是 sandbox）**：`globalThis['re'+'quire']` 拼接混淆不拦（v15 同级覆盖）；fs 别名（`const w=fs.writeFile; w(…)`）不拦（v15 同级）；fetch Host 头注入属 SSRF 上游防护——白名单域名本身是信任边界。
+- **单测**：286 组全绿（263 基线 + 23 新增：纯模块 6 / fs 只读与写拦 7 / fetch 白名单与 fail-closed 9 / hostAllowed 纯函数 1 / cfg.netAllowlist 配置实例 1）。8 副本 identical（源 + dsh/preset-classic + dsh/preset-null + en/preset-classic-en + 宿主 kixparadigm{,-classic,-null,-classic-en}），每副本独立跑测全绿；sync-dsh-preset.ps1 DryRun 幂等（相同 41/更新 0）。kixincentive/kixincentive4f 的 guards 为独立演化版（md5 异源），不在一致性契约内未动。
+- **生效条件（挂账）**：宿主按 preset 名缓存插件快照——**须重启 DSH 进程后新会话复验**：①三块放行真实可用（run_code 真机 fetch/import）②等价面 5 拦 3 放不回归 ③cfg.netAllowlist 经 agent.cordis.yml 配置链生效。
+- **退役条件**：若实测出现经三块开口的真实破坏事故（fs 写绕过 / 白名单域 SSRF 被利用），回退 v15 一刀切并在源文件头记录第二轮出生证明。
+
+## v1.3.2（2026-08-20）kix-settle 投递端补齐 + 插件面全开（用户裁决）
+
+- **插件全开裁决（用户，2026-08-20）**：默认 preset 全部 6 个未挂载插件恢复启用——kix-discipline / kix-orchestration / kix-consistency / kix-commands / kix-signal（移除 `disabled: true`）+ kix-stalled（注释态转启用）。**依据（诚实分级）**：①常驻认知层缩减（persona 激励面）有 EXP1 实测（½ 成本），但**插件层关闭无对照实验**——v2 冻结锚点（49f820…）中这 5 个插件本就是 disabled，是实验配置继承而非 v1.3.0 新决策；②"关了更好"从未双臂归因（⑨ 纪律），用户裁决：缩减只属于常驻层，插件全开。kix-stalled 为 candidate 状态（1 次夹具 E2E），按全开裁决启用，晋级/退役条件不变。prompts/ 目录（5 个 kixpower 流程文件，~64KB）从 classic 复制到默认+null，kix-commands 五个 `/kixpower-*` 命令完整可用。
+- **kix-settle 只观察不投递的半成品修复（会话实弹审计发现）**：初版（v1.3.0，2026-08-19）只实现了 post-execute 状态记账（edits/execs/executedSinceLastEdit），注释声称的"交付时（agent/turn-stopping）单发按零结算 steer 提醒"从未落地——`makeUserMessage`/`settleText` 定义后零调用、`reminded` 字段预留未读、`apply()` 内无 `agent/turn-stopping` 处理器。本次补齐投递端：回合收尾时若存在工作区编辑且最后一次编辑后无任何新进程执行（probe/run_code/python/pytest 均算清账）→ `agent.steer()` 单发一次 advisory 提醒（reminded 置位，每会话一次）；防御包裹保证投递绝不阻断回合。语义与 kix-discipline 的 green gate 互补但更宽。
+- **修复路径**：参照 kix-discipline 既有投递模式（`agent/turn-stopping` + `agent.steer(makeUserMessage(...))`）——宿主事件与投递 API 均有同族实证，非发明新机制。
+- **单测**：新建 `kix-settle.test.js`（10 断言）——监听器注册（post-execute + turn-stopping）、记账（edit/write 计数、工作区外不计、probe/run_code/执行类 bash 清账）、投递（有编辑无执行→steer 单发且含按零结算语义、有执行→不提醒、无编辑→不提醒）、reminded 单发不重复。宿主副本（`/root/.dsh/.agent-presets/kixparadigm`）同测全绿。
+- **同步**：源仓库 `dsh/preset/` + `dsh/preset-null/`（消融变体同修）+ 宿主安装副本两处（kixparadigm / kixparadigm-null）四副本 identical；kix4 冒烟 27/27 全绿（含 kix-probe/kix-mem 既有断言与三件套构成 parity）。
+- **真实会话行为实测（2026-08-20，宿主重启后）**：构造「1 处工作区编辑 + 末次编辑后无执行 + 回合收尾」场景——宿主在 `agent/turn-stopping` 注入唯一一条 `source.plugin=kix-settle, form=notice` user 消息，文本与 `settleText()` 逐字一致；会话记录全量核对恰 1 条（reminded 单发成立）。同时实证宿主插件快照缓存：磁盘同步后必须重启宿主（PID 139078→144237）才加载修复版。
+- **生效条件**：宿主按 preset 名缓存插件快照（v1.3.0 已知宿主缺陷）——磁盘修复对运行中进程不生效，**重启宿主或换 preset 名后 settle 投递才真正上线**（本条即重启后实测闭环）。
+
+## v1.3.1（2026-08-20）kix-guards v15：预算线结算 steer（v14 死亡证明）
+
+- **哲学自检驱动**（`kix-discipline/philosophy-selfcheck-v131.md` F1 裁决）：commit 预算线从硬 DENY 降为**结算 steer**——超预算不拦 commit（可逆、本地），post 成功后注入一次对账提醒（v12 控制平面同款 pending 机制，每会话一次）：①迭代节奏真实变快（CI 修复链）→ 同步 commit_budget 到 progress.md；②预算合理而提交超速 → 收敛粒度或拆分 Sprint。硬帽 fuse（`COMMIT_HARD_CAP`=10 次/小时，含 amend，不可配）保留硬 DENY——失控 thrash 不响应 steer，由 fuse 熔断（41-step gate / token 预算 hard gate 同族）。
+- **删除 v14 `detectFailureDrivenBonus`**（出生/死亡证明见插件头注释）：commit message regex 分类推断「失败驱动」意图无出生证明（无「预算线拦断合法修复链」事故记录）；文本启发式意图分类与 v1.2.15 判死删除的 shell 命令机械提取同类负债（`chore:`/`test:` 常规提交误计为失败驱动、`.ci-failed` 等标记文件无创建者=死代码、零单测）；病根是定价错误——预算线 DENY 拦可逆 commit 只为强迫记账，把会计问题定价成失控问题，v14 是误定价逼出的代偿。
+- **`COMMIT_BUDGET_DEFAULT` 6→3 回退**：v14 的提升无实测数据支撑；steer 化后错误默认的代价只是一次提醒，不再是拦断。near-miss 结构化日志（commits/budget/source）为测度点，攒 sprint 数据后校准默认值与 fuse 阈值。退役条件：实测出现「steer 无响应且 fuse 前已造成不可逆破坏」→ 预算线回硬 DENY 并记第二轮出生证明。
+- **en 版本锚同步**：`en/scripts/check-consistency.cjs` 期望版本 1.3.0→1.3.1（自检 H2 修复；kix-guards 四份镜像失步 H1 随本条同步一并消除）。
+- **单测**：kix-guards 新增 v15 组——超预算放行+结算提醒注入（含 commits/budget/来源断言）、remindOnce 无二次提醒、fuse 硬帽回归、`budgetSteerMessage` 纯函数；常数断言回退 3。
+- **kix-guards v15.1（源仓库豁免覆盖变体目录）**：`isSourceRepoPresetPath` 正则 `/preset(?:\/|$)/` → `/preset[-\w]*(?:\/|$)/`——`dsh/preset-null/`、`dsh/preset-classic/`、`en/preset-classic-en/` 源路径编辑不再被裸 `agent.cordis.yml` 兜底分支误 remind（出生证明：本日会话实弹编辑 preset-null yml 触发误报）。安装面检查先于豁免执行，安装副本路径仍拦；新增 5 断言含 Windows 反斜杠变体与安装面反例。
+- **browser 常驻裁决（用户，2026-08-20）**：默认/null preset 的 kix-browser 行保持常驻。依据：常驻路径 live E2E 闭环通过（open(200)/snapshot 真实 DOM/type 过滤生效/Ctrl+a+Delete 恢复/screenshot 落盘；CDP 不可达时 launch 兜底正常）+ 浏览器验证工作流高频 + 1KB schema 税接受（EXP3 ⑦ 常驻工具不被仪式性滥用）。出生证明从「宿主 effect bug 绕行」改写为本裁决（原证明已随 bug 修复失效）；死亡条款：连续一个月真实使用 <2 次 → 注释回退渐进披露。en-classic 保持注释态渐进披露（与 zh-classic 冻结锚一致）。
+- **persona 悬空声明裁剪（F2，默认 preset）**：v1.3.0 重排后 persona 教了四个未挂载机制（kix_discipline_spec 工具 / 门禁已挂载 kix-discipline·orchestration / /kixpower-* 命令 / kix-budget hard gate），本会话工具面逐一证伪。修正：需求三检契约改为「工作区 kix-discipline/spec.md 目录即约定」（不依赖未挂载插件）；门禁清单只列实际挂载的 kix-guards（含 v15 语义）；预算句改诚实表述「本部署未启用，自觉提前交接」；/kixpower-* 指派句删除；头部插件清单按实际挂载/关闭状态重写。
+- **发布卫生（F3）**：删除 `dsh/preset-classic/plugins/kix-guards.js.backup`（54.7kB，原会进 npm tarball）与 `en/package.json.backup`；`git rm` 四个跟踪杂物（placeholder/temp_zstd/test_fix/tmp_test_temp.txt）；.gitignore 增 `*.backup`、`tmp_*.txt` 等防复发段。
+- **安装器多变体（用户反馈「发布的包没有经典模式」）**：`PRESET_VARIANTS` 循环安装全部变体（旧 `presetId`/`presetDir` 向后兼容）；en 包 `kixparadigm` 段升级为 variants 且 id 对齐 `kixparadigm-classic-en`（v1.3.0 重命名漏改：配置仍写 `kixparadigm-en`）；`KNOWN_PRESET_IDS` 补 `kixparadigm-classic-en` 与 `kixparadigm-null`——缺前者时 zh 卸载会把仅剩 en 在装的场景误判无 owner 而删共享 vision-bridge。随 **v1.3.4** 首次进入 npm（本条代码在 1.3.1 提交，1.3.1–1.3.3 未单独 publish）。
+
 
 ## v1.3.0（2026-08-20）实验驱动发版：契约优先 + 激励面机制三件套 + 成本分层模型
 
