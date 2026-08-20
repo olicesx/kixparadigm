@@ -7,11 +7,11 @@
 // the kix-consistency plugin — single source of truth for CI and runtime checks).
 
 const path = require('node:path')
-const lib = require('../preset/plugins/consistency-lib.cjs')
+const lib = require('../preset-classic-en/plugins/consistency-lib.cjs')
 
 const ROOT = path.join(__dirname, '..')
 
-const { failures, notes } = lib.runAllEn(ROOT, '1.2.23')
+const { failures, notes } = lib.runAllEn(ROOT, '1.3.0')
 for (const n of notes) console.log('  ✔ ' + n)
 
 if (failures.length) {

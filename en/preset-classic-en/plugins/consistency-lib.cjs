@@ -412,10 +412,10 @@ function runAllZh(root) {
 // en 包全量（en 包内：preset + bridge + scripts；版本由调用方钉值）
 function runAllEn(root, expectedVersion) {
   return merge(
-    checkPersonaBudget({ root, rel: 'preset/agent.cordis.yml', maxChars: 9500, maxEstTokens: 2600 }),
+    checkPersonaBudget({ root, rel: 'preset-classic-en/agent.cordis.yml', maxChars: 9500, maxEstTokens: 2600 }),
     checkEnPkgVersion({ root, rel: 'package.json', expected: expectedVersion }),
-    checkMarkdownLinks({ root, rel: 'preset' }),
-    checkSyntax({ root, rel: 'preset', label: 'en/preset' }),
+    checkMarkdownLinks({ root, rel: 'preset-classic-en' }),
+    checkSyntax({ root, rel: 'preset-classic-en', label: 'en/preset-classic-en' }),
     checkSyntax({ root, rel: 'bridge', label: 'en/bridge' }),
     checkSyntax({ root, rel: 'scripts', label: 'en/scripts' }),
   )
