@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.3.5（2026-08-20）web_search 恢复常驻 + 工具描述压缩
+
+- **web_search 三分法回滚（默认 preset）**：曾尝试把 `web_search` 从常驻挪到 `ACTIVATABLE_TOOLS` 渐进披露。评估否决——低频工具断 KV 缓存一次的成本（cacheRead:input 实测 127:1，长会话全价重读）远超省下的 ~660 tok/步常驻税；且 `tool-web` 是 preset 行注册的 scope-local 工具，`restrict` deny 裁不到（旧测试把 web_search 塞进全局视图断言 deny 含它 = 假绿）。本版：`agent.cordis.yml` 的 `tool-web` 恢复常驻；`ACTIVATABLE_TOOLS.web_search` 删除；`kix-focus` deny 清单不再假装能裁它；capability 目录 search 组改回「常驻可直接调用」。
+- **工具 schema 文案压缩（常驻税）**：缩短 `kix_capability_call` / `kix_tool_activate` / `kix_tool_deactivate` / `kix_discipline_spec` / `probe` / `experience` 的 description（保留行为锚点与何时用/何时不用；砍机制复述）。job 组 hint 改为「list 确认存在 → output 读结果 → kill 停止」。
+- **测试**：`kix-focus.test.js` 改断言——`web_search` 不在 ACTIVATABLE、restrict deny 不含它、常驻性由 cordis 行决定。四副本 identical（default / classic / null / en-classic）。
+- **npm 经典模式**：1.3.4 已修好 variants 安装面，本版保持 `kixparadigm` + `kixparadigm-classic`；en 仍为 `kixparadigm-classic-en`。
+
 ## v1.3.4（2026-08-20）persona 预算口径修正 + 经典模式随 npm 安装（1.3.1–1.3.4 首次进 registry）
 
 - **发版收口**：npm 上一次是 `kixparadigm@1.3.0` / `kixparadigm-en@1.2.23`。1.3.0 tarball **含** `dsh/preset-classic/`，但安装器只认单一 `presetDir`，postinstall 只把默认激励面拷到 `~/.dsh/.agent-presets/kixparadigm/`——用户反馈「发布的包没有经典模式」= 安装面漏装，不是打包漏文件。本版 `package.json#kixparadigm.variants` 声明 `kixparadigm` + `kixparadigm-classic`，安装器逐变体拷贝；en 包安装 id 对齐 `kixparadigm-classic-en`。`npm i -g kixparadigm` 后模式列表应同时出现两者。en 包从 1.2.23 跳到 1.3.4（中间 1.3.0–1.3.3 未单独发 en）。

@@ -739,6 +739,11 @@
 
 # The `web` service and its search provider stay in the host composition; only
 # the model-facing tool is per-session.
+# 2026-08-20 回滚（三分法落地）：web_search 恢复常驻。曾尝试渐进披露
+# （ACTIVATABLE_TOOLS.web_search），评估否决：低频 + 断 KV 缓存一次的成本
+# （cacheRead:input 实测 127:1，长会话全价重读）远超省下的 660 tok/步常驻税；
+# 且 scope-local 工具 restrict 裁不到，渐进披露需要 cordis disabled + 激活
+# 双重机制。web_search 小（660 tok）低频 → 常驻税可接受，零断缓存风险。
 - id: tool-web
   name: '@deepseek-ai/dsh-tool-web'
   config:
