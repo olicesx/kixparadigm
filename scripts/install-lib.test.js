@@ -5,7 +5,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
-const { hasOtherPresetOwner, installVisionBridge, mergeVisionBridgePatch, uninstall } = require('./install-lib.js')
+const { hasOtherPresetOwner, installPreset, installVisionBridge, mergeVisionBridgePatch, uninstall } = require('./install-lib.js')
 
 const DEFAULT_PATCH = [
   '# Your patch layer for this dsh profile, applied after every bundle layer:',
@@ -150,12 +150,76 @@ test('hasOtherPresetOwner detects the other kix preset edition', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-owner-'))
   try {
     assert.equal(hasOtherPresetOwner(home, 'kixparadigm'), false)
+    fs.mkdirSync(path.join(home, '.agent-presets', 'kixparadigm-classic-en'), { recursive: true })
+    fs.writeFileSync(path.join(home, '.agent-presets', 'kixparadigm-classic-en', 'agent.cordis.yml'), '[]\n')
+    assert.equal(hasOtherPresetOwner(home, 'kixparadigm'), true, 'v1.3.0 重命名后的 en 安装 id 也算 owner（bridge 共享）')
+    assert.equal(hasOtherPresetOwner(home, 'kixparadigm-classic-en'), false)
     fs.mkdirSync(path.join(home, '.agent-presets', 'kixparadigm-en'), { recursive: true })
     fs.writeFileSync(path.join(home, '.agent-presets', 'kixparadigm-en', 'agent.cordis.yml'), '[]\n')
-    assert.equal(hasOtherPresetOwner(home, 'kixparadigm'), true)
-    assert.equal(hasOtherPresetOwner(home, 'kixparadigm-en'), false)
+    assert.equal(hasOtherPresetOwner(home, 'kixparadigm-classic-en'), true, '改名前老安装名仍兼容')
   } finally {
     fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('hasOtherPresetOwner treats classic as owned by the zh package, not as another owner', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-owner-classic-'))
+  try {
+    const mark = (id) => {
+      fs.mkdirSync(path.join(home, '.agent-presets', id), { recursive: true })
+      fs.writeFileSync(path.join(home, '.agent-presets', id, 'agent.cordis.yml'), '[]\n')
+    }
+    mark('kixparadigm-classic')
+    // 卸载 en 包时，主包 classic 在装 → bridge 保留
+    assert.equal(hasOtherPresetOwner(home, 'kixparadigm-en'), true)
+    // 卸载主包（default + classic 一起删），无其他 owner → bridge 删除
+    assert.equal(hasOtherPresetOwner(home, ['kixparadigm', 'kixparadigm-classic']), false)
+    mark('kixparadigm-en')
+    assert.equal(hasOtherPresetOwner(home, ['kixparadigm', 'kixparadigm-classic']), true)
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('installPreset installs every declared variant including kixparadigm-classic', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-variants-'))
+  const previousHome = process.env.DSH_HOME
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
+    fs.rmSync(home, { recursive: true, force: true })
+  })
+  process.env.DSH_HOME = home
+
+  installPreset(silentLog)
+
+  for (const id of ['kixparadigm', 'kixparadigm-classic']) {
+    assert.equal(fs.existsSync(path.join(home, '.agent-presets', id, 'agent.cordis.yml')), true, `${id} agent.cordis.yml`)
+    assert.equal(fs.existsSync(path.join(home, '.agent-presets', id, 'preset.yml')), true, `${id} preset.yml`)
+  }
+  const classicName = fs.readFileSync(path.join(home, '.agent-presets', 'kixparadigm-classic', 'preset.yml'), 'utf8')
+  assert.match(classicName, /^name:\s*kixparadigm-classic\s*$/m)
+})
+
+test('uninstall removes every variant directory of the zh package', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-uninstall-variants-'))
+  const previousHome = process.env.DSH_HOME
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
+    fs.rmSync(home, { recursive: true, force: true })
+  })
+  process.env.DSH_HOME = home
+
+  installPreset(silentLog)
+  for (const id of ['kixparadigm', 'kixparadigm-classic']) {
+    assert.equal(fs.existsSync(path.join(home, '.agent-presets', id, 'agent.cordis.yml')), true)
+  }
+
+  uninstall(silentLog)
+
+  for (const id of ['kixparadigm', 'kixparadigm-classic']) {
+    assert.equal(fs.existsSync(path.join(home, '.agent-presets', id)), false, `${id} should be removed`)
   }
 })
 

@@ -19,12 +19,19 @@ const { spawnSync } = require('node:child_process')
 
 const PKG_ROOT = path.join(__dirname, '..')
 // 各语言包的安装目标由各自 package.json 的 "kixparadigm" 段声明：
-//   { presetId, presetDir, bridgeDir } —— 缺省 = 中文主包行为
+//   { variants: [{ id, dir }, ...], bridgeDir } —— 缺省 = 中文主包行为
+// 旧字段 presetId/presetDir 仍受支持（等价于单元素 variants）。
 const PKG = JSON.parse(fs.readFileSync(path.join(PKG_ROOT, 'package.json'), 'utf8'))
 const CFG = PKG.kixparadigm || {}
 const PRESET_ID = CFG.presetId || 'kixparadigm'
 const PRESET_DIR = CFG.presetDir || 'dsh/preset'
 const BRIDGE_DIR = CFG.bridgeDir || 'dsh/vision-bridge'
+// 一个包可安装多个 preset 变体（默认模式 + 经典模式）。npm 1.3.0 只装了
+// 第一个变体，导致用户反馈「发布的包没有经典模式」——变体必须逐一安装。
+const PRESET_VARIANTS = (Array.isArray(CFG.variants) && CFG.variants.length
+  ? CFG.variants
+  : [{ id: PRESET_ID, dir: PRESET_DIR }])
+  .map((v) => ({ id: String(v.id), dir: String(v.dir) }))
 const BRIDGE_NAME = 'dsh-vision-bridge'
 const PATCH_ID = 'dsh-vision-bridge'
 const BRIDGE_PATCH_LINES = [
@@ -127,10 +134,16 @@ function dshHome() {
  * 中英双包共享同一个 vision-bridge 时，卸载其一不得删除共享组件。
  * 只要另一个已知 preset 仍安装在目标 DSH_HOME 中，就保留 bridge 目录、
  * node_modules 链接与 cordis.patch.yml 挂载条目。
+ * removed 可以是单个 id 或本次卸载的 id 数组（多变体包一次卸全）。
  */
-function hasOtherPresetOwner(home, currentPresetId) {
-  for (const id of ['kixparadigm', 'kixparadigm-en']) {
-    if (id === currentPresetId) continue
+// v1.3.1：补 kixparadigm-classic-en（v1.3.0 重命名后 en 的真实安装 id）——
+// 缺它时 zh 侧卸载会把仅剩 en-classic-en 在装的场景误判为「无其他 owner」
+// 而删除共享 vision-bridge。保留旧名 kixparadigm-en 兼容改名前的老安装。
+const KNOWN_PRESET_IDS = ['kixparadigm', 'kixparadigm-classic', 'kixparadigm-en', 'kixparadigm-classic-en', 'kixparadigm-null']
+function hasOtherPresetOwner(home, removed) {
+  const removedSet = new Set(Array.isArray(removed) ? removed : [removed])
+  for (const id of KNOWN_PRESET_IDS) {
+    if (removedSet.has(id)) continue
     if (fs.existsSync(path.join(home, '.agent-presets', id, 'agent.cordis.yml'))) return true
   }
   return false
@@ -189,17 +202,23 @@ function copyTree(src, dst, log) {
 }
 
 function installPreset(log) {
-  const src = path.join(PKG_ROOT, PRESET_DIR)
-  const dst = path.join(dshHome(), '.agent-presets', PRESET_ID)
-  if (!fs.existsSync(src)) throw new Error(`preset 源目录缺失: ${src}`)
-  log.step(`安装 preset → ${dst}`)
-  const r = copyTree(src, dst, log)
-  log.ok(`preset：新增 ${r.added.length} / 更新 ${r.updated.length} / 相同 ${r.same.length}`)
-  if (r.targetOnly.length) {
-    log.warn(`目标侧独有 ${r.targetOnly.length} 个文件（保留未删，如需清理请人工确认）`)
-    if (!process.env.KIX_VERBOSE) log.warn(`  ${r.targetOnly.slice(0, 5).join(', ')}${r.targetOnly.length > 5 ? ' …' : ''}`)
+  const results = []
+  for (const variant of PRESET_VARIANTS) {
+    const src = path.join(PKG_ROOT, variant.dir)
+    const dst = path.join(dshHome(), '.agent-presets', variant.id)
+    if (!fs.existsSync(path.join(src, 'agent.cordis.yml'))) {
+      throw new Error(`preset 源目录缺失或不含 agent.cordis.yml: ${src}`)
+    }
+    log.step(`安装 preset ${variant.id} → ${dst}`)
+    const r = copyTree(src, dst, log)
+    log.ok(`preset ${variant.id}：新增 ${r.added.length} / 更新 ${r.updated.length} / 相同 ${r.same.length}`)
+    if (r.targetOnly.length) {
+      log.warn(`目标侧独有 ${r.targetOnly.length} 个文件（保留未删，如需清理请人工确认）`)
+      if (!process.env.KIX_VERBOSE) log.warn(`  ${r.targetOnly.slice(0, 5).join(', ')}${r.targetOnly.length > 5 ? ' …' : ''}`)
+    }
+    results.push({ variant, ...r })
   }
-  return r
+  return results.length === 1 ? results[0] : results
 }
 
 /** 建立/修复 node_modules 链接（Windows junction，POSIX symlink）。 */
@@ -301,18 +320,21 @@ function reportSettingsChecklist(log) {
 
 function uninstall(log) {
   const home = dshHome()
-  const preset = path.join(home, '.agent-presets', PRESET_ID)
+  const presetIds = PRESET_VARIANTS.map((v) => v.id)
   const source = path.join(home, 'profiles', 'web', 'plugins', BRIDGE_NAME)
   const junction = path.join(home, 'profiles', 'web', 'node_modules', BRIDGE_NAME)
   const patch = path.join(home, 'profiles', 'web', 'cordis.patch.yml')
 
-  log.step(`卸载 ${PRESET_ID} 安装内容`)
-  const keepSharedBridge = hasOtherPresetOwner(home, PRESET_ID)
+  log.step(`卸载 ${presetIds.join(' + ')} 安装内容`)
+  const keepSharedBridge = hasOtherPresetOwner(home, presetIds)
   if (keepSharedBridge) {
     log.info('检测到另一 kix preset 仍安装，vision-bridge 为共享组件，本次保留')
   }
-  if (fs.existsSync(preset)) { fs.rmSync(preset, { recursive: true, force: true }); log.ok(`已删除 preset: ${preset}`) }
-  else log.info('preset 不存在，跳过')
+  for (const id of presetIds) {
+    const preset = path.join(home, '.agent-presets', id)
+    if (fs.existsSync(preset)) { fs.rmSync(preset, { recursive: true, force: true }); log.ok(`已删除 preset: ${preset}`) }
+    else log.info(`preset ${id} 不存在，跳过`)
+  }
   if (keepSharedBridge) {
     log.info('共享 vision-bridge 与挂载条目已保留')
   } else {
@@ -351,9 +373,15 @@ function doctor(log) {
   const home = dshHome()
   log.step(`doctor — DSH_HOME = ${home}`)
   let allOk = true
-  const preset = path.join(home, '.agent-presets', PRESET_ID)
-  if (fs.existsSync(path.join(preset, 'agent.cordis.yml'))) log.ok('preset 已安装（agent.cordis.yml 存在）')
-  else { log.warn('preset 未安装或缺失 agent.cordis.yml'); allOk = false }
+  const preset = path.join(home, '.agent-presets', PRESET_VARIANTS[0].id)
+  for (const variant of PRESET_VARIANTS) {
+    if (fs.existsSync(path.join(home, '.agent-presets', variant.id, 'agent.cordis.yml'))) {
+      log.ok(`preset ${variant.id} 已安装（agent.cordis.yml 存在）`)
+    } else {
+      log.warn(`preset ${variant.id} 未安装或缺失 agent.cordis.yml`)
+      allOk = false
+    }
+  }
 
   const source = path.join(home, 'profiles', 'web', 'plugins', BRIDGE_NAME)
   const junction = path.join(home, 'profiles', 'web', 'node_modules', BRIDGE_NAME)
@@ -427,9 +455,9 @@ function cli(argv) {
     return
   }
   if (args.includes('--help') || args.includes('-h') || args.includes('help')) {
-    console.log(`kixparadigm — kix 范式全家桶一键导入（preset: ${PRESET_ID}）
+    console.log(`kixparadigm — kix 范式全家桶一键导入（presets: ${PRESET_VARIANTS.map((v) => v.id).join(', ')}）
 用法:
-  kixparadigm install [--preset-only]  安装 preset + vision-bridge（默认；npm 安装时自动执行）
+  kixparadigm install [--preset-only]  安装全部 preset 变体 + vision-bridge（默认；npm 安装时自动执行）
   kixparadigm uninstall                卸载全部安装内容
   kixparadigm doctor                   自检安装状态
   kixparadigm copilot                  导入 VS Code Copilot 侧（可选）

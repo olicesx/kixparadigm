@@ -150,10 +150,13 @@ test('hasOtherPresetOwner detects the other kix preset edition', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-owner-'))
   try {
     assert.equal(hasOtherPresetOwner(home, 'kixparadigm'), false)
+    fs.mkdirSync(path.join(home, '.agent-presets', 'kixparadigm-classic-en'), { recursive: true })
+    fs.writeFileSync(path.join(home, '.agent-presets', 'kixparadigm-classic-en', 'agent.cordis.yml'), '[]\n')
+    assert.equal(hasOtherPresetOwner(home, 'kixparadigm'), true, 'v1.3.0 重命名后的 en 安装 id 也算 owner（bridge 共享）')
+    assert.equal(hasOtherPresetOwner(home, 'kixparadigm-classic-en'), false)
     fs.mkdirSync(path.join(home, '.agent-presets', 'kixparadigm-en'), { recursive: true })
     fs.writeFileSync(path.join(home, '.agent-presets', 'kixparadigm-en', 'agent.cordis.yml'), '[]\n')
-    assert.equal(hasOtherPresetOwner(home, 'kixparadigm'), true)
-    assert.equal(hasOtherPresetOwner(home, 'kixparadigm-en'), false)
+    assert.equal(hasOtherPresetOwner(home, 'kixparadigm-classic-en'), true, '改名前老安装名仍兼容')
   } finally {
     fs.rmSync(home, { recursive: true, force: true })
   }
@@ -173,7 +176,7 @@ test('uninstall keeps the shared vision-bridge when the other kix preset is inst
   process.env.DSH_HOME = home
   installVisionBridge(silentLog)
 
-  const current = path.join(home, '.agent-presets', 'kixparadigm-en', 'agent.cordis.yml')
+  const current = path.join(home, '.agent-presets', 'kixparadigm-classic-en', 'agent.cordis.yml')
   const other = path.join(home, '.agent-presets', 'kixparadigm', 'agent.cordis.yml')
   fs.mkdirSync(path.dirname(current), { recursive: true })
   fs.writeFileSync(current, '[]\n')
