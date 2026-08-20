@@ -130,7 +130,13 @@ await ok('subagent_fork 未挂载(渐进面,默认 disabled)', I.isOnDemand('sub
 await ok('ask_user_question 常驻', I.RESIDENT_TOOLS.has('ask_user_question'))
 await ok('kix_capability_search 常驻', I.RESIDENT_TOOLS.has('kix_capability_search'))
 await ok('mcp__github__get_issue 按需', I.isOnDemand('mcp__github__get_issue'))
-await ok('web_search 按需(低频,移出常驻)', I.isOnDemand('web_search'))
+await ok('web_search 常驻性由 cordis tool-web 行决定（不在 RESIDENT_TOOLS 语义内）', (() => {
+  // web_search 是 preset 行 tool-web 挂载的 scope 工具，常驻/按需由 cordis
+  // 决定，不经 RESIDENT_TOOLS。2026-08-20 三分法回滚：tool-web 恢复常驻，
+  // isOnDemand 语义只服务 kix-focus 自管的工具，web_search 不在其列。
+  return I.isOnDemand('web_search') === true // 语义:非 kix-focus 自管,非 RESIDENT
+    && I.ACTIVATABLE_TOOLS.web_search === undefined
+})())
 await ok('read_image 按需', I.isOnDemand('read_image'))
 await ok('workflow 常驻(临时启用,自发使用测试中)', !I.isOnDemand('workflow'))
 await ok('create_goal 未挂载(默认 disabled,不在常驻集)', I.isOnDemand('create_goal'))
@@ -332,14 +338,12 @@ await ok('restrict deny 裁剪 MCP 全局工具(deny 模式,allow 在 web 架构
   const deny = restrictCalls[0].deny
   return Array.isArray(deny) && deny.includes('mcp__github__get_issue')
 })())
-await ok('restrict deny 含 web_search(低频移出常驻)', (() => {
-  // 全局视图需要含 web_search 才会被收集——追加后触发 tools/change
-  if (!mockGlobalSchemas.some((s) => s.name === 'web_search')) {
-    mockGlobalSchemas.push({ name: 'web_search', description: 'Search' })
-    ;(listeners['tools/change'] || []).forEach((cb) => cb())
-  }
-  const last = restrictCalls[restrictCalls.length - 1]
-  return Array.isArray(last.deny) && last.deny.includes('web_search')
+await ok('restrict deny 不含 web_search（scope-local 工具裁不到，2026-08-20 修正）', (() => {
+  // 曾 mock 把 web_search 塞进全局视图断言 deny 含它——假绿：tool-web 是
+  // preset 行注册（scope-local），restrict 只作用于全局工具，deny 从未生效。
+  // web_search 移出注入走 ACTIVATABLE_TOOLS 激活（见下），不再依赖 restrict。
+  const deny = restrictCalls[0].deny
+  return Array.isArray(deny) && !deny.includes('web_search')
 })())
 await ok('restrict deny 不含 scope-local 工具', (() => {
   const deny = restrictCalls[0].deny
@@ -369,12 +373,14 @@ section('按需激活')
 const activateTool = registeredTools.find((t) => t.name === 'kix_tool_activate')
 const deactivateTool = registeredTools.find((t) => t.name === 'kix_tool_deactivate')
 await ok('activate/deactivate 工具已注册', activateTool !== undefined && deactivateTool !== undefined)
-await ok('ACTIVATABLE_TOOLS 含 workflow/goal/细分档位/reviewer/qa/dev(ralph/jobs 已移除)', (() => {
+await ok('ACTIVATABLE_TOOLS 含 workflow/goal/细分档位/reviewer/qa/dev(ralph/jobs/web_search 已移除)', (() => {
   return ['workflow', 'goal', 'subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork', 'subagent_reviewer', 'subagent_qa', 'subagent_dev']
     .every((n) => I.ACTIVATABLE_TOOLS[n] && I.ACTIVATABLE_TOOLS[n].package)
     && I.ACTIVATABLE_TOOLS.ralph === undefined
     && I.ACTIVATABLE_TOOLS.jobs === undefined
+    && I.ACTIVATABLE_TOOLS.web_search === undefined // 2026-08-20 三分法回滚：恢复常驻
 })())
+await ok('web_search 恢复常驻（三分法回滚：cordis tool-web 行已恢复）', I.ACTIVATABLE_TOOLS.web_search === undefined)
 await ok('所有动态 subagent 档位 maxDepth=2', (() => {
   return ['subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork', 'subagent_reviewer', 'subagent_qa', 'subagent_dev']
     .every((n) => I.ACTIVATABLE_TOOLS[n].config.maxDepth === 2)

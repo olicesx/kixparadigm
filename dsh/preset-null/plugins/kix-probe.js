@@ -15,7 +15,7 @@ const path = require('node:path')
 const crypto = require('node:crypto')
 
 const DESCRIPTION =
-  'Run a short Python snippet in a fresh process against the current workspace and return its stdout, stderr, exit code, and wall-clock duration; optionally measure peak memory. Useful when you need to know how something actually behaves.'
+  'Run a short Python snippet in a fresh process against the current workspace; returns stdout, stderr, exit code, and wall-clock duration, optionally peak memory. Use for isolated Python checks (memory/time probing, quick verification); for full shell commands use bash.'
 
 const MEASURE_WRAPPER = [
   'import sys, tracemalloc',
