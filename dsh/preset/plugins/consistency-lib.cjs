@@ -45,20 +45,69 @@ function estimateTokens(text) {
 
 // ── 检查项（全部返回 { failures, notes }，无 console 副作用）──────────────
 
+// v1.3.4：persona 预算单源（曾双源漂移：runAllZh 用 6000/3400、运行时插件
+// kix-consistency.js 用 4500/2600——同一检查两套阈值，正是本库使命要消灭的
+// CI/运行时双源形态，阈值本身逃逸了单源）。en 预算放宽：CJK 密度低 →
+// chars 高、tokens 低。
+const PERSONA_BUDGETS = {
+  zh: { maxChars: 4500, maxEstTokens: 2600 },
+  en: { maxChars: 9500, maxEstTokens: 2600 },
+}
+
+// v1.3.4：只计「活跃常驻层」——disabled 条目的 text 块是遗产/回退资产，
+// 不注入会话，不计入预算。失真实证：v1.3.0 起 dsh/preset 含 disabled 经典
+// 块 4160 chars，旧口径把死文本计入「常驻预算」报 5510>4500，而真实活跃层
+// （persona-incentive）仅 1274 chars。语义：persona = agent-instructions
+// 锚点前所有非 disabled 条目 text 块（6 空格缩进内容）之和，不含条目脚手架。
 function extractPersona(root, rel) {
   const text = read(root, rel)
   if (text === null) return { persona: null, error: `${rel}: unreadable` }
-  const start = text.indexOf('text: |-')
-  const end = text.indexOf('- id: agent-instructions', start)
-  if (start < 0 || end < 0) {
+  const end = text.indexOf('- id: agent-instructions')
+  if (end < 0) {
     return { persona: null, error: `${rel}: persona block or agent-instructions anchor not found` }
   }
-  const raw = text.slice(start + 'text: |-'.length, end).replace(/^\r?\n/, '')
-  const lines = raw.split(/\r?\n/)
-  const dedented = lines.map((line) => {
-    if (/^\s{6}/.test(line)) return line.slice(6)
-    return line.replace(/^\s+/, '')
-  })
+  const lines = text.slice(0, end).split(/\r?\n/)
+  const blocks = []
+  let inEntry = false
+  let disabled = false
+  let collecting = false
+  for (const line of lines) {
+    if (/^- id: \S+/.test(line)) {
+      inEntry = true
+      disabled = false
+      collecting = false
+      continue
+    }
+    if (!inEntry) continue
+    // 条目级键 2 空格缩进（name/disabled）；config 子键 4 空格（text）；
+    // text 内容 6+ 空格——文本行内出现 "disabled: true" 字样不会误判
+    // （6 空格缩进不匹配 2 空格锚定）。
+    if (/^ {2}disabled:\s*true\s*$/.test(line)) {
+      disabled = true
+      collecting = false
+      continue
+    }
+    if (/^ {4}text: \|-\s*$/.test(line)) {
+      collecting = !disabled
+      if (collecting) blocks.push([])
+      continue
+    }
+    if (collecting) {
+      if (/^ {6}/.test(line) || line.trim() === '') {
+        blocks[blocks.length - 1].push(line)
+        continue
+      }
+      collecting = false
+    }
+  }
+  const dedented = blocks.map((b) =>
+    b
+      .map((line) => {
+        if (/^ {6}/.test(line)) return line.slice(6)
+        return line.replace(/^\s+/, '')
+      })
+      .join('\n'),
+  )
   return { persona: dedented.join('\n').trim() }
 }
 
@@ -382,9 +431,10 @@ function pluginNames(root) {
 function runAllZh(root) {
   return merge(
     // v1.3.0 布局：默认 preset=激励面（含 disabled 经典 persona 遗产块）；classic 独立目录
-    checkPersonaBudget({ root, rel: 'dsh/preset/agent.cordis.yml', maxChars: 6000, maxEstTokens: 3400 }),
-    checkPersonaBudget({ root, rel: 'dsh/preset-classic/agent.cordis.yml', maxChars: 6000, maxEstTokens: 3400 }),
-    checkPersonaBudget({ root, rel: 'en/preset-classic-en/agent.cordis.yml', maxChars: 9500, maxEstTokens: 2600 }),
+    // v1.3.4：预算单源 PERSONA_BUDGETS（原此处硬编码 6000/3400 与运行时插件 4500/2600 双源漂移）
+    checkPersonaBudget({ root, rel: 'dsh/preset/agent.cordis.yml', ...PERSONA_BUDGETS.zh }),
+    checkPersonaBudget({ root, rel: 'dsh/preset-classic/agent.cordis.yml', ...PERSONA_BUDGETS.zh }),
+    checkPersonaBudget({ root, rel: 'en/preset-classic-en/agent.cordis.yml', ...PERSONA_BUDGETS.en }),
     // v1.3.0 身分组豁免：kix-budget 默认侧含 L3 验证补贴补丁（设计差异）；
     // probe/settle/mem 三件套仅存在于默认 preset（设计如此）。
     ...pluginNames(root)
@@ -412,7 +462,7 @@ function runAllZh(root) {
 // en 包全量（en 包内：preset + bridge + scripts；版本由调用方钉值）
 function runAllEn(root, expectedVersion) {
   return merge(
-    checkPersonaBudget({ root, rel: 'preset-classic-en/agent.cordis.yml', maxChars: 9500, maxEstTokens: 2600 }),
+    checkPersonaBudget({ root, rel: 'preset-classic-en/agent.cordis.yml', ...PERSONA_BUDGETS.en }),
     checkEnPkgVersion({ root, rel: 'package.json', expected: expectedVersion }),
     checkMarkdownLinks({ root, rel: 'preset-classic-en' }),
     checkSyntax({ root, rel: 'preset-classic-en', label: 'en/preset-classic-en' }),
@@ -423,6 +473,7 @@ function runAllEn(root, expectedVersion) {
 
 module.exports = {
   estimateTokens,
+  PERSONA_BUDGETS,
   extractPersona,
   checkPersonaBudget,
   checkIdenticalSet,

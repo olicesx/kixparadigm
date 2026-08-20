@@ -192,7 +192,7 @@ async function softCase(label, name, args) {
   check('run_code: process.env 访问 → deny', await dispatch('run_code', { code: 'return process.env.HOME' }), true)
   check('run_code: WebSocket( → deny', await dispatch('run_code', { code: 'const ws = new WebSocket("ws://x")' }), true)
   check('run_code: require("fs") 直写 → deny (v3)', await dispatch('run_code', { code: "require('fs').writeFileSync('x','y')" }), true)
-  check('run_code: import("fs") → deny (v3)', await dispatch('run_code', { code: 'const fs = await import("fs"); return fs' }), true)
+  check('run_code: import("fs") 裸加载无写调用 → allow（v16 语义翻转：fs 只读面放开）', await dispatch('run_code', { code: 'const fs = await import("fs"); return typeof fs' }), false)
   check('run_code: writeFileSync( → deny (v3)', await dispatch('run_code', { code: 'const fs = require("node:fs"); fs.writeFileSync("a","b")' }), true)
   check('run_code: 纯 tools.* 编排 → allow', await dispatch('run_code', { code: 'const a = await tools.read({file_path:"a.ts"}); return a' }), false)
   check('run_code: 受限词作为字符串数据 → allow', await dispatch('run_code', { code: "const patch = \"child_process process.env fs.writeFileSync(\\\"x\\\",\\\"y\\\")\"; return patch" }), false)
@@ -209,6 +209,58 @@ async function softCase(label, name, args) {
   check('run_code: Function code generation denied → deny', await dispatch('run_code', { code: "return Function(\"return process.env.HOME\")()" }), true)
   check('run_code: constructor code generation denied → deny', await dispatch('run_code', { code: "return (async()=>{}).constructor(\"return process.env.HOME\")()" }), true)
   check('run_code: tagged template ambiguity fails closed → deny', await dispatch('run_code', { code: "return String.raw`process.env`" }), true)
+
+  // ══ 4b. run_code v16 三块受控放开 ═════════════════════════════════════
+  // ① 纯函数模块白名单（node:path / node:util / node:crypto）
+  check('run_code v16: require node:path + join → allow', await dispatch('run_code', { code: "const p = require('node:path'); return p.join('a','b')" }), false)
+  check('run_code v16: path 链式 posix.join → allow', await dispatch('run_code', { code: "return require('node:path').posix.join('/a','b')" }), false)
+  check('run_code v16: node:crypto createHash → allow', await dispatch('run_code', { code: "const c = await import('node:crypto'); return c.createHash('sha256').update('x').digest('hex')" }), false)
+  check('run_code v16: node:util format 链 → allow', await dispatch('run_code', { code: "return require('node:util').format('%s-%d', 'a', 1)" }), false)
+  check('run_code v16: path + child_process 混用 → deny（纯模块不豁免其他受限）', await dispatch('run_code', { code: "require('node:path'); require('child_process'); return 1" }), true)
+  check('run_code v16: path.constructor 代码生成 → deny（链守卫 trim 到加载调用）', await dispatch('run_code', { code: "require('node:path').constructor('return process')()" }), true)
+  // ② fs 只读放行 / 写 API 拦截
+  check('run_code v16: fs statSync/readdirSync → allow', await dispatch('run_code', { code: "const fs = require('node:fs'); return [fs.statSync('/x').isFile(), fs.readdirSync('/y').length]" }), false)
+  check('run_code v16: fs/promises readFile → allow', await dispatch('run_code', { code: "const fp = await import('node:fs/promises'); return fp.readFile('/a','utf8')" }), false)
+  check('run_code v16: require(node:fs).writeFileSync 直链 → deny（v15 保留）', await dispatch('run_code', { code: "require('node:fs').writeFileSync('a','b')" }), true)
+  check('run_code v16: fs.rmSync → deny', await dispatch('run_code', { code: "const fs = require('node:fs'); fs.rmSync('/x', {recursive:true}); return 1" }), true)
+  check('run_code v16: fs.promises.mkdir → deny', await dispatch('run_code', { code: "const fp = await import('node:fs/promises'); await fp.mkdir('/x'); return 1" }), true)
+  check('run_code v16: fs.renameSync → deny', await dispatch('run_code', { code: "const fs = require('node:fs'); fs.renameSync('a','b'); return 1" }), true)
+  check('run_code v16: fs 未加载时字符串提及写 API → allow（数据面不拦）', await dispatch('run_code', { code: 'const tip = "fs.writeFileSync only via write tool"; return tip' }), false)
+  // ③ fetch 域名白名单（默认 api.github.com,github.com）
+  check('run_code v16: fetch api.github.com 字面量 → allow', await dispatch('run_code', { code: "return await fetch('https://api.github.com/repos/x')" }), false)
+  check('run_code v16: fetch 轮询循环（白名单域）→ allow', await dispatch('run_code', { code: "let n=0; for(let i=0;i<3;i++){ const r=await fetch('https://github.com/api/x'); n+=r.status?1:0 } return n" }), false)
+  check('run_code v16: fetch 非白名单域 → deny', await dispatch('run_code', { code: "return await fetch('https://evil.example.com/x')" }), true)
+  check('run_code v16: fetch 变量 URL → deny（fail-closed）', await dispatch('run_code', { code: "const u = 'https://api.github.com/x'; return fetch(u)" }), true)
+  check('run_code v16: fetch 模板 URL → deny（${} 表达式不可静态判定）', await dispatch('run_code', { code: 'return fetch(`https://api.github.com/${p}`)' }), true)
+  check('run_code v16: fetch 相对 URL → deny', await dispatch('run_code', { code: "return fetch('/api/x')" }), true)
+  check('run_code v16: fetch 白名单域 + 第二参 process.env → deny', await dispatch('run_code', { code: "return fetch('https://api.github.com/x', { headers: process.env.HOME })" }), true)
+  check('run_code v16: a.fetch 属性调用 → deny（`.` 前缀不豁免）', await dispatch('run_code', { code: "return a.fetch('https://api.github.com/x')" }), true)
+  // v16 纯函数：hostAllowed 通配/精确
+  ;(() => {
+    const h = plugin.__internals.hostAllowed
+    const ok = h('api.github.com', ['*.github.com']) && !h('github.com', ['*.github.com']) && h('github.com', ['github.com']) && !h('evil-github.com', ['*.github.com', 'github.com'])
+    console.log(`${ok ? 'PASS' : 'FAIL'}  run_code v16: hostAllowed 通配子域命中/顶域不命中/精确命中/伪后缀不命中`)
+    ok ? passed++ : failed++
+  })()
+  // v16 配置：netAllowlist 自定义（apply(ctx, config) 第二实例）
+  {
+    const listeners2 = {}
+    const ctx2 = {
+      logger: { info() {}, warn() {}, error() {} },
+      get: () => undefined,
+      on(event, cb) { (listeners2[event] ||= []).push(cb) },
+    }
+    plugin.apply(ctx2, { netAllowlist: 'example.com' })
+    const pre2 = listeners2['tools/pre-execute'][0]
+    const d2 = (name, args2) => pre2({ name, arguments: args2, token: 't', callId: 'c2', agent: { id: 'a2' } }, () => Promise.resolve({ kind: 'allow' }))
+    const [a1, a2] = await Promise.all([
+      d2('run_code', { code: "return fetch('https://example.com/x')" }),
+      d2('run_code', { code: "return fetch('https://api.github.com/x')" }),
+    ])
+    const ok = (!a1 || a1.kind !== 'deny') && a2 && a2.kind === 'deny'
+    console.log(`${ok ? 'PASS' : 'FAIL'}  run_code v16: cfg.netAllowlist=example.com → example.com allow / api.github.com deny`)
+    ok ? passed++ : failed++
+  }
 
   // ══ 5. 未知执行工具 ══════════════════════════════════════════════════
   check('python3 直呼（未登记）→ deny', await dispatch('python3', { code: 'print(1)' }), true)

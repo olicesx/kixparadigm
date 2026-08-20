@@ -108,11 +108,23 @@ check('proxy foreground qa 完成交接', I.transitionCompletesHandoff({ name: '
 check('gate 期角色档激活属于发现（放行不 deny）', I.isHandoffDiscovery({ name: 'kix_tool_activate', arguments: { tool: 'subagent_dev' } }) === true)
 check('gate 期 goal 激活仍属发现', I.isHandoffDiscovery({ name: 'kix_tool_activate', arguments: { tool: 'goal' } }) === true)
 check('gate 期无关激活不属于发现', I.isHandoffDiscovery({ name: 'kix_tool_activate', arguments: { tool: 'browser' } }) === false)
-check('文案含重路径菜单（streak）', I.streakAdviceText(8).includes('dev·qa·reviewer') === true)
-check('文案含轻路径（streak）', I.streakAdviceText(8).includes('subagent_lite') === true)
+{
+  const streak = I.streakAdviceText(8)
+  const routed = /(?:subagent_)?(?:lite|dev|qa|reviewer)|create_goal|\bgoal\b|kixpower|capability_call|capability_search/
+  check('streak 标明收敛建议而非交接', streak.includes('收敛建议') && streak.includes('不是交接完成') === true)
+  check('streak 直接作答合法', streak.includes('可结算主张') && streak.includes('合法动作') === true)
+  check('streak 判断留主线程且不重复', streak.includes('判断与编排留在主线程') && streak.includes('本回合不再重复提醒') === true)
+  check('streak 不点名成员', routed.test(streak) === false)
+}
 check('文案含重路径菜单（gate）', I.handoffText({ handoffReason: 'context', handoffBudget: 400000, handoffStep: 41 }).includes('subagent_dev') === true)
 check('文案中立声明（gate）', I.handoffText({ handoffReason: 'context', handoffBudget: 400000, handoffStep: 41 }).includes('成员选择是编曲决策') === true)
-check('文案含重路径菜单（context 提醒）', I.contextAdviceText(420000, 400000).includes('dev·qa·reviewer') === true)
+{
+  const ctxAdvice = I.contextAdviceText(420000, 400000)
+  const routed = /(?:subagent_)?(?:lite|dev|qa|reviewer)|create_goal|\bgoal\b|kixpower|capability_call|capability_search/
+  check('context 提醒含预算数字', ctxAdvice.includes('420K') && ctxAdvice.includes('400K') === true)
+  check('context 直接作答合法', ctxAdvice.includes('可结算主张') && ctxAdvice.includes('合法动作') === true)
+  check('context 不点名成员', routed.test(ctxAdvice) === false)
+}
 check('unrelated proxy argument substring 不算 transition', I.transitionToolOf({ name: 'kix_capability_call', arguments: { tool: 'web_search', arguments: { query: 'subagent_lite' } } }) === undefined)
 check('structured status: top-level success wins over report evidence', I.structuredResultStatus({ ok: true, result: 'report cites {"ok":false}' }) === 'success')
 check('structured status: canonical isError=false is success', I.structuredResultStatus({ isError: false, content: 'report' }) === 'success')
@@ -187,7 +199,7 @@ async function main() {
   check('第 7 步只读：无建议（阈值 8 未到）', appendedText(d) === undefined)
   d = await postExec(mainAgent, 'bash', { command: 'cat file8' })
   const t8 = appendedText(d)
-  check('第 8 步只读：注入收敛建议', typeof t8 === 'string' && t8.includes('kix-budget') && t8.includes('run_code') && t8.includes('artifact'))
+  check('第 8 步只读：注入收敛建议', typeof t8 === 'string' && t8.includes('kix-budget') && t8.includes('可结算主张') && t8.includes('artifact'))
   d = await postExec(mainAgent, 'bash', { command: 'cat file9' })
   check('第 9 步：不重复注入', appendedText(d) === undefined)
   d = await postExec(mainAgent, 'edit', { file_path: 'x' })
