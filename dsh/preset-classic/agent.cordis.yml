@@ -32,7 +32,6 @@
 # 路由与工作区解析。
 - id: persona
   name: '@deepseek-ai/dsh-persona'
-  disabled: true
   config:
     text: |-
       You are a coding agent powered by the {{model}} model, running on the DeepSeek Harness. Your working directory is {{cwd}}.
@@ -103,23 +102,6 @@
 
       ## 资源
       instructions/kixparadigm-core.instructions.md；prompts/kixpower-*；memories/*.md（编排实证教训 ①-⑪+候选在 memories/orchestration-lessons.md，编曲/分派/审计类决策时先查）；技能见会话目录。
-- id: persona-incentive
-  name: '@deepseek-ai/dsh-persona'
-  config:
-    text: |-
-      You are a coding agent powered by the {{model}} model, running on the DeepSeek Harness. Your working directory is {{cwd}}.
-
-      You operate under KIX-incentive. Choose your own workflow to maximize net verified task utility:
-
-      expected goal attainment supported by evidence
-      minus material residual uncertainty
-      minus change complexity and regression risk
-      minus search, tool, and orchestration cost.
-
-      This is an incentive surface, not a checklist. No review ritual, role sequence, test taxonomy, or decomposition is mandatory. Prefer the next action with the highest expected decision-relevant information per cost. Counterevidence is valuable when it can overturn an important conclusion. Added mechanisms must earn their complexity through demonstrated net benefit. Claims deserve confidence only in proportion to the realism, relevance, and independence of their evidence. Treat references as evidence about alternatives, not as requirements without provenance. Stop when the expected value of further work is lower than its cost, while reporting residual uncertainty honestly.
-
-      Tools and subagents are optional investments. Use them only when their expected effect on the decision or result exceeds their cost. Preserve safety, permissions, user intent, and evidence integrity.
-
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
   config:
@@ -185,7 +167,6 @@
 # preset is installed.
 - id: skill-filesystem
   name: '@deepseek-ai/dsh-skill-filesystem'
-  disabled: true
   config:
     customSkillDirs:
       - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', baseUrl))"
@@ -286,7 +267,6 @@
     # 同款约束）；tokenMeter/llm 留宿主面，realm 内照常解析。
     - id: kix-budget
       name: ./plugins/kix-budget.js
-      disabled: true
 
 # ── delegation and workflows ────────────────────────────────────────────────
 
@@ -770,7 +750,6 @@
 #    单元测试：node plugins/kix-discipline.test.js（68 断言，含 mode 编曲留痕）。
 - id: kix-discipline
   name: ./plugins/kix-discipline.js
-  disabled: true
 
 # ── kix-orchestration（P2 补缺，2026-08-16；v2/v3 2026-08-16）：编排交接门禁机制化 ──
 # 背景：Copilot 侧 kixpower 的 9 个 hooks 中只有 blast-radius 被 kix-guards 接管，
@@ -786,7 +765,6 @@
 # 单元测试：node plugins/kix-orchestration.test.js（96 断言；v10.1 Tri-Block [CONTEXT] Sprint N 容错；v11 plan 契约）。
 - id: kix-orchestration
   name: ./plugins/kix-orchestration.js
-  disabled: true
 
 # ── kix-consistency（P5，2026-08-17；v1.2.15 泛化）：一致性守护写时拦截 ──
 # CI 脚本（scripts/check-dsh-consistency.cjs）只在测试期校验，改 preset 文件时
@@ -806,7 +784,6 @@
 # 单元测试：node plugins/kix-consistency.test.js（111 断言）。
 - id: kix-consistency
   name: ./plugins/kix-consistency.js
-  disabled: true
 
 # ── kix-cost（v5.8 成本纪律）：机械档自动选型 + 子代理思考强度分层 ─────────
 # agent/request waterfall 上：
@@ -854,7 +831,6 @@
 # prompts/*.prompt.md 注入 user 消息（与 /plan 命令同语义）。
 - id: kix-commands
   name: ./plugins/kix-commands.js
-  disabled: true
 
 # ── kix-focus（极简 + 渐进披露 + PTC 协同，2026-08-16，三层递进）─────────
 # 背景：kix 会话每轮向模型发送 85 个工具 schema（~108KB），极简模式证明
@@ -896,22 +872,5 @@
 # 全 advisory 零 deny。回滚：注释下面整块并重启宿主。
 - id: kix-signal
   name: ./plugins/kix-signal.js
-  disabled: true
   config:
     specDraft: true
-
-# ── kixparadigm (incentive) additions (2026-08-19, EXP1-3 findings as mechanisms) ──
-# probe: neutral fresh-process executor with free duration/peak-memory telemetry
-# (EXP3: correct adoption, zero cost premium, zero ritual use of placebos).
-- id: kix-probe
-  name: ./plugins/kix-probe.js
-
-# settle: delivery-time steer when edits lack any post-edit execution evidence
-# (L1/L4 — settlement framing, advisory, once per session).
-- id: kix-settle
-  name: ./plugins/kix-settle.js
-
-# mem: pull-only crisis-indexed experience library, zero resident context
-# (user-verified: agents rummage past experience when stuck).
-- id: kix-mem
-  name: ./plugins/kix-mem.js

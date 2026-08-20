@@ -1,6 +1,49 @@
 # Changelog
 
 
+## v1.3.0（2026-08-20）实验驱动发版：契约优先 + 激励面机制三件套 + 成本分层模型
+
+四轮受控实验（EXP1 真实 SWE 三臂 / EXP2 歧义任务定价市场 / EXP3 无歧义任务结构工具 / EXP1-R+R2 同模型归因双臂，共 100+ runs、预注册判据、跨厂商盲审计、机械复核全绿）的结论直接转化为机制。
+
+### 核心结论（全部物理结算，证据锚定实验工件）
+
+1. **契约清晰度 >> 机制 >> 劝说文本**：歧义契约下 16/16 全员同错（EXP2）；无歧义契约下基线激励面 24/24 全过隐藏陷阱（EXP3）；反证定价写进 persona 三轮零行为效果（EXP2/EXP3，市场价格 persona 退役）。
+2. **环境掩盖型盲点可被机制修复（同模型双臂归因闭合）**：v2 激励面精确复现 EXP1 的 `import flox` 模块级残留（stub 计数=1），三件套 preset 同模型同任务下 flox=0 且显式处理 flox→dask 传递链（EXP1-R2 臂 A vs 臂 B）。
+3. **成本分层模型**：激励面小认知层（常驻 persona 小 ~70%）相对经典锚点式 ≈½ 成本（EXP1 实测 22.2 vs 42.6 min，同质量 97 vs 98）；隐含契约任务机制深验证 ≈2.3× 墙钟——**选择器是任务属性不是信仰**。
+4. **模型只用有用的工具**（no-op note 安慰剂 48 run 零调用）；probe 采纳时先探测后修复（步骤 11–15 扫契约边缘 vs 首修复在 16）、零成本溢价。
+
+### 新增机制（kixparadigm 主 preset）
+
+- **S3 contract 字段**（kix-signal spec-draft 模板）：行为契约显式化——必须不变/必须改变/必须成立/契约歧义与解读假设（有歧义先问，无法问则显式声明解读）。直击第一杠杆：EXP2 的共同失败模式全部始于契约两可解读。中英双侧同步。
+
+### 新增 preset：`dsh/presets4/` + `dsh/presets4-null/`（激励面机制三件套，实验血统转正）
+
+- **kix-probe**（EXP3 冻结版+免费测度）：中性裸执行器，fresh 进程跑 Python 片段返回 stdout/stderr/exit_code + `duration_ms`；`measure=true` 附 tracemalloc 峰值（「不测量就看不见」——三轮存活缺陷的共同类）。退出码经 wrapper 精确传播；60s 超时。
+- **kix-settle**（结算信号）：工作区 edit/write 计数 + 执行清账观察（probe/run_code/python 命令）。「无执行证据的结论按零结算」。**注意**：注入通道因宿主缺陷暂缓（见下），当前形态只观察计数。
+- **kix-mem**（无助时刻经验救援库，用户实证发现）：`experience{list,get}` 拉取式工具 + `memories/incentive-lessons.md` 危机索引格式（头部求助索引 + 文末追加）。零常驻上下文成本。
+- **kix-budget L3 验证补贴**：probe/run_code 重置 streak——马拉松交接建议永不惩罚探测行为。
+- **kixincentive4-null**：消融变体（同插件面、persona 只剩身份行+硬约束），用于回答「效用文本本身有无贡献」。
+- 原则：无强制采纳、无菜单注入、persona 不推销工具；每插件头部带出生证明（哪轮实验哪组数据）与退役条件。
+
+### 修复与宿主 bug 记录（待报 dsh 上游）
+
+- **kix-settle 链返回值缺陷（已修）**：post-execute handler 返回 undefined（不透传 `next()`/result）在 deepseek-v4-flash 适配器下破坏 tool-result 拼装（`reading 'kind'`，11 次判别实验锁定）；luna 适配器宽容故 EXP3 未暴露。修复=完整逻辑+链透传+防御包裹，30/30 单测。
+- **宿主 preset 插件快照缓存（绕行）**：按 preset 名缓存，磁盘修复不生效——改插件必须换 preset 名或重启宿主。实验期以 `kixincentive4f`（同字节新名）绕行。**操作纪律入 README。**
+- 派生 preset 依赖修复：kixincentive4-null 补齐缺失插件文件（composition 引用与 plugins/ 目录不一致会导致 mount 失败）。
+
+### 文档与同步
+
+- `dsh/presets4/memories/incentive-lessons.md`：九条实验锚定教训（新增第⑨条：机制归因闭合 + 代价模型 + 归因方法本身）。
+- 三侧同步（仓库 / WSL2 / Windows zh+en）；实验冻结资产不动（kixincentive v2 sha 49f820… 为 EXP1-R2 归因锚点）。
+- **不做的**：k4 不设默认（归因虽闭合但 n=1，与 kixparadigm 并行提供）；定价 persona 全系退役不迁移。
+
+### 模式身份重排（发版后即时修正，随 v1.3.0 一并发布）
+
+- **命名与默认**：激励面三件套 preset 升级为默认模式并继承名字 `kixparadigm`（`dsh/preset/`）；原锚点式经典版改名 `kixparadigm-classic`（en 侧 `kixparadigm-classic-en`）；消融变体 `kixparadigm-null`。
+- **成本归属勘误**：初版 CHANGELOG 中「契约清晰用 kixparadigm（½成本）」主语错误——½ 成本属于激励面小认知层（EXP1：incentive 22.2 min vs 经典 42.6 min，persona 1,323 vs 4,514 字符 ≈ 小 70%），经典版是该对比中的高价组。已全部修正。
+- **重排依据**：同模型双臂归因（EXP1-R2）显示激励面三件套是唯一修复环境掩盖型盲点的版本；经典版的不可替代面收窄为多通道验证文化与团队编排纪律。
+- **遗留**：压缩后 classic 与新默认版的成本差未单独重测；`kixincentive`（v2 冻结）与 `kixincentive4f`（宿主缓存过渡别名）保留在 WSL2 侧，重启宿主后 4f 可删。
+
 ## v1.2.23（2026-08-18）kix-browser 原生浏览器自动化（按需激活）+ E2E 方法论沉淀
 
 - **kix-browser 插件**：原生 `browser{action}` 单工具 17 动作（open/snapshot/text/click/type/press/select/hover/back/forward/reload/wait/screenshot/upload/tabs/dialog/close）——playwright-core 直驱替代 MCP 五跳链路（本宿主 MCP 解析层损坏实证：navigate/click ToolNotFound）。CDP attach 优先（`KIX_BROWSER_CDP` 接管真实浏览器，登录态保留）+ launch headless 兜底；会话跨调用持久（插件态句柄 + 串行队列）；URL 门禁（仅 http/https/about:blank）；弹窗默认驳回 + `dialog{auto}` 策略 + lastDialog 回报；playwright-core 懒 require（缺装不阻塞装载，错误带跨平台安装指引）。

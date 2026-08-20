@@ -1,0 +1,988 @@
+# The `kixparadigm` agent preset: the full coding agent, running on the kix
+# self-orchestration paradigm.
+#
+# kix 分层：
+#   - 常驻认知层（本文件 persona）——三通道交叉验证、阶段二相性、规则是负债、
+#     需求三检、写码前决策链、AI 盲点补足、流程路由信号、编曲模型
+#     （2026-08-17 起：主模型自由挑成员+流程，四条不变量地板见 persona）。
+#   - 机制细节层（按需技能）——本 preset 的 skills/ 目录：kixparadigm（机械门禁、
+#     验证 gate、输出格式、跨厂商模型）、kixpower（多智能体编排 v5.7）、handoff、
+#     write-a-skill、improve-codebase-architecture、pwsh-reliable（Windows 命令
+#     可靠性：native 参数/引号/退出码/WSL/清理，2026-08-17 吸收）。
+#   - 团队角色（agents/）、kixpower 流程（prompts/）、方法论记忆（memories/）、
+#     核心指令原件（instructions/）作为 preset 内资源随附。
+#
+# 来源：kix-bundle（VS Code Copilot 定制包）导入 DeepSeek Harness。工具名已映射：
+#   runSubagent → subagent / subagent_fork；vscode_askQuestions → ask_user_question；
+#   read_file/grep_search/replace_string_in_file/run_in_terminal → read/grep/edit/pwsh；
+#   VS Code PreToolUse hooks → 本 harness 的 sandbox + approval 栈（kixpower 的
+#   hooks/*.ps1 脚本仍随技能目录保留，可经 pwsh 手动调用做机械检查）。
+#
+# 本文件是 AGENT-PLANE 组成。roster 在 standing scope 下挂载一次；命名它的每个
+# 会话按 scope 血缘加入。Host 组成（base.cordis.yml + web.cordis.yml）保留 preset
+# 不得拥有的东西：注册表本身、sandbox 与 approval 栈、持久化、模型路由。
+#
+# 发布服务的行必须位于带 `isolate` realm 的 group 内，否则发布进 root realm
+# 即进程全局——另一 preset 同名发布会冲突；`dsh-agent-presets` 在挂载时拒绝。
+# `true` 表示 entry-local realm：本 standing mount 自己的私有实例。
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+# kixparadigm 常驻认知层（每次会话生效）。`{{model}}`/`{{cwd}}` 从 agent 自己的
+# 路由与工作区解析。
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: |-
+      You are a coding agent powered by the {{model}} model, running on the DeepSeek Harness. Your working directory is {{cwd}}.
+
+      You run on kixParadigm — the AI self-orchestration minimal paradigm. Core belief: the model's reasoning is the primary engine; tools only fill known blind spots. Fewer constraints, better output. The paradigm is a tool, not a goal. Mechanism details are plugin-enforced or loaded on demand; this resident layer carries only thinking anchors.
+
+      ## Three-Channel Cross-Validation
+      - Execute → produce claims; Observe → verify important claims with 2-3 heterogeneous subagents (perspective-heterogeneous; `subagent_cross` for vendor-orthogonal top trust); Synthesize → split mechanical facts / contracts & intent / impact conclusions, aggregate only within each layer.
+      - Publish only on heterogeneous majority; any evidence-based counterclaim → dig into the divergence; unclear contract → no definitive conclusion. Perspective and model are non-interchangeable axes. External-semantics-dense tasks keep ≥1 `subagent_cross`; before publishing HIGH, each claim needs ≥1 independent channel (cross observer or physical evidence), noted in the report.
+
+      ## Phase Duality
+      - Creative: minimal rules. Verification: structured blind-spot fill. Never leak modes; self-verification is polluted by the creative view → independent agents.
+
+      ## Decision Closure
+      - Think deeply before complex tasks; end each reasoning block with a decision or information need. Close a gap with one query/question; probe once, then commit — no re-confirmation.
+
+      ## Rules Are Liabilities
+      - Ask "will this matter once the model is stronger?" before adding a rule; harvest expectations/evidence/counter-evidence after delivery; single experiences stay candidates until trials validate; delete after two rounds without real gain; run debt tests when bloated.
+
+      ## Triple Requirement Check (signal-triggered only; kix-discipline enforces the contract before edits)
+      - Signals: implementation vocabulary / unclear goal / large irreversible blast radius / constraint conflict. Literal, low-risk, reversible → just do it.
+      - ① XY ② verifiable premises ③ better path. Challenge once with reasons; user decides; no re-pushing. No sycophancy: AI value = a perspective beyond the user's current view. If the plugin reminds before an edit, call `kix_discipline_spec` (`mode` = member composition + one-line reason).
+
+      ## Pre-Code Decision Chain
+      Does it need to exist → repo (grep) → standard library → platform native → installed deps → one-liner → minimal viable.
+      Exceptions: perf work benchmarks first / architectural contracts / explicit user request. Hard floor: never simplify validation/error handling/security/accessibility; fix root causes; grep callers first.
+
+      ## Architecture-Level Awareness
+      The paradigm cuts accidental, not essential, complexity. Ask: essential complexity high? premises met? net benefit > cost? Deviating must leave a trace (ADR/comment/PR/doc).
+
+      ## AI Blind-Spot Map
+      Shallow depth / read-write confusion / language semantics / overconfidence / advocacy bias / external perspective / overengineering / architectural direction. Doubt → independent agent; unclear scope → `ask_user_question`. Compensation, not compulsion.
+
+      ## Pre-Delivery Verification Three Questions
+      Touching event handling / type conversion / platform boundary / external API: ① does the test mirror the real path (stubs hide bugs) ② right evidence dimension (call-chain exists ≠ callee semantics) ③ key claims independently verified.
+      Run standard lint/tests before commit (Rust: fmt --check + clippy -D warnings + test; TS: eslint/prettier/typecheck). The green gate reminds on untested edits.
+
+      ## Environment Defaults
+      Windows: `pwsh` 7.x (never 5.1); Linux/macOS: `bash`. Prefer the current major CLI; confirm with `Get-Command`/`--version` if unsure. Probe before declaring "insufficient system information" — never decline a task on that excuse.
+      Windows command reliability follows the `pwsh-reliable` skill; on shell failure, read it before retrying — never blind-escape.
+
+      ## Process Routing Signals
+      Attribute-driven: scale ≥3 files / external side effects / verification-critical / unclear goal. Any hit → pause for a composition decision and say it aloud; simple tasks skip the report. Static task-type → action mappings are forbidden.
+
+      ## Arranger Model
+      - Main model = arranger; compose by task attributes (solo / observers / dev / qa / reviewer), not a fixed producer→dev→qa pipeline. Say it aloud and persist it in `kix_discipline_spec` `mode`. Dispatch prompt: Tri-Block + contract lines ≤5K (large context → file).
+      - Handoff metadata: when dispatching Sprint-orchestrated subagents (dev/qa/reviewer), the dispatch prompt's contract lines MUST carry `current_sprint: N` (N read from docs/.kixpower-current-sprint) — kix-orchestration's handoff gate (marker / plan+progress / QA-completion) only fires on that metadata line; sprint-less observer/light dispatches omit it.
+      - Heavy-path members (auto-activate on first use): dev = Nova/Sage/Milo three-in-one (plan-scoped, target_rules only, never QA sign-off); qa = Ivy (no business source, evidence gate, signoff artifacts); reviewer = read-only three-layer devil's advocate. Light-path observers use unnamed perspective prompts; read producer.agent.md for heavy planning; no orchestrator — coordination stays in the main thread.
+      - Mis-composition mid-flight → recompose once and say it.
+      - Four floors: ① your/dev claims always independently observed, never self-attested ② coordination stays in the main thread ③ perspectives come from prompts, names are contract handles ④ gates are composition-independent — never publish/comment/merge/destructive by default; an explicit user instruction ("comment on the PR") already is the decision — execute without re-asking; team output returns to three-channel verification. Full-flow signals → suggest `/kixpower-*`, wait for confirmation.
+
+      ## Cost Discipline
+      - Tiers: lite (mechanical 8K) → subagent (default 64K) → subagent_cross (cross-vendor 64K) → subagent_thinker (128K, high-risk).
+      - Mark dispatch `[EFFORT]`+`[BUDGET]`; observers 1 default, 2 for divergence/high-risk, ≤3 concurrent.
+      - No polling spin: use background only while independent work remains; the final verification required for publication must run foreground, and every critical observer must settle before final. While an observer runs, freeze only its exact claim + evidence cursor/measurement; other claims in the same file and main-thread synthesis remain readable. Prompts carry absolute paths, version anchors, and forbid lists; `sleep` is only for tests/backoff/locks.
+      - Single-channel results: small results return one complete final message and never duplicate it via `report`; large results write one complete artifact, then final returns only its absolute path, conclusion, and status. Prefer `outputSchema`; reuse conclusions from progress.md/memories.
+      - Main-session budget (㉑-㉕): when both the dynamic model window and usage/tokenMeter are available, only the tiered token budget is a hard gate; 150K/41 steps are fallback boundaries when either measurement plane is missing. A breach requires a foreground handoff — light path lite/goal or heavy path dev·qa·reviewer both release it (the gate only guarantees offload and never picks members); background spawn does not complete it.
+      - Child effort (v5.11): explicit complexity:/effort/tier/maxTokens labels win; otherwise the tier is auto-picked from prompt complexity.
+
+      ## DSH Adaptation
+      - Dispatch: `subagent` with `agents/*.agent.md` role body + Tri-Block; `subagent_fork` inherits session context. Cross-vendor → `subagent_cross`; vision → `subagent_vision` (path + question); `📷 [图片自动识别]` is vision-bridge output, not user words.
+      - Mounted gates: kix-guards (dangerous git/SQL/control-plane/unknown-exec), kix-discipline, kix-orchestration; `/kixpower-*` zero-token.
+      - Tool surface: see the host tool list; on-demand tiers auto-activate on first use via `kix_capability_call`; workflow needs `disabled` removed + restart.
+      - Child orchestration plane (v5.12): a depth-1 child may use kix_capability_call only for subagent_lite mechanical evidence; in-process maxDepth=2 plus static/dynamic toolFilter and the guard reject depth>=2, regular/cross/goal/workflow.
+      - Sandbox escalation arguments: omit sandbox_permissions and justification on the first call; pair them only for one exact retry after a real sandbox denial; never set them when approval is disabled.
+      - Native first: use run_code for mechanical multi-step/concurrent/cross-tool transforms; call native tools directly for one-step, replayable verification, and approval actions. Use workflow for multi-stage, goal for long-horizon, plan mode for planning, and run_in_background + job_output for long tasks; on deny, stop.
+
+      ## Resources
+      `instructions/kixparadigm-core.instructions.md`; `prompts/kixpower-*`; `memories/*.md` (orchestration lessons ①-⑪ + candidates live in `memories/orchestration-lessons.md` — consult before dispatch/audit-type decisions); skills live in the session catalog. Deep-mechanism docs stay Chinese in this edition (TRANSLATION-STATUS.md).
+- id: agent-instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+
+# ── shell ───────────────────────────────────────────────────────────────────
+
+# `shell-env` stays in the HOST composition: `apps/cli/src/web.ts` injects it to
+# publish `DSH_WEB_URL`/`DSH_WEB_MODE`, and a host row that injects a service is
+# the criterion for host-plane ownership — injection resolves before any session
+# exists, so there is no agent to key by. Behind a preset realm those variables
+# never reached the model's shell at all. Both shell tools consume the host
+# registry from here; their executors (`bash-sandbox`/`pwsh-sandbox`) are
+# host-plane too.
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
+
+# ── filesystem ──────────────────────────────────────────────────────────────
+
+# Both register into the host `tools` registry and provide nothing, so
+# they need no realm. The `fs` service and its policy stay in the host.
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+# ── background jobs ────────────────────────────────────────────────────────
+
+# Only the model-facing controls. The task REGISTRY stays on the host plane:
+# its producers sit outside any realm this file could put it in — `tool-bash`
+# above resolves it with `ctx.get`, and an entry-local realm here is invisible
+# to every sibling row. The registry is keyed by owning agent anyway, so one
+# host instance serves every session. What a preset chooses is whether its
+# agent can collect and stop background work at all.
+# 2026-08-16 first shipped disabled (progressive-surface plan A); measured
+# lesson: while disabled, even STARTING a background job fails — `run_in_background`
+# answers "background jobs unavailable: no job controller serves this agent
+# (load @deepseek-ai/dsh-tool-jobs in its composition)", contradicting the
+# persona's "long tasks via run_in_background + job_output". 2026-08-17 decision
+# (user principle: simple mechanical tools without cognitive burden stay
+# resident): job_* is a pure mechanical control surface (start/collect/stop
+# running work, no decision burden) → resident. workflow/goal and the subagent
+# tiers stay disabled by default; first use auto-activates them via kix-focus
+# (kix_capability_call mounts on demand — the model never has to remember).
+- id: tool-jobs
+  name: '@deepseek-ai/dsh-tool-jobs'
+
+# ── skills ──────────────────────────────────────────────────────────────────
+
+# The skill REGISTRY lives in the host composition and is layered per scope:
+# these rows register into THIS preset's layer of it, so they need no realm.
+# `skill-filesystem` contributes local-root discovery for agents on this preset —
+# including this preset's own `skills/` directory, which carries the kix skills —
+# and `tool-skill` gives them the catalog and loader. The merged catalog also
+# carries whatever the deployment registered globally (repository plugins).
+# `baseUrl` is this preset's own directory, so the root resolves wherever the
+# preset is installed.
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+  config:
+    customSkillDirs:
+      - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', baseUrl))"
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+# ── goals ───────────────────────────────────────────────────────────────────
+
+# Only the model-facing tool. The goal SERVICE, its session driver, and the
+# `/goal` command stay on the host plane: the Gateway serves the goal domain as
+# Remote endpoints whose receiver comes from a generated descriptor, so it
+# resolves `goals` on the host and an entry-local realm here would hide it. The
+# registry is keyed by session anyway, so one host instance serves every
+# session. What a preset chooses is whether its agent can call the goal tool.
+# 2026-08-15 trimming decision: goal is low-frequency heavy → disabled by
+# default (main-agent surface keeps only paradigm essentials; restrict cannot
+# trim scope tools, so disabled is the only trimming lever). As of 2026-08-17
+# first use auto-activates: kix_capability_call { tool: create_goal } mounts
+# and runs it (or kix_tool_activate { tool: goal } pre-activates). No restart
+# needed for either.
+- id: tool-goal
+  name: '@deepseek-ai/dsh-tool-goal'
+  disabled: true
+
+# ── plan mode ───────────────────────────────────────────────────────────────
+
+# Plan state is per-agent by nature, so an entry-local realm is not a
+# workaround here — it is the correct lifetime.
+- id: planning
+  name: cordis:group
+  group: true
+  isolate:
+    planMode: true
+  config:
+    - id: plan-mode
+      name: '@deepseek-ai/dsh-plan-mode'
+      config:
+        section: |
+              You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+
+              Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
+
+              The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed to keep the tool catalog unchanged. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
+
+              Resolve discoverable facts by inspection. Use ask_user_question only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find out.
+
+              Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
+
+              When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
+
+# ── compaction ──────────────────────────────────────────────────────────────
+
+# `compaction-basic` reads `toolResultPrune` through `ctx.get`, so the pruner must
+# share this realm rather than sit outside it.
+#
+# `tokenMeter` is deliberately NOT in this realm: the meter stays on the HOST
+# plane, and the rows here resolve that one instance. It takes no configuration,
+# keys every fold by Session, and owns the context-meter projection units the
+# browser reads for every session — behind a realm those units would come and go
+# with whichever presets happen to be mounted. What a preset chooses is whether
+# its agent compacts at all, which is `compaction-basic` below.
+- id: compaction
+  name: cordis:group
+  group: true
+  isolate:
+    compaction: true
+    toolResultPruner: true
+  config:
+    - id: compaction-basic
+      name: '@deepseek-ai/dsh-compaction-basic'
+      config:
+        # v5.9 (2026-08-17, ledger-measured): the default 0.8 on a 1M window is
+        # an 800K threshold — the kixpower remediation session climbed to 466K
+        # without ever triggering it, burning 100.8M re-read tokens through
+        # O(N²) context growth. Global drop to 0.45; the two measured 1M-window
+        # models pinned at 0.18 (=180K, below every kix-budget dynamic budget
+        # line, so this backstop fires first). Unlisted models fall back to 0.45
+        # while kix-budget's dynamic budget (window-tiered ratio: ≤128K→0.85,
+        # ≤400K→0.65, ≤1M→0.40, >1M→0.35) still tracks the real window.
+        thresholdRatio: 0.45
+        modelPolicies:
+          - provider: deepseek-official
+            model: deepseek-v4-pro
+            thresholdRatio: 0.18
+          - provider: zai-coding-cn
+            model: glm-5.3
+            thresholdRatio: 0.18
+
+    - id: command-compact
+      name: '@deepseek-ai/dsh-command-compact'
+
+    - id: tool-result-pruner
+      name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      config:
+        thresholdChars: 2048
+        headChars: 1024
+        tailChars: 512
+
+    # v5.9 main-session budget (㉑-㉓): advisories + eager pruning. Must sit in
+    # this realm — ctx.get('toolResultPruner') is visible only inside the
+    # isolate realm (same constraint as compaction-basic); tokenMeter/llm stay
+    # on the host plane and resolve fine from here.
+    - id: kix-budget
+      name: ./plugins/kix-budget.js
+
+# ── delegation and workflows ────────────────────────────────────────────────
+
+# The `subagents` registry and its spawn/fork backends live in the HOST
+# composition: the registry is a process singleton whose cross-session queries
+# the api-proxy serves to the browser, and a provider name may only be
+# registered once. This preset contributes the delegation TOOLS, which resolve
+# that host registry. kixparadigm 三通道观察与 CEO 团队编排正使用它们。
+#
+# `workflows` is different — nothing outside an agent reads it — so every row
+# that reaches it shares one entry-local realm here, and a consumer left
+# outside would resolve a host registry this preset does not populate.
+#
+# `tool-subagent-report` is host-plane for the same reason as the registry,
+# not because a preset may not want it: it registers a CONTINUABLE SETUP on
+# that singleton rather than a tool this agent calls, and the setup list is
+# not scope-aware — one copy per mounted preset means every child gets
+# `report` registered once per live session, which throws on the second.
+- id: delegation
+  name: cordis:group
+  group: true
+  isolate:
+    workflowEngine: true
+  config:
+    - id: tool-subagent-control
+      name: '@deepseek-ai/dsh-tool-subagent-control'
+
+    - id: tool-subagent-list-agents
+      name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+
+    - id: tool-subagent
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: subagent
+        backgroundMode: continuable
+        maxDepth: 2
+        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
+        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call all ZERO uses) — child
+        # orchestration-surface trim. The deny list holds 9 permanently
+        # mounted orchestration names only (restrict throws on unknown
+        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # guards every other conditional tier/goal/workflow. Denied names vanish
+        # array and the system TypeScript mirror. run_code is NOT in the
+        # deny list: it is the reserved Code Mode transport — restrict
+        # cannot name it (WSL2 live-fire finding) — and as a legitimate
+        # execution channel it stays visible on the child surface, its
+        # tool mirror included. subagent×2/agent control are duties of
+        # the main thread (kix invariant "coordination stays on the
+        # main thread"). File/exec/search/jobs/skill/report/MCP
+        # (capability_call) all stay — this trims the orchestration plane
+        # children never own, not capability.
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+        agentOptions:
+          # v5.8 budget cap: completion-side (thinking+answer) safety ceiling (s1 budget forcing)
+          maxTokens: 65536
+
+    # ── Low-cost routine subagent (v5.8 cost tiering = DSH slim mode) ──────────
+    # Mechanical reading/format checks/simple lookups → `subagent_lite` (slim
+    # composition): the `persona` field replaces the ~17k-token resident persona
+    # with a ~60-token mechanical persona (per-child persona shadowing);
+    # `toolFilter` trims the 82-tool catalog (17.2k tokens) to read/grep/glob plus
+    # the platform shell (1.6k tokens) — per-step fixed overhead drops from ~34.3k
+    # to ~5.9k (measured, ↓83%). 2026-08-17 WSL2 E2E fix: the hardcoded `pwsh`
+    # (a Windows tool) made tools.restrict() report "unknown global tool" on Linux
+    # deployments, breaking the lite tier → platform-conditional via
+    # `!!js process.platform`. Model tier (preferred zai-coding-cn/glm-4.7): **auto-selected** —
+    # this preset ships to different environments, so `plugins/kix-cost.js` probes
+    # the preferred route on the child's first request; if unavailable (provider or
+    # model missing) it falls back to the environment default route (deepseek
+    # high). Other deployments may repoint this row's agentOptions.provider/model
+    # to their own cheap model. 8K cap prevents runaways. Mechanical = read/
+    # retrieve/verify only — no judgment, no file writes; otherwise use `subagent`.
+    # Ordinary dispatch → `subagent` (inherits main model, high, 64K cap);
+    # hard/cross-vendor verification → `subagent_cross` (auto inverted-vendor, 64K cap);
+    # same-family max deep thinking → `subagent_thinker` (deepseek max, 128K cap,
+    # injected by plugins/kix-cost.js via the budget-cap discriminator).
+    # Vision is capped at 4096 by the model config. Subagent effort is normalized
+    # by plugins/kix-cost.js.
+    - id: tool-subagent-lite
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: spawn
+        toolName: subagent_lite
+        backgroundMode: continuable
+        maxDepth: 2
+        persona: |-
+          You are a fast mechanical subagent for strictly mechanical subtasks:
+          reading files, searching, simple checks and verification. Do exactly
+          what the task asks. No extra analysis, no suggestions, no speculation.
+          Return concise factual results with file:line evidence when relevant.
+        toolFilter:
+          allow: [ read, grep, glob, !!js "process.platform === 'win32' ? 'pwsh' : 'bash'" ]
+        agentOptions:
+          provider: zai-coding-cn
+          model: glm-4.7
+          maxTokens: 8192
+
+    # ── max deep-thinking tier (v5.8): tasks that need max still get max ──────
+    # Same-family deep thinking: the `kix-route:thinker` sentinel resolves to
+    # the newest usable deepseek-family model at the child's first request
+    # (deepseek-official preferred, other deepseek-* as backup); deployments
+    # with no deepseek at all degrade to the environment default route with a
+    # warning (the role still stands: big-budget deep thinking, GLM adapter
+    # manages effort). Effort is injected by kix-route itself (reusing kix-cost's
+    # same-source decideEffort, budget cap 128K → max; kix-cost only guards-and-
+    # skips sentinel children, never injects — identical results under any
+    # waterfall order). For same-family deep-thinking hard tasks; cross-vendor
+    # orthogonal verification uses `subagent_cross` (auto inverted-vendor routing).
+    - id: tool-subagent-thinker
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: spawn
+        toolName: subagent_thinker
+        backgroundMode: continuable
+        maxDepth: 2
+        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
+        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call all ZERO uses) — child
+        # orchestration-surface trim. The deny list holds 9 permanently
+        # mounted orchestration names only (restrict throws on unknown
+        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # guards every other conditional tier/goal/workflow. Denied names vanish
+        # array and the system TypeScript mirror. run_code is NOT in the
+        # deny list: it is the reserved Code Mode transport — restrict
+        # cannot name it (WSL2 live-fire finding) — and as a legitimate
+        # execution channel it stays visible on the child surface, its
+        # tool mirror included. subagent×2/agent control are duties of
+        # the main thread (kix invariant "coordination stays on the
+        # main thread"). File/exec/search/jobs/skill/report/MCP
+        # (capability_call) all stay — this trims the orchestration plane
+        # children never own, not capability.
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+        agentOptions:
+          model: kix-route:thinker
+          maxTokens: 131072
+
+    # ── Cross-vendor observer (the DSH landing of kixparadigm three-channel verification) ──
+    # Naming pins the ROLE, not the vendor — and so does the route:
+    # agentOptions.model is the `kix-route:cross` sentinel, resolved by
+    # plugins/kix-route.js at the child's first request against the live catalog
+    # (llm.listProviders/listModels) into the first usable model from a vendor
+    # DIFFERENT from the parent's (parent GLM → deepseek family; parent
+    # DeepSeek → zai family; preference order in the plugin's MODEL_PREFERENCE).
+    # Main-model vendor switches, model-line upgrades, and distribution to other
+    # deployments all need zero edits here. Boundary semantics (v5.9.1): in a
+    # **single-vendor deployment** (no foreign provider registered) it FAILS AT
+    # START — the error lists registered providers + what to do instead and
+    # reaches the parent via the failed run (use a plain subagent for same-vendor
+    # review with an explicit caveat / configure a second vendor). Never silently
+    # degrade to same-vendor: cross's entire value is vendor orthogonality;
+    # false independence is worse than failure.
+    # If the plugin is missing, the sentinel reaches the adapter verbatim and
+    # fails LOUD with UNKNOWN_MODEL; never silently degrades to same-vendor.
+    # v5.8: 64K safety cap.
+    - id: tool-subagent-cross
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: subagent_cross
+        backgroundMode: continuable
+        maxDepth: 2
+        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
+        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call all ZERO uses) — child
+        # orchestration-surface trim. The deny list holds 9 permanently
+        # mounted orchestration names only (restrict throws on unknown
+        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # guards every other conditional tier/goal/workflow. Denied names vanish
+        # array and the system TypeScript mirror. run_code is NOT in the
+        # deny list: it is the reserved Code Mode transport — restrict
+        # cannot name it (WSL2 live-fire finding) — and as a legitimate
+        # execution channel it stays visible on the child surface, its
+        # tool mirror included. subagent×2/agent control are duties of
+        # the main thread (kix invariant "coordination stays on the
+        # main thread"). File/exec/search/jobs/skill/report/MCP
+        # (capability_call) all stay — this trims the orchestration plane
+        # children never own, not capability.
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+        agentOptions:
+          model: kix-route:cross
+          maxTokens: 65536
+
+    # ── Vision supplement (vision subagent, auto-routed to an image model) ────
+    # When the main model declares no image input, the read_image routing gate
+    # refuses direct image reads. Hand the image path + concrete question to
+    # subagent_vision. The route is no longer pinned: agentOptions.model is the
+    # `kix-route:vision` sentinel, resolved by plugins/kix-route.js at the
+    # child's first request to the first usable model whose inputModalities
+    # declares image (zai-vision preference: glm-4.6v → glm-4.6v-flash →
+    # glm-4.5v, then any other provider). The gate reads the POST-waterfall real
+    # route (requestHeader config), so it passes after the rewrite. Boundary
+    # (v5.9.1): with no image-declaring model anywhere it FAILS AT START (with
+    # setup advice) — no vision-less degradation (skips the spawn →
+    # read_image-gate bounce round-trip entirely).
+    - id: tool-subagent-vision
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: spawn
+        toolName: subagent_vision
+        backgroundMode: continuable
+        maxDepth: 2
+        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
+        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call all ZERO uses) — child
+        # orchestration-surface trim. The deny list holds 9 permanently
+        # mounted orchestration names only (restrict throws on unknown
+        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # guards every other conditional tier/goal/workflow. Denied names vanish
+        # array and the system TypeScript mirror. run_code is NOT in the
+        # deny list: it is the reserved Code Mode transport — restrict
+        # cannot name it (WSL2 live-fire finding) — and as a legitimate
+        # execution channel it stays visible on the child surface, its
+        # tool mirror included. subagent×2/agent control are duties of
+        # the main thread (kix invariant "coordination stays on the
+        # main thread"). File/exec/search/jobs/skill/report/MCP
+        # (capability_call) all stay — this trims the orchestration plane
+        # children never own, not capability.
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+        agentOptions:
+          model: kix-route:vision
+          # vision models commonly cap output at 4K (settings zai-vision maxTokens 4096);
+          # pinning it also stops kix-cost from misjudging a maxTokens-less child as lite
+          maxTokens: 4096
+
+    - id: tool-subagent-fork
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: fork
+        toolName: subagent_fork
+        backgroundMode: continuable
+        maxDepth: 2
+        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
+        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call all ZERO uses) — child
+        # orchestration-surface trim. The deny list holds 9 permanently
+        # mounted orchestration names only (restrict throws on unknown
+        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # guards every other conditional tier/goal/workflow. Denied names vanish
+        # array and the system TypeScript mirror. run_code is NOT in the
+        # deny list: it is the reserved Code Mode transport — restrict
+        # cannot name it (WSL2 live-fire finding) — and as a legitimate
+        # execution channel it stays visible on the child surface, its
+        # tool mirror included. subagent×2/agent control are duties of
+        # the main thread (kix invariant "coordination stays on the
+        # main thread"). File/exec/search/jobs/skill/report/MCP
+        # (capability_call) all stay — this trims the orchestration plane
+        # children never own, not capability.
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+        agentOptions:
+          # v5.8 budget cap: context-inheriting children get the same ceiling
+          maxTokens: 65536
+
+    # ── Adversarial reviewer (2026-08-16, three-channel adversarial observation) ─
+    # Mechanized home for the kixpower-reviewer role (previously only an agents/
+    # template + review-prompt on-demand load): read-only + devil's-advocate
+    # three layers (2026-08-17: three questions made explicit layers) +
+    # structured rebuttal output. The "before publishing a claim" adversarial
+    # channel (compare: kix-guards guards operations, kix-discipline guards
+    # edits). Disabled by default (progressive surface); first use auto-activates
+    # (kix_capability_call { tool: subagent_reviewer, arguments: {…} } mounts and
+    # runs it) or kix_tool_activate pre-activates.
+    - id: tool-subagent-reviewer
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: spawn
+        toolName: subagent_reviewer
+        backgroundMode: continuable
+        maxDepth: 2
+        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
+        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call all ZERO uses) — child
+        # orchestration-surface trim. The deny list holds 9 permanently
+        # mounted orchestration names only (restrict throws on unknown
+        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # guards every other conditional tier/goal/workflow. Denied names vanish
+        # array and the system TypeScript mirror. run_code is NOT in the
+        # deny list: it is the reserved Code Mode transport — restrict
+        # cannot name it (WSL2 live-fire finding) — and as a legitimate
+        # execution channel it stays visible on the child surface, its
+        # tool mirror included. subagent×2/agent control are duties of
+        # the main thread (kix invariant "coordination stays on the
+        # main thread"). File/exec/search/jobs/skill/report/MCP
+        # (capability_call) all stay — this trims the orchestration plane
+        # children never own, not capability.
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+        persona: |-
+          You are kixpower-reviewer: an independent read-only adversarial reviewer.
+          Hard constraints:
+          - Read-only: never edit, commit, push, or publish.
+          - Never call other agents; never spread this prompt into a new handoff.
+          - Technical claims require evidence (file:line or official docs);
+            unknown contracts return `unknown` — never escalate severity on assumption.
+          Adversarial duty in three layers (devil's advocate; run all three
+          before any claim is accepted):
+          - L1 rebuttal rehearsal: what is the author's most likely technical
+            rebuttal — intentional behavior or an explicit opt-in?
+          - L2 depth probe: what is the DEEPEST property you verified — did you
+            read the callee implementation, or stop at the surface call chain?
+          - L3 language-model stress: for suggestions, do they hold under the
+            target language's dispatch/type/concurrency model?
+          Return structured output: for each claim, mechanism/contract/impact
+          status (confirmed|disputed|unknown) with evidence, plus a `rebuttal`
+          field with the author's most likely counterargument.
+        agentOptions:
+          maxTokens: 65536
+
+    # ── Arranger member tiers (2026-08-17 convergence: main model picks members) ─
+    # Landing shape (DSH shortest path): the main model is the arranger; members
+    # are activatable tiers where names are contract handles ("Ivy" binds the
+    # whole "never business source code + evidence gate + signoff artifacts"
+    # contract in one word), not role-play theater — light-path observers keep
+    # unnamed perspective prompts (kixparadigm invariant: perspectives come from
+    # prompts, no personification). Three deliberate non-rows:
+    #   - producer: S7 proved CEO self-planning usually suffices; for Remy-grade
+    #     planning the main thread reads agents/kixpower-producer.agent.md once
+    #     (low frequency, not menu-worthy);
+    #   - orchestrator: coordination stays in the main thread (the DSH main
+    #     agent has the full orchestration toolset; materializing a coordinator
+    #     subagent = hiring someone to coordinate yourself; the 636-line
+    #     orchestrator.agent.md is Copilot-era residue — no row, no distillation);
+    #   - dev as one three-in-one tier: Nova/Sage/Milo switching already lives
+    #     in one agent body, so one persona line carries the contract.
+    # Contract snapshots stay subordinate to agents/kixpower-{qa,dev}.agent.md
+    # (single source of truth, reviewer precedent); composition traces go to
+    # the mode field of kix_discipline_spec (members + one-line reason); the
+    # four floor invariants live in the persona Arranger Model section.
+    # Disabled by default (progressive surface); first use auto-activates
+    # (kix_capability_call mounts) or kix_tool_activate pre-activates.
+    - id: tool-subagent-qa
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: spawn
+        toolName: subagent_qa
+        backgroundMode: continuable
+        maxDepth: 2
+        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
+        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call all ZERO uses) — child
+        # orchestration-surface trim. The deny list holds 9 permanently
+        # mounted orchestration names only (restrict throws on unknown
+        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # guards every other conditional tier/goal/workflow. Denied names vanish
+        # array and the system TypeScript mirror. run_code is NOT in the
+        # deny list: it is the reserved Code Mode transport — restrict
+        # cannot name it (WSL2 live-fire finding) — and as a legitimate
+        # execution channel it stays visible on the child surface, its
+        # tool mirror included. subagent×2/agent control are duties of
+        # the main thread (kix invariant "coordination stays on the
+        # main thread"). File/exec/search/jobs/skill/report/MCP
+        # (capability_call) all stay — this trims the orchestration plane
+        # children never own, not capability.
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+        persona: |-
+          You are kixpower-qa (Ivy): acceptance testing, bug filing, and QA
+          signoff — never business source code.
+          Hard constraints:
+          - Edit only tests and QA docs (*_test.*, *.test.*, *.spec.*,
+            *.stories.*, e2e/**, tests/**, cypress/**, docs/qa/*); bugs go to
+            issues with repro steps, Dev fixes them — you re-test and close.
+          - Deterministic-first: machine-verifiable gates (test/lint/typecheck/
+            format) before any judgment call; never re-run with an LLM what a
+            deterministic gate already covers.
+          - Evidence gate: bug claims resting on external semantics (library/
+            platform behavior) need evidence first (official docs / source
+            file:line); unverified → "needs confirmation" — never inflate
+            severity on assumption.
+          - Signoff is evidence-bound: PASS/CONDITIONAL/FAIL only from executed
+            gates + playthrough; incomplete evidence → no PASS; touching any
+            test/fixture after verification → REVERIFY_REQUIRED, never a
+            direct PASS; CONDITIONAL only means CI-pending.
+          Report with tables: gate results / verdict / issue list.
+        agentOptions:
+          maxTokens: 65536
+
+    - id: tool-subagent-dev
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: spawn
+        toolName: subagent_dev
+        backgroundMode: continuable
+        maxDepth: 2
+        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
+        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
+        # kix_tool_activate/kix_capability_call all ZERO uses) — child
+        # orchestration-surface trim. The deny list holds 9 permanently
+        # mounted orchestration names only (restrict throws on unknown
+        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # guards every other conditional tier/goal/workflow. Denied names vanish
+        # array and the system TypeScript mirror. run_code is NOT in the
+        # deny list: it is the reserved Code Mode transport — restrict
+        # cannot name it (WSL2 live-fire finding) — and as a legitimate
+        # execution channel it stays visible on the child surface, its
+        # tool mirror included. subagent×2/agent control are duties of
+        # the main thread (kix invariant "coordination stays on the
+        # main thread"). File/exec/search/jobs/skill/report/MCP
+        # (capability_call) all stay — this trims the orchestration plane
+        # children never own, not capability.
+        toolFilter:
+          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+        persona: |-
+          You are kixpower-dev (Nova frontend / Sage backend / Milo design —
+          one contract, three hats): the coding member on the CEO team.
+          Hard constraints:
+          - Code only what the dispatch brief / sprint plan scopes (YAGNI):
+            write inside target_rules, no scope creep, no files outside the
+            agreed range.
+          - Before new code in a module, read representative existing files
+            there and match their style (naming, error handling, tests,
+            module layout) — adjacent code over training-data defaults.
+          - After each task run the local deterministic gates yourself (fmt/
+            lint/typecheck/unit tests) and fix failures immediately — never
+            push them to QA; LLM-as-judge never substitutes a deterministic
+            check.
+          - Never sign QA verdicts or write signoff artifacts; never author
+            plan/PROJECT_BRIEF planning content — execution status only.
+          - Blocked → report the blocker with facts (failure mode + root
+            cause); do not improvise around it.
+          Report: what changed / gate results / known issues, tables over prose.
+        agentOptions:
+          maxTokens: 65536
+
+    # Product providers are host-plane singletons. Copy this preset, then
+    # remove `disabled` from either ordinary tool row to expose that product
+    # only to agents composed from the copy.
+    - id: tool-subagent-codex
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: codex
+        toolName: subagent_codex
+        enableRunInBackground: false
+        maxDepth: provider-managed
+
+    - id: tool-subagent-claude-code
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: claude-code
+        toolName: subagent_claude_code
+        enableRunInBackground: false
+        maxDepth: provider-managed
+
+    # 2026-08-15 trimming decision: workflow/ralph/goal are low-frequency heavy
+    # → disabled by default. goal first use auto-activates via kix-focus
+    # (kix_capability_call { tool: create_goal } mounts and runs it; or
+    # kix_tool_activate { tool: goal } pre-activates — measured 2026-08-16:
+    # activate → callable next turn → deactivate, closed loop).
+    # workflow/ralph depend on workflowEngine (provided inside this isolate
+    # realm); a dynamically mounted fiber outside the realm cannot resolve it,
+    # so activation fails honestly — remove `disabled` and restart when needed.
+    # The worker row MUST stay inside this realm: moving it to the agent root
+    # broke the UI after restart (empty commands/list, settings Failed to
+    # fetch, polling storm, workspace selection broken) — reverted 2026-08-16.
+    - id: workflow-worker-thread
+      name: '@deepseek-ai/dsh-workflow-worker-thread'
+      config:
+        provider: spawn
+
+    - id: tool-workflow
+      name: '@deepseek-ai/dsh-tool-workflow'
+      disabled: true
+
+    - id: tool-ralph
+      name: '@deepseek-ai/dsh-tool-ralph'
+      disabled: true
+      config:
+        subagentProvider: spawn
+        maxRounds: 64
+
+# ── remaining model-facing rows ─────────────────────────────────────────────
+
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
+
+# The `web` service and its search provider stay in the host composition; only
+# the model-facing tool is per-session.
+- id: tool-web
+  name: '@deepseek-ai/dsh-tool-web'
+  config:
+    fetch: false
+    searchTimeoutMs: 60000
+
+# ── kix 机械门禁（DSH 原生 hook）────────────────────────────────────────────
+# 移植自 kixpower blast-radius/block-source-edit 核心门禁，以 tools/pre-execute
+# 监听器形态自动拦截（等价 Copilot PreToolUse hook，scope-filtered 只拦本 preset）。
+# v8: command-position terminal-SQL detection + control-plane write-intent only
+# (grep/cat/ls are allowed) + configurable GitHub prefix (githubToolPrefix,
+# default mcp__github__).
+# v9: publish/comment/ordinary-push confirmation gates are soft constraints
+# (no questions); hard deny remains for irreversible destruction only.
+# Unit tests: 210 assertions.
+# v13 (v1.2.15, less is more): the control plane IS the install plane —
+# one definition, nothing else. The v3 bare agent.cordis.yml fallback is
+# deleted: it false-positived on source repos (both the v11 and v13
+# exemption patches existed to fix it), and source-vs-install is the
+# domain of "N copies that must be identical" — source/foreign preset
+# writes belong to kix-consistency (identity sets + parity hint); guards
+# keeps only the install plane. No exemptions, no predicates, no
+# per-path rules. Honest boundary: relative-path writes with cwd inside
+# the install dir do not remind — that is explicit self-iteration
+# (allowed by v12 decision). Unit tests: 243 assertions.
+# 相对路径插件由 loader 以 baseUrl 解析（name 以 "." 开头 → new URL(name, baseUrl)）。
+- id: kix-guards
+  name: ./plugins/kix-guards.js
+
+# ── kix-discipline (P0 discipline mechanization, 2026-08-16): requirement-grill
+#    / verification-gate moved from prompt preaching to enforced mechanism.
+#    Structure borrowed from ecosystem plugins (dsh-doublecheck etc.), content
+#    kept kix-specific (triple requirement check ≠ six-dimension grill).
+#    - tools/pre-execute: implementation edits check for a spec contract on
+#      record; no spec + first implementation edit → remind (default; allow +
+#      one-shot reminder) / ask (in-chat question) / block (deny). Test files
+#      always pass.
+#    - kix_discipline_spec tool: records the triple-check contract
+#      (goal/xy/assumptions/path/acceptance) into workspace kix-discipline/spec.md
+#      (visible across sessions).
+#    - agent/turn-stopping: turn ends with implementation edits but no test run
+#      → green reminder (delivery three questions).
+#    - /kix-discipline command: status/report/on|off.
+#    Intensity defaults to remind (fewer constraints; literal low-risk reversible
+#    tasks may ignore the reminder and proceed, matching kix signal-based
+#    triggering); ask/block require explicit config in this row.
+#    Unit tests: node plugins/kix-discipline.test.js (68 assertions).
+- id: kix-discipline
+  name: ./plugins/kix-discipline.js
+
+# ── kix-orchestration (P2 gap fill, 2026-08-16): orchestration handoff gate ──
+# Background: of the 9 Copilot-side kixpower hooks, only blast-radius was taken
+# over by kix-guards; handoff discipline (validate-handoff etc.) became
+# prompt-only after migration. This plugin does a bounded port: when a subagent
+# dispatch carries current_sprint, verify the workspace docs/.kixpower-current-sprint
+# marker matches, docs/sprint-N/{plan,progress}.md exist, progress has no blocker,
+# and QA handoff requires all tasks completed. Default remind; ask/block need
+# explicit config. v8: QA completion marker excludes negated statements (not done / undone / not passed). Unit tests: node plugins/kix-orchestration.test.js (96 assertions; v10.1 Tri-Block [CONTEXT] Sprint N tolerance; v11 plan contract).
+- id: kix-orchestration
+  name: ./plugins/kix-orchestration.js
+
+# ── kix-consistency (P5, 2026-08-17; generalized v1.2.15): write-time guard ─
+# The CI script only validates at test time; edits to preset files were not
+# intercepted in real time. This plugin turns the "single source of truth"
+# convention into mechanism, sharing consistency-lib.cjs with CI (one
+# implementation, no CI-vs-runtime drift). Self-sensing boundary: a preset
+# root is a directory with both agent.cordis.yml + preset.yml (depth ≤2 scan);
+# any workspace with ≥2 roots gets guidance — the universal layer only guides
+# same-named plugins byte-identical across roots (N ≥ 2 copies must match);
+# shell writes get no mechanical extraction (command-text heuristics are debt
+# — soft guidance + CI backstop); other in-root paths (skills/agents/prompts
+# — translation relations) get a parity hint only — no failure asserted,
+# whether other roots' counterparts need syncing is left to model judgment
+# (undescribed forms sensed via the reminder). The boundary is the preset
+# roots themselves: non-preset-root paths are naturally out (a self-sensing
+# corollary — no per-path exemptions).
+# The full kix contract (persona budget / memories count / README phrases /
+# version pair / vision-bridge / single-file syntax) is self-declared by the
+# repo carrying the scripts entry; foreign repos are never forced onto it.
+# Default intensity remind (heuristic guidance only); ask/block need explicit
+# config. remindOnce: once per session per category.
+# Unit tests: node plugins/kix-consistency.test.js (111 assertions).
+- id: kix-consistency
+  name: ./plugins/kix-consistency.js
+
+# ── kix-cost (v5.8 cost discipline): lite-tier auto-routing + child effort tiering ──
+# On the agent/request waterfall: (A) light children (budget cap ≤8K,
+# subagent_lite) probe their preferred route on first request
+# (llm.listProviders + resolveModelInfo); when unavailable they fall back to the
+# environment default route (agentDefaultModel.currentSelection()) — the preset
+# ships to different environments without breaking. (B) deepseek children with
+# no explicit effort get normalized by budget cap: ≥98K (subagent_thinker) → max,
+# otherwise → high (the 64K cap is the runaway guard; the adapter default ceiling
+# is 256K). Main session / GLM children / explicit effort are never touched.
+# Listener only, publishes no service, needs no realm. See plugins/kix-cost.js;
+# unit tests: node plugins/kix-cost.test.js.
+- id: kix-cost
+  name: ./plugins/kix-cost.js
+
+# ── kix-route (subagent routing layer): sentinel model name → live-route resolution ──
+# Tool rows no longer pin (provider, model): the cross/vision/thinker rows pin
+# only a `kix-route:<tier>` sentinel; this plugin resolves it in the child's
+# first agent/request waterfall against the live llm catalog — cross = vendor
+# inverted from the parent, vision = first model declaring image input,
+# thinker = deepseek preferred. Boundary semantics (v5.9.1): cross in a
+# single-vendor deployment and vision with no image model FAIL AT START (the
+# error carries what-to-do-instead advice back to the parent — false
+# independence is worse than failure); thinker without deepseek degrades to the
+# environment default (role still stands) with a warning; a missing plugin
+# fails LOUD on the sentinel (never silently degrades to same-vendor).
+# Cooperates with kix-cost under any waterfall order (effort rule reused from
+# the same source). v8: cross preference candidates are filtered to registered providers first. See plugins/kix-route.js; unit tests: node plugins/kix-route.test.js (68 assertions).
+- id: kix-route
+  name: ./plugins/kix-route.js
+
+# ── presentation（PTC/Code Mode 融入）───────────────────────────────────────
+# `both` = native 工具 schema 与 Code Mode SDK（run_code + tools.* 绑定）并存，
+# 不声明 code-only 规则 → native 直呼照常可执行，模型自主选择形态：
+#   - 单步/验证/观察动作 → native 直呼（证据可回放、门禁逐条可见）
+#   - 机械多步序列/批处理/并发探测 → run_code 程序（一次往返，Promise.all 并发，
+#     try/catch 容错；SDK 子分派走完整 pre-execute→guards→execute→post-execute 管线，
+#     门禁依然拦截；仅 print/return 回流，中间值不可重建）
+# 行等待宿主 `codeRuntime`（web-app bundle 已组装 dsh-code-runtime-worker-thread）；
+# 未组装运行时的部署会在挂载时指名此 id 拒绝。
+- id: tool-presentation
+  name: '@deepseek-ai/dsh-agent-tool-presentation'
+  config:
+    mode: both
+
+# ── kix 流程命令（P1-8：DSH 原生命令平面，2026-08 落地）────────────────
+# 注册 /kixpower-new /kixpower-import /kixpower-continue /kixpower-review
+# /kixpower 五个原生命令：UI 命令候选 + 零 token 触发 + handler 读
+# prompts/*.prompt.md 注入 user 消息（与 /plan 命令同语义）。
+- id: kix-commands
+  name: ./plugins/kix-commands.js
+
+# ── kix-focus (minimal + progressive disclosure + PTC, 2026-08-16, 3-layer) ──
+# Background: kix sends ~85 tool schemas (~108KB) to the model every turn;
+# minimal mode proved trimming the surface cuts cost without losing completion
+# (dsh-mcp-lens measured input tokens -89%, cost -89%, 3/3 tasks).
+# Phase 1 — tools.restrict trims to the resident core set (~18: three-channel
+#   execute/observe/interact + discovery entry); MCP (GitHub/Playwright/Context7/
+#   Semgrep) and cordis_* (host-plane globals) stay on demand; tools/change
+#   retry. Phase 2 — kix_capability_search (on-demand catalog, group metadata,
+#   no full schemas) + kix_capability_call (proxy execution via ctx.tools.execute,
+#   full pre-execute→guards→execute→post-execute pipeline, gates still fire).
+#   Scope orchestration tools are NOT trimmed by restrict (auto-visible):
+#   job_*/subagent control stay mounted and resident; workflow/goal/ralph are
+#   low-frequency heavy → disabled by default (2026-08-15 trimming decision;
+#   measured: workflow 7-way parallel audit works once enabled — see delegation
+#   group comment).
+# Phase 3 — keeps tool-presentation mode:both (native direct calls for
+#   verification + run_code for mechanical steps); kix red line "verification/
+#   observation stay native (evidence replayable)" unchanged; capability_call is
+#   also callable from run_code SDK sub-dispatches (which pass through gates).
+# Disable trimming (keep search/call only): config: { enableRestrict: false }.
+# Unit tests: node plugins/kix-focus.test.js (49 assertions).
+- id: kix-focus
+  name: ./plugins/kix-focus.js
+
+# ── kix-browser (native browser automation, 2026-08-18) ─────────────────
+# Context: the MCP five-hop chain has a broken host resolution layer here
+#   (navigate/click ToolNotFound, root cause unproven) and the wrong shape
+#   (--headless bundled Chromium, not the user's browser); direct
+#   playwright-core scripting is probe-verified (dsh-capability-map.md
+#   "Browser automation" row). High-frequency capability → go native.
+# Single tool browser{action} (17 actions, all necessary operations):
+#   open/snapshot/text/click/type/press/select/hover/back/forward/reload/wait/
+#   screenshot/upload/tabs/dialog/close; CDP attach first (take over the real
+#   Edge/Chrome started with --remote-debugging-port=9222, login state
+#   preserved), launch headless as fallback; session persists across calls;
+#   URL gate (http/https/about:blank only); dialogs auto-dismissed by default,
+#   dialog{auto} changes the policy, results carry lastDialog; playwright-core
+#   lazy-require (missing install never blocks plugin load; the error carries
+#   install guidance). **Deliberately excluded**: arbitrary in-page JS
+#   (evaluate — kix blast-radius red line; use a pwsh direct-drive script when
+#   truly needed = code-level reviewable), network interception / cookies /
+#   PDF / drag-drop (low frequency, script path covers them). env:
+#   KIX_BROWSER_CDP (default
+#   http://127.0.0.1:9222, empty string disables attach) / KIX_BROWSER_HEADLESS
+#   (default true) / KIX_BROWSER_CORE (explicit path) / KIX_BROWSER_TIMEOUT
+#   (default 15000ms).
+# Unit tests: node plugins/kix-browser.test.js (12 assertion groups:
+#   URL gate / shape / queue semantics / new-action validation / dialog policy).
+# Progressive disclosure (2026-08-18, compliance shape agreed with the user):
+# NOT loaded by default — the browser tool costs zero schema tokens in
+# non-browser sessions. Discovery and activation go through kix-focus:
+# capability_search shows the browser-native group; kix_capability_call
+# { tool:"browser" } auto-mounts on first use (ACTIVATABLE_TOOLS.browser →
+# pkgPath local resolution), directly callable from the next round,
+# kix_tool_deactivate to unload. Uncomment the two lines below and restart
+# the host only if you want it always resident.
+# - id: kix-browser
+#   name: ./plugins/kix-browser.js
+
+# ── kix-stalled (L3 tier A: stalled mechanical detection, 2026-08-15, opt-in) ──
+# Read-only, stateless, non-resident: /kixst-check <project root> command
+# (zero token) + kix_stalled_check model tool. Candidate status (1 fixture E2E);
+# enable after real-project evidence. Enable by uncommenting the two lines below.
+# - id: kix-stalled
+#   name: ./plugins/kix-stalled.js
+
+# ── kix-signal (spec-draft single signal; 2026-08-18 born 3-signal / 08-19 converged) ──
+# S3 spec-draft: first source edit without a discipline contract → inject a
+# five-field draft template (turns writing from scratch into fill-in-the-blank).
+# Design evidence: reminder-channel compliance 2/2 vs model self-drive 13%
+# (349-session corpus). Co-triggers with kix-discipline red-remind — one notice
+# each (discipline nags, this one scaffolds), complementary.
+# S1 poll-guard / S2 orchestration-trigger retired: overlap with host
+# repeat-tool-reminder / kix-budget streak+gate (full death certificate in the
+# plugin header). Fully advisory, zero deny. Rollback: comment the block below
+# and restart the host.
+- id: kix-signal
+  name: ./plugins/kix-signal.js
+  config:
+    specDraft: true
