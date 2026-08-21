@@ -158,6 +158,31 @@ function makeLog(quiet) {
   }
 }
 
+/** If `p` is a directory, a symlink-to-dir, or a git symlink-file pointing at a
+ *  directory, return the real directory path to walk; otherwise null. */
+function resolveLinkedDir(p, entry) {
+  try {
+    if (entry && entry.isDirectory()) return p
+    if (entry && entry.isSymbolicLink()) {
+      const st = fs.statSync(p)
+      return st.isDirectory() ? p : null
+    }
+    const st = fs.lstatSync(p)
+    if (st.isDirectory()) return p
+    if (st.isSymbolicLink()) {
+      const rst = fs.statSync(p)
+      return rst.isDirectory() ? p : null
+    }
+    if (!st.isFile() || st.size > 256) return null
+    const body = fs.readFileSync(p, 'utf8').trim()
+    if (!body || /[\n\0]/.test(body) || path.isAbsolute(body)) return null
+    const target = path.resolve(path.dirname(p), body)
+    return fs.existsSync(target) && fs.statSync(target).isDirectory() ? target : null
+  } catch {
+    return null
+  }
+}
+
 /** 镜像复制 src → dst：同名同尺寸同 mtime 跳过；目标独有文件只报告不删除。 */
 function copyTree(src, dst, log) {
   const added = [], updated = [], same = [], targetOnly = []
@@ -165,9 +190,14 @@ function copyTree(src, dst, log) {
     for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
       const s = path.join(from, entry.name)
       const d = path.join(to, entry.name)
-      if (entry.isDirectory()) {
+      // Dirent.isDirectory() is false for a symlink-to-dir. Follow it so
+      // preset skills/ (repo-relative link to classic) installs as a real tree.
+      // Windows git with core.symlinks=false checks the link out as a text
+      // file whose contents are the relative target — treat that as a dir too.
+      const followDir = resolveLinkedDir(s, entry)
+      if (followDir) {
         fs.mkdirSync(d, { recursive: true })
-        walk(s, d)
+        walk(followDir, d)
       } else {
         if (!fs.existsSync(d)) {
           fs.copyFileSync(s, d)
@@ -201,6 +231,18 @@ function copyTree(src, dst, log) {
   return { added, updated, same, targetOnly }
 }
 
+/** npm pack drops git symlink entries (dsh/preset/skills → classic).
+ *  If the installed default tree has no shelf, materialize from classic
+ *  into DSH_HOME only — never mutate the packed source tree. */
+function ensureDefaultSkillsShelf(dst, log) {
+  const destSkills = path.join(dst, 'skills')
+  const classicSkills = path.join(PKG_ROOT, 'dsh/preset-classic/skills')
+  if (fs.existsSync(path.join(destSkills, 'handoff', 'SKILL.md'))) return null
+  if (!fs.existsSync(path.join(classicSkills, 'handoff', 'SKILL.md'))) return null
+  if (log && log.warn) log.warn('packed preset has no skills shelf; materializing from kixparadigm-classic')
+  return copyTree(classicSkills, destSkills, log)
+}
+
 function installPreset(log) {
   const results = []
   for (const variant of PRESET_VARIANTS) {
@@ -211,6 +253,13 @@ function installPreset(log) {
     }
     log.step(`安装 preset ${variant.id} → ${dst}`)
     const r = copyTree(src, dst, log)
+    if (variant.id === 'kixparadigm') {
+      const extra = ensureDefaultSkillsShelf(dst, log)
+      if (extra) {
+        r.added.push(...extra.added.map((p) => path.join('skills', p)))
+        r.updated.push(...extra.updated.map((p) => path.join('skills', p)))
+      }
+    }
     log.ok(`preset ${variant.id}：新增 ${r.added.length} / 更新 ${r.updated.length} / 相同 ${r.same.length}`)
     if (r.targetOnly.length) {
       log.warn(`目标侧独有 ${r.targetOnly.length} 个文件（保留未删，如需清理请人工确认）`)
@@ -492,4 +541,4 @@ function cli(argv) {
 
 if (require.main === module) cli(process.argv.slice(2))
 
-module.exports = { cli, dshHome, hasOtherPresetOwner, installPreset, installVisionBridge, uninstall, doctor, copyTree, mergeVisionBridgePatch, restoreEmptyPatchRoot }
+module.exports = { cli, dshHome, hasOtherPresetOwner, installPreset, installVisionBridge, uninstall, doctor, copyTree, ensureDefaultSkillsShelf, mergeVisionBridgePatch, restoreEmptyPatchRoot }
