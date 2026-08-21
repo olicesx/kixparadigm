@@ -165,6 +165,21 @@ await ok('parseSpec 占位不假值（未记录 ≠ mode 值）', (() => {
   return p && p.mode === undefined
 })())
 await ok('specComplete 不要求 mode（可选项，五字段为准）', I.specComplete(fullSpec))
+// 2026-08-21 contract 字段（行为契约：必须不变/改变/成立/歧义解读）
+await ok('renderSpec 含 contract 行为契约段', I.renderSpec({ ...fullSpec, contract: '必须不变：公开 API 形状；必须改变：生成器执行时机；必须成立：docstring 与实现一致；歧义：preserve API ≠ 保全 list 返回' }).includes('## 行为契约（必须不变'))
+await ok('renderSpec 无 contract → 占位可见（spec.md 留槽位）', (() => {
+  const m = I.renderSpec(fullSpec)
+  return m.includes('行为契约') && m.includes('（未记录——字面明确')
+})())
+await ok('parseSpec 回读 contract', (() => {
+  const p = I.parseSpec(I.renderSpec({ ...fullSpec, contract: '必须不变：公开签名；必须改变：无；必须成立：隐藏陷阱过；歧义：无' }))
+  return p && p.contract === '必须不变：公开签名；必须改变：无；必须成立：隐藏陷阱过；歧义：无'
+})())
+await ok('parseSpec 占位不假值（未记录 ≠ contract 值）', (() => {
+  const p = I.parseSpec(I.renderSpec(fullSpec))
+  return p && p.contract === undefined
+})())
+await ok('specComplete 不要求 contract（可选项，五字段为准）', I.specComplete({ ...fullSpec, contract: '' }))
 
 // ── 2. makeState：spec 文件持久 ────────────────────────────────────────────
 section('makeState spec 文件')
@@ -270,6 +285,27 @@ await ok('spec 工具缺字段 → ok=false', (async () => {
   const specTool = registeredTools.find((t) => t.name === 'kix_discipline_spec')
   const r = await specTool.execute({ goal: 'only' }, exec)
   return r.ok === false
+})())
+await ok('spec 工具可选 contract 落档并可回读', (async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kix-discipline-contract-'))
+  const specTool = registeredTools.find((t) => t.name === 'kix_discipline_spec')
+  const payload = { ...fullSpec, contract: '必须不变：公开签名；必须改变：生成器时机；必须成立：docstring；歧义：preserve API ≠ list 返回' }
+  const r = await specTool.execute(payload, { name: 'kix_discipline_spec', arguments: payload, token: 't', callId: 'contract', agent: { id: 'g-contract', session: { header: { cwd: root } } } })
+  const md = fs.readFileSync(path.join(root, 'kix-discipline', 'spec.md'), 'utf8')
+  const parsed = I.parseSpec(md)
+  const passed = r.ok === true && parsed && parsed.contract === payload.contract
+  fs.rmSync(root, { recursive: true, force: true })
+  return passed
+})())
+await ok('spec 工具无 contract 仍完整（不 deny）', (async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kix-discipline-nocontract-'))
+  const specTool = registeredTools.find((t) => t.name === 'kix_discipline_spec')
+  const r = await specTool.execute(fullSpec, { name: 'kix_discipline_spec', arguments: fullSpec, token: 't', callId: 'nocontract', agent: { id: 'g-nocontract', session: { header: { cwd: root } } } })
+  const md = fs.readFileSync(path.join(root, 'kix-discipline', 'spec.md'), 'utf8')
+  const parsed = I.parseSpec(md)
+  const passed = r.ok === true && parsed && parsed.contract === undefined
+  fs.rmSync(root, { recursive: true, force: true })
+  return passed
 })())
 
 // ── 4. post-execute：red remind 注入 + green 记录 ─────────────────────────

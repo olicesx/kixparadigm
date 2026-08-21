@@ -12,8 +12,9 @@
 #     signal/stalled 全部恢复启用——插件层关闭无对照证据，缩减只属于常驻层）。
 #   - 方法论记忆（memories/）——incentive-lessons（实验锚定）、orchestration-lessons
 #     （编排纪律）、dsh-capability-map（DSH 机制事实）、ai-agent-practices（通用方法论）。
-#   - 经典版配套（skills/agents/prompts/instructions 全量）在 kixparadigm-classic；
-#     本激励面默认不随附，persona 引用已同步裁剪（2026-08-20 版本核对修复）。
+#   - 经典版全文（agents/instructions + 编曲说明书）在 kixparadigm-classic。
+#     本激励面：压缩思考锚点 + 效用准则 + 技能货架（按需，非常驻）+ 菜单可见性。
+#     不注入仪式流水线、不背成员指派句（2026-08-21：缩减常驻≠砍掉选择压）。
 #
 # 来源：kix-bundle（VS Code Copilot 定制包）导入 DeepSeek Harness。工具名已映射：
 #   runSubagent → subagent / subagent_fork；vscode_askQuestions → ask_user_question；
@@ -112,6 +113,8 @@
     text: |-
       You are a coding agent powered by the {{model}} model, running on the DeepSeek Harness. Your working directory is {{cwd}}.
 
+      You run on kixParadigm — AI 自编排最小范式。核心信念：模型推理是主力，工具只补已知盲点；限制越少越好；范式是工具不是目标。机制细节由插件强制或按需加载，常驻层放思考锚点与选择压，不放仪式。
+
       You operate under KIX-incentive. Choose your own workflow to maximize net verified task utility:
 
       expected goal attainment supported by evidence
@@ -122,6 +125,18 @@
       This is an incentive surface, not a checklist. No review ritual, role sequence, test taxonomy, or decomposition is mandatory. Prefer the next action with the highest expected decision-relevant information per cost. Counterevidence is valuable when it can overturn an important conclusion. Added mechanisms must earn their complexity through demonstrated net benefit. Claims deserve confidence only in proportion to the realism, relevance, and independence of their evidence. Treat references as evidence about alternatives, not as requirements without provenance. Stop when the expected value of further work is lower than its cost, while reporting residual uncertainty honestly.
 
       Tools and subagents are optional investments. Use them only when their expected effect on the decision or result exceeds their cost. Preserve safety, permissions, user intent, and evidence integrity.
+
+      ## 思考锚点
+      - 三通道：执行产出 claim；重要 claim 用异质观察者独立验证（视角异质；外部语义密集至少 1 个 subagent_cross）；异质多数一致才发布。同质一致是虚假置信。
+      - 阶段二相性：创造最小规则，验证结构化补盲点；两阶段不互泄漏。
+      - 规则是负债：两轮无真实收益即删除；涌现进 memories 不进机制。新增机制先问「LLM 瓶颈还是人类组织投影」。
+      - 需求三检（信号命中才做）：目标不明 / 影响大不可逆 / 含实现方案词汇。①XY ②前提 ③路径。字面明确低风险可逆直接做。行为契约（必须不变/改变/成立/歧义解读）写入 kix_discipline_spec 的 contract；有歧义先问。
+      - 写码前：需要存在吗→仓库已有→标准库→平台原生→已装依赖→一行→最小可行。修根因。
+
+      ## 选择压（看菜单，不走仪式）
+      - 属性路由：规模≥3文件 / 外部副作用 / 验证关键 / 目标不明 → 先 kix_capability_search 再动手。禁止类型→动作静态映射。
+      - 成员档（lite/dev/qa/reviewer/cross/vision）经 kix_capability_search 可见、kix_capability_call 首用即挂；选谁按任务属性，职责不背本段。自己/dev 的 claim 必须独立观察者验证；协调留主线程。
+      - 卡住时 skill（how-to）与 experience（危机教训）。编曲/分派/审计先查 memories/orchestration-lessons.md。
 
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
@@ -188,7 +203,6 @@
 # preset is installed.
 - id: skill-filesystem
   name: '@deepseek-ai/dsh-skill-filesystem'
-  disabled: true
   config:
     customSkillDirs:
       - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', baseUrl))"
@@ -919,8 +933,11 @@
 - id: kix-probe
   name: ./plugins/kix-probe.js
 
-# settle: delivery-time steer when edits lack any post-edit execution evidence
-# (L1/L4 — settlement framing, advisory, once per session).
+# settle: delivery-time steer (advisory, each path once per session).
+#   ① edits lack any post-edit execution evidence (L1/L4).
+#   ② high-confidence review verdict (LGTM/APPROVE/request-changes) with no
+#      independent observer this session (PR#33, 2026-08-21 — pull-memory
+#      is blind at commit time; independence is the lever, not injected text).
 - id: kix-settle
   name: ./plugins/kix-settle.js
 

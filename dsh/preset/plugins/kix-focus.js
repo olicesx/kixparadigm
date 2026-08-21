@@ -111,6 +111,16 @@ const RESIDENT_TOOLS = new Set([
 // ── 按需披露类别（kix_capability_search 的返回分组）───────────────────────
 const CAPABILITY_GROUPS = [
   {
+    // 2026-08-21：目录自称完整能力面，却只列被裁工具——skill/experience 常驻
+    // 被 isOnDemand 滤掉，slash 命令根本不是 tool。模型搜菜单看不见货架。
+    // 本组 always-on（空查询也返回），hint 写清直呼 vs 激活 vs UI 命令。
+    // 不替模型选人、不强制 /kixpower。死亡条件：两轮真实任务零调用 → 收回本组。
+    id: 'kix-surface',
+    title: '完整能力面（skill / 经验 / 编曲成员 / 流程命令）',
+    hint: '思考层是激励面，能力自选。skill（how-to，常驻直呼）与 experience（危机教训，常驻直呼）不要走 capability_call。编曲成员 lite/dev/qa/reviewer/cross/vision 用 kix_capability_call 首用即挂（见 subagent-tiers 组）。用户斜杠命令 /kixpower-new|/kixpower-import|/kixpower-continue|/kixpower-review|/kixpower 由 UI 注入，模型不必背流程。',
+    tools: ['skill', 'experience'],
+  },
+  {
     id: 'github',
     title: 'GitHub MCP（Issue/PR/仓库/审查）',
     hint: '用 kix_capability_call 代理调用 mcp__github__* 工具',
@@ -663,12 +673,12 @@ module.exports = {
     // ── Phase 2：kix_capability_search（发现入口，常驻）──────────────────
     const disposeSearch = tools.register({
       name: 'kix_capability_search',
-      description: '查询 kix 按需能力目录（渐进披露）：返回被裁剪工具的分组元数据（类别/用途/示例工具名），不含完整 schema。需要某个不在常驻集的工具（MCP/GitHub/Playwright/编排/后台任务等）时先查这个。',
+      description: '查询完整能力目录（渐进披露）：返回分组元数据（类别/用途/示例工具名），不含完整 schema。含常驻货架（skill/experience）与按需工具（MCP/成员档/编排）。任务属性命中或卡住时先查这个，再动手。',
       parameters: {
         // tools.register 原样投影 parameters：必须含顶层 type: 'object'
         type: 'object',
         properties: {
-          query: { type: 'string', description: '搜索词（如 github/playwright/workflow/job）；空 = 返回全部类别' },
+          query: { type: 'string', description: '搜索词（如 skill/experience/dev/qa/github/workflow）；空 = 返回全部类别含完整能力面' },
         },
       },
       output: {

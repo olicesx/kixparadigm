@@ -830,8 +830,11 @@
 - id: kix-probe
   name: ./plugins/kix-probe.js
 
-# settle: delivery-time steer when edits lack any post-edit execution evidence
-# (L1/L4 — settlement framing, advisory, once per session).
+# settle: delivery-time steer (advisory, each path once per session).
+#   ① edits lack any post-edit execution evidence (L1/L4).
+#   ② high-confidence review verdict (LGTM/APPROVE/request-changes) with no
+#      independent observer this session (PR#33, 2026-08-21 — pull-memory
+#      is blind at commit time; independence is the lever, not injected text).
 - id: kix-settle
   name: ./plugins/kix-settle.js
 
