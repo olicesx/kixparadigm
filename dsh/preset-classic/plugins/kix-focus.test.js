@@ -173,10 +173,12 @@ const sampleSchemas = [
   { name: 'workflow', description: 'Run workflow' },
   { name: 'create_goal', description: 'Create goal' },
   { name: 'job_output', description: 'Job output' },
+  { name: 'skill', description: 'Load a skill' },
+  { name: 'experience', description: 'Crisis-indexed lessons' },
 ]
 await ok('空查询返回全部类别', (() => {
   const r = I.searchCapabilities(sampleSchemas, '')
-  return r.some((g) => g.id === 'github') && r.some((g) => g.id === 'orchestration') && r.some((g) => g.id === 'jobs')
+  return r.some((g) => g.id === 'github') && r.some((g) => g.id === 'orchestration') && r.some((g) => g.id === 'jobs') && r.some((g) => g.id === 'kix-surface')
 })())
 await ok('查询 github 只返回 github 组', (() => {
   const r = I.searchCapabilities(sampleSchemas, 'github')
@@ -816,6 +818,21 @@ await ok('ACTIVATABLE_TOOLS.browser 存在且 pkgPath 指向可装载的本地�
 await ok('CAPABILITY_GROUPS 含 browser-native 发现组（未挂载也可见 hint）', (async () => {
   const g = I.CAPABILITY_GROUPS.find((x) => x.id === 'browser-native')
   return !!g && g.tools.includes('browser') && g.hint.includes('首次使用自动激活')
+})())
+await ok('CAPABILITY_GROUPS 含 kix-surface 完整能力面（常驻货架+slash hint）', (() => {
+  const g = I.CAPABILITY_GROUPS.find((x) => x.id === 'kix-surface')
+  return !!g && g.tools.includes('skill') && g.tools.includes('experience')
+    && g.hint.includes('常驻直呼') && g.hint.includes('/kixpower')
+    && !g.hint.includes('先 kix_tool_activate')
+})())
+await ok('空查询 kix-surface 列出 skill/experience 且不经 capability_call', (() => {
+  const r = I.searchCapabilities(sampleSchemas, '')
+  const g = r.find((x) => x.id === 'kix-surface')
+  return !!g && g.exampleTools.includes('skill') && g.exampleTools.includes('experience')
+})())
+await ok('query=skill 命中 kix-surface', (() => {
+  const r = I.searchCapabilities(sampleSchemas, 'skill')
+  return r.some((g) => g.id === 'kix-surface')
 })())
 await ok('激活 browser → pkgPath 本地 require 走 ctx.plugin 挂载', (async () => {
   pluginCalls.length = 0
