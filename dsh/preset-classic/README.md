@@ -72,7 +72,7 @@ kixparadigm/                      ← 本 preset
 
 ## 模式选择（v1.3.0）
 
-- 本目录 = `kixparadigm-classic`（锚点式，成本约为默认版两倍）。
-- `../preset/` = `kixparadigm`（默认，激励面：效用准则认知层 + probe/settle/experience 三件工具，同等质量成本约½，且具备环境掩盖型隐含契约的检出能力）。
+- 本目录 = `kixparadigm-classic`（思考锚点全文 + kixpower 编曲说明书 + agents/instructions）。复杂协作 / 研究范式用这个。
+- `../preset/` = `kixparadigm`（激励面：压缩思考锚点 + 效用准则 + 按需技能货架；无仪式流水线、无 agents 目录）。缩减的是常驻仪式，不是核心哲学。环境掩盖型隐含契约的检出靠 probe/settle。
 - `../preset-null/` = `kixparadigm-null`（消融对照，勿日常用）。
 - **宿主缺陷操作纪律**：改插件必须换 preset 名或重启宿主（快照缓存）；post-execute handler 必须透传链返回值。

@@ -104,6 +104,7 @@ console.log('# S3 spec-draft')
   ok(contextsOf(d).length === 1, '源编辑触发草稿注入')
   ok(textOf(contextsOf(d)).includes('goal:'), '草稿含 goal 字段')
   ok(textOf(contextsOf(d)).includes('kix_discipline_spec'), '草稿指向落档工具')
+  ok(textOf(contextsOf(d)).includes('contract:'), '草稿含 contract 槽（与 kix_discipline_spec 双向引用）')
   // 只一次
   await runPre(ctx, agent, 'edit', { file_path: 'C:/x/src/app/other.go' })
   const d2 = await runPost(ctx, agent, 'edit', { file_path: 'C:/x/src/app/other.go' }, res)

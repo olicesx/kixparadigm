@@ -29,8 +29,11 @@
 //     阻断层，ask 的误报成本 = 一次可忽略的确认问题。
 //   - kix_discipline_spec 工具：模型记录需求三检契约（goal/xy/assumptions/path/
 //     acceptance 五字段，对应 kix 三检①XY ②前提 ③路径 + 目标 + 验收；可选
-//     mode 字段 = 编曲留痕：成员组合 + 一句理由，2026-08-17），写入
+//     mode 字段 = 编曲留痕：成员组合 + 一句理由，2026-08-17；可选 contract
+//     字段 = 行为契约：必须不变/必须改变/必须成立/契约歧义与解读假设，
+//     2026-08-21，EXP2 第一杠杆接线——S3 草稿已有该行，落档此前丢弃），写入
 //     工作区 kix-discipline/spec.md + 会话状态（spec 契约跨会话可查）。
+//     contract 不进完整性判定、不做内容质量解析、缺省不 deny。
 //   - /kix-discipline 命令：status / report / on|off（durable 开关）。
 //
 // 边界诚实声明（P0）：
@@ -193,6 +196,9 @@ function renderSpec(spec) {
     '## 执行模式（编曲留痕：成员组合 + 一句理由）',
     s.mode && s.mode.trim().length > 0 ? s.mode : '（未记录——solo 或未触发组合）',
     '',
+    '## 行为契约（必须不变 / 必须改变 / 必须成立 / 歧义解读）',
+    s.contract && s.contract.trim().length > 0 ? s.contract : '（未记录——字面明确或未显式选定解读）',
+    '',
   ].join('\n')
 }
 
@@ -223,7 +229,9 @@ function parseSpec(text) {
   // mode 为空时 renderSpec 写占位文案（spec.md 留可见槽位）；回读时把占位
   // 映射回 undefined，防止「未记录」假值混进契约（2026-08-17）。
   const MODE_PLACEHOLDER = '（未记录——solo 或未触发组合）'
+  const CONTRACT_PLACEHOLDER = '（未记录——字面明确或未显式选定解读）'
   const modeVal = grab('执行模式（编曲留痕：成员组合 + 一句理由）')
+  const contractVal = grab('行为契约（必须不变 / 必须改变 / 必须成立 / 歧义解读）')
   return {
     recordedAt: undefined,
     goal: grab('Goal（要解决的根本问题）'),
@@ -232,6 +240,7 @@ function parseSpec(text) {
     path: grab('更优路径（需求三检③：有更高维度解法吗？）'),
     acceptance: grab('验收标准（可验证的完成定义）'),
     mode: modeVal === MODE_PLACEHOLDER ? undefined : modeVal,
+    contract: contractVal === CONTRACT_PLACEHOLDER ? undefined : contractVal,
   }
 }
 
@@ -372,7 +381,7 @@ module.exports = {
     // ── 模型工具：记录需求三检契约 ────────────────────────────────────────
     const disposeSpecTool = tools.register({
       name: 'kix_discipline_spec',
-      description: '记录需求三检契约（XY Problem / 前提假设 / 更优路径）到工作区 kix-discipline/spec.md。需求三检后、编辑前调用；跨会话复用。mode（可选）= 编曲留痕：成员组合+一句理由，如 "dev+qa：跨模块改动需独立验收" / "solo：字面明确单文件修复"。',
+      description: '记录需求三检契约（XY Problem / 前提假设 / 更优路径）到工作区 kix-discipline/spec.md。需求三检后、编辑前调用；跨会话复用。mode（可选）= 编曲留痕：成员组合+一句理由，如 "dev+qa：跨模块改动需独立验收" / "solo：字面明确单文件修复"。contract（可选）= 行为契约：必须不变/必须改变/必须成立/契约歧义与解读假设（有歧义先问，无法问则显式声明解读）。',
       parameters: {
         // tools.register 原样投影 parameters：必须含顶层 type: 'object'
         type: 'object',
@@ -383,6 +392,7 @@ module.exports = {
           path: { type: 'string', description: '更优路径（需求三检③）：选定的方案与理由' },
           acceptance: { type: 'string', description: '验收标准：可验证的完成定义（测试/gate 判据）' },
           mode: { type: 'string', description: '执行模式（编曲留痕，可选）：成员组合 + 一句理由——本单用了谁（solo/观察者/dev/qa/reviewer 组合）、为什么。命中路由信号组队时随契约一并记录' },
+          contract: { type: 'string', description: '行为契约（可选）：必须不变 / 必须改变 / 必须成立 / 契约歧义与解读假设。有歧义先问，无法问则显式声明解读。字面明确低风险可逆可空。不进完整性判定。' },
         },
         required: ['goal', 'xy', 'assumptions', 'path', 'acceptance'],
       },
@@ -401,6 +411,8 @@ module.exports = {
           acceptance: String((args && args.acceptance) || '').trim(),
           // mode 可选（编曲留痕）：空 = solo/未组合，不进完整性判定的必填集
           mode: String((args && args.mode) || '').trim(),
+          // contract 可选（行为契约）：空 = 字面明确或未显式选定解读，不进完整性判定
+          contract: String((args && args.contract) || '').trim(),
         }
         const complete = specComplete(spec)
         if (!complete) {

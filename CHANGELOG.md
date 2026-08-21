@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+## v1.3.6（2026-08-21）激励面选择压 + settle v2 + 可选 contract
+
+- **kix-settle v2（高置信提交时刻结算）**：出生证明 PR#33 审查实验（merry，glm-5.2）。4 个 fresh 评审人全部 request-changes，唯一 LGTM 来自写过结论的主代理；拉取式记忆在发布 review 前未被查询。现有 kix-settle 只盯「有编辑且无执行」，审查类无编辑交付打不中。机制：无工作区编辑 + 终稿像审查结论（LGTM / APPROVE / request-changes / 可以合并）+ 本会话未派独立观察者 → advisory steer（每会话一次）。清账 = 派过 `subagent` / `subagent_cross` / `subagent_reviewer`（含 `kix_capability_call` 代理）。不阻断、不规定验证方式。进行中/软赞不触发。明确不升格：契约长度假说已被本实验处决；注入裁剪不进机制。契约二分 / 严重度校准进 `incentive-lessons` ⑯。default / null byte-identical；classic 仍无 settle（设计如此）。
+- **可选 `contract` 槽接到 `kix_discipline_spec`（EXP2 第一杠杆接线）**：S3 草稿已有「必须不变 / 必须改变 / 必须成立 / 契约歧义与解读假设」，落档工具此前丢弃该行。现与 `mode` 同级可选：写入 `kix-discipline/spec.md`、round-trip、不进完整性判定、不做内容质量解析、缺省不 deny。四副本 byte-identical。
+- **激励面恢复选择压（思考层仍是激励面，能力自选）**：活 persona = 压缩思考锚点 + 效用准则 + 属性路由。`skill-filesystem` 启用；默认档 `skills/` 相对链接 classic 货架（仓库单源）。`kix_capability_search` 增 `kix-surface` 组（空查询第一组：skill/experience 常驻直呼；成员档走 capability_call；`/kixpower-*` 写在 hint）。不恢复仪式流水线、不搬 `agents/*.md`、不改默认名、null 消融面保持最小、不打开 kix-budget。死亡条件：两轮真实任务 skill/`kix-surface` 零调用 → 收回货架或该组。
+- **安装面**：`npm pack` 丢弃 git symlink，Windows `core.symlinks=false` 把链接检出成文本指针。安装器跟随目录链接 / git 文本指针，并在打包后默认档无货架时从 classic 物化到 DSH_HOME（不改包内源树）。zh/en `install-lib.js` byte-identical。
+- **picker / README**：默认不再写「质量持平经典版 / 无常驻三通道 / 无 skills」。选择器是任务属性，不是「半价 = 没有脑子」。
+- **局限**：宿主插件快照按名缓存，磁盘改完须重启才加载；启发式只辨大效应（n=1 PR）。
+
 ## v1.3.5（2026-08-20）web_search 恢复常驻 + 工具描述压缩
 
 - **web_search 三分法回滚（默认 preset）**：曾尝试把 `web_search` 从常驻挪到 `ACTIVATABLE_TOOLS` 渐进披露。评估否决——低频工具断 KV 缓存一次的成本（cacheRead:input 实测 127:1，长会话全价重读）远超省下的 ~660 tok/步常驻税；且 `tool-web` 是 preset 行注册的 scope-local 工具，`restrict` deny 裁不到（旧测试把 web_search 塞进全局视图断言 deny 含它 = 假绿）。本版：`agent.cordis.yml` 的 `tool-web` 恢复常驻；`ACTIVATABLE_TOOLS.web_search` 删除；`kix-focus` deny 清单不再假装能裁它；capability 目录 search 组改回「常驻可直接调用」。

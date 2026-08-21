@@ -24,7 +24,9 @@ npx kixparadigm install  # no global install
 npm i -g kixparadigm-en  # English classic mode kixparadigm-classic-en (separate package)
 ```
 
-> The v1.3.0 tarball already shipped classic sources, but the installer copied only the default preset. **From v1.3.4** `npm i -g kixparadigm` installs both variants under `~/.dsh/.agent-presets/`. The ablation control `kixparadigm-null` is not installed by npm.
+> From v1.3.4 `npm i -g kixparadigm` installs both variants under `~/.dsh/.agent-presets/`. The ablation control `kixparadigm-null` is not installed by npm.
+>
+> **Pick the mode first.** Default `kixparadigm` is the incentive surface (compressed thinking anchors + utility criteria + on-demand skills; no ritual pipeline, no agents tree). `kixparadigm-classic` ships the full orchestration write-up (full anchors + kixpower manuals + agents/instructions). Use classic for complex collaboration / studying the paradigm; default no longer strips the core philosophy. The selector is task attributes, not "half-cost = no brain".
 
 Custom DSH dir (`DSH_HOME`), `--preset-only`, ops commands (`doctor` / `uninstall` / `copilot`): see [dsh/README-DSH.md](dsh/README-DSH.md).
 
@@ -41,10 +43,12 @@ See [INSTALL.md](INSTALL.md). Start with `/kixpower-new`.
 
 ## What this is: two layers + plugin floor
 
+The table is the paradigm's capability surface. **The default incentive preset injects compressed thinking anchors + utility criteria**; orchestration manuals and agent templates live in `kixparadigm-classic`. The skills shelf is on-demand in both.
+
 | Layer | Component | One-liner |
 |-------|-----------|-----------|
-| **Cognition** (how to think) | kixparadigm persona | Three-channel cross-validation, phase duality, rules-are-debt, requirement triple-check (no user-pleasing), pre-code decision chain |
-| **Execution** (how to execute) | kixpower | Orchestration model: lead model freely picks members (dev/qa/reviewer) + Sprint flow, DAG topology, 4-layer loop, four invariant floors |
+| **Cognition** (how to think) | default: compressed anchors + incentive; classic: full text | Three-channel cross-validation, phase duality, rules-are-debt, requirement triple-check (no user-pleasing), pre-code decision chain |
+| **Execution** (how to execute) | kixpower (manuals with classic; member tiers activatable in both) | Orchestration model: lead model freely picks members (dev/qa/reviewer) + Sprint flow, DAG topology, 4-layer loop, four invariant floors |
 | Mechanical guards | `kix-guards` · `kix-consistency` | Commit budget, feature branch, force push, dangerous SQL, control-plane protection (hard deny only for irreversible damage); preset consistency write-time guard (prevents zh/en drift) |
 | Handoff discipline | `kix-orchestration` · `kix-discipline` | Subagent handoff evidence-chain checks; spec contract gate + verification gate |
 | Focus | `kix-focus` | Tool surface 85→18 resident cut + on-demand catalog & proxied execution — progressive disclosure at runtime |
@@ -52,7 +56,7 @@ See [INSTALL.md](INSTALL.md). Start with `/kixpower-new`.
 | Cost & routing | `kix-cost` · `kix-route` | Subagent thinking-effort normalization; sentinel model names → runtime-available routes |
 | Top-up | `kix-commands` · `dsh-vision-bridge` · `kix-stalled` (opt-in) | `/kixpower-*` native commands; vision for blind lead models; stalled-Sprint detection |
 
-The preset includes persona, skills, team roles, native commands, and methodology memories; directories are authoritative. Per-plugin mechanics and evolution: [DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md), [CHANGELOG.md](CHANGELOG.md).
+The default incentive preset includes compressed thinking anchors + utility criteria + on-demand skills + probe/settle/experience. Classic additionally ships full orchestration manuals, agent templates, and instructions. Directories are authoritative. Per-plugin mechanics and evolution: [DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md), [CHANGELOG.md](CHANGELOG.md).
 
 ## Repo layout
 

@@ -11,7 +11,7 @@ const lib = require('../preset-classic-en/plugins/consistency-lib.cjs')
 
 const ROOT = path.join(__dirname, '..')
 
-const { failures, notes } = lib.runAllEn(ROOT, '1.3.5')
+const { failures, notes } = lib.runAllEn(ROOT, '1.3.6')
 for (const n of notes) console.log('  ✔ ' + n)
 
 if (failures.length) {

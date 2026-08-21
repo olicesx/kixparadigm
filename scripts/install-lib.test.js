@@ -5,7 +5,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
-const { hasOtherPresetOwner, installPreset, installVisionBridge, mergeVisionBridgePatch, uninstall } = require('./install-lib.js')
+const { hasOtherPresetOwner, installPreset, installVisionBridge, mergeVisionBridgePatch, uninstall, copyTree, ensureDefaultSkillsShelf } = require('./install-lib.js')
 
 const DEFAULT_PATCH = [
   '# Your patch layer for this dsh profile, applied after every bundle layer:',
@@ -199,6 +199,40 @@ test('installPreset installs every declared variant including kixparadigm-classi
   }
   const classicName = fs.readFileSync(path.join(home, '.agent-presets', 'kixparadigm-classic', 'preset.yml'), 'utf8')
   assert.match(classicName, /^name:\s*kixparadigm-classic\s*$/m)
+  const installedSkills = path.join(home, '.agent-presets', 'kixparadigm', 'skills', 'handoff', 'SKILL.md')
+  assert.equal(fs.existsSync(installedSkills), true, 'default variant skills/handoff installed')
+  assert.equal(fs.lstatSync(path.join(home, '.agent-presets', 'kixparadigm', 'skills')).isSymbolicLink(), false, 'installer materializes skills as a real tree')
+})
+
+test('ensureDefaultSkillsShelf materializes classic shelf when dest has none', () => {
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-shelf-'))
+  try {
+    assert.equal(fs.existsSync(path.join(dest, 'skills', 'handoff', 'SKILL.md')), false)
+    const extra = ensureDefaultSkillsShelf(dest, silentLog)
+    assert.ok(extra, 'fallback copied files')
+    assert.equal(fs.existsSync(path.join(dest, 'skills', 'handoff', 'SKILL.md')), true)
+    assert.equal(ensureDefaultSkillsShelf(dest, silentLog), null, 'second call is a no-op')
+  } finally {
+    fs.rmSync(dest, { recursive: true, force: true })
+  }
+})
+
+test('copyTree materializes a git-style symlink file (Windows core.symlinks=false)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-gitlink-'))
+  try {
+    const src = path.join(root, 'src')
+    const dst = path.join(root, 'dst')
+    const classic = path.join(src, 'classic', 'skills', 'handoff')
+    fs.mkdirSync(classic, { recursive: true })
+    fs.writeFileSync(path.join(classic, 'SKILL.md'), 'name: handoff\n')
+    fs.mkdirSync(path.join(src, 'preset'), { recursive: true })
+    fs.writeFileSync(path.join(src, 'preset', 'skills'), '../classic/skills')
+    copyTree(path.join(src, 'preset'), dst, silentLog)
+    assert.equal(fs.lstatSync(path.join(dst, 'skills')).isDirectory(), true)
+    assert.equal(fs.readFileSync(path.join(dst, 'skills', 'handoff', 'SKILL.md'), 'utf8'), 'name: handoff\n')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('uninstall removes every variant directory of the zh package', (t) => {
