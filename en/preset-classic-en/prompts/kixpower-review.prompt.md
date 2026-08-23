@@ -59,9 +59,10 @@ reviewer: kixpower-orchestrator
 不改用户当前工作树。在临时 worktree 检出 PR head，读取完整函数体并运行仓库可用的最小 gate：
 
 1. `git fetch origin pull/<N>/head:refs/kixpower/review/<N>`，然后 `git worktree add <TEMP>/kixpower-pr-<N> refs/kixpower/review/<N>`。
-2. 按仓库 manifest（Cargo.toml / package.json / go.mod 等）选择仓库原生 gate，并合并为一次终端调用：Go=`go test ./...` + `go vet ./...`；Rust=`cargo test --workspace` + `cargo clippy --workspace --all-targets -- -D warnings`；Node=仓库 package scripts 中已有的 test/lint/typecheck。禁止凭技术栈猜不存在的命令。
-3. 记录命令、exit code 与关键失败摘要。环境依赖缺失时标 `not-run: <阻塞原因>`，不得声称已验证。
-4. 审查完成后仅清理本流程创建且保持干净的临时 worktree；用户工作树和已有 worktree 一律不动。WSL 仓库必须用 WSL git 执行 worktree 操作，禁止 Windows git 操作 UNC 路径。
+2. 先读取当前 CI workflow，再对照 manifest（Cargo.toml / package.json / go.mod 等）与仓库脚本推导本地 gate；CI 是 build tags、features、target、文件模式/生成物检查和环境前提的当前事实源。无 CI 或不可读取时，才从 manifest/scripts 选择仓库原生命令。禁止凭技术栈猜不存在的命令。
+3. 合并可本地复现的 gate 为一次终端调用；需容器、特权 capability、外部服务或平台专属环境的步骤不得悄悄删掉，逐项记为 `not-run: <步骤 + 阻塞原因>`。默认命令只作无项目定义时的候选，不得覆盖 CI 的参数与前提。
+4. 记录命令、exit code、关键失败摘要与未复现的 CI 步骤；不得把局部门禁通过表述成完整 CI 已验证。
+5. 审查完成后仅清理本流程创建且保持干净的临时 worktree；用户工作树和已有 worktree 一律不动。WSL 仓库必须用 WSL git 执行 worktree 操作，禁止 Windows git 操作 UNC 路径。
 
 若 fork 权限、网络或平台限制导致无法检出，继续静态审查，但在结论中显式声明 deterministic gate 未执行及未审阅边界。
 
@@ -74,12 +75,12 @@ reviewer: kixpower-orchestrator
 
 实践项只影响内部审查过程，不得出现在公开 review body。
 
-### 阶段 2：分层审查（orchestrator 判断 + `subagent_lite` 并行机械取证；v5.8 成本分层）
+### 阶段 2：分层审查（orchestrator 判断 + `subagent_lite` 机械取证 + 条件式独立 discovery；v5.9）
 
 基于 diff + worktree 中完整源码按 7 个维度逐项审查，每个维度产出 verdict + 评论清单。**禁止修改代码**，只生成评论。
 
 **取证分工（v5.8，日志实测驱动：大 PR 逐文件内联读取 + high effort 思考，58 步烧 156k 思考仍未见底）**：
-- **判断留在 orchestrator**（不派子代理）：维度 verdict、严重级别、契约对照、跨文件综合推理、反方辩护；
+- **判断留在 orchestrator**（不派子代理）：维度 verdict、严重级别、契约对照、跨文件综合推理、反方辩护；阶段 2.2 的 scoped discovery observer 是唯一例外，其输出仅为 candidate，必须回流后由 orchestrator 复核；
 - **机械取证派 `subagent_lite`**（并行 ≤2；只读 read/grep/glob/pwsh 四工具 + 8K 帽 + 思考 ≈0，每步固定开销 34.3k → ~5.9k，↓83%）：通读 diff 文件、提取目标文件既有代码基线（维度 4 风格基线）、grep 符号定位、枚举测试覆盖与边界（维度 5）、逐文件核对清单；
 - **判定标准**：只读/检索/核对/枚举 → lite；需判断/权衡/综合 → orchestrator。**禁止 orchestrator 逐文件通读 diff**（机械步骤全部走 lite）；
 - **证据门禁不变**：lite 回流的是「取证素材」，orchestrator 仍须按下方证据门禁核验（引用 `文件:行号`、权威源），不得把 lite 输出直接当结论；lite 只读不写，不得用它执行任何有副作用的步骤。
@@ -104,7 +105,7 @@ reviewer: kixpower-orchestrator
 
 **严重度处置纪律**：🔴 必须修或**显式询问**是否降级——禁止自行判定"罕见/ROI 低"静默跳过。觉得严重度过高同样要明说并问。严重度处置权在人，不在 reviewer 默认。
 
-**blocking/major 定性门禁**：必须同时有行为证据、被违反的适用项目契约 / 威胁模型 / 设计意图，以及实际影响。契约证据可来自仓库与 PR 文档、公开 API / 类型 / schema、代码注释、既有测试、调用方依赖的稳定行为或可验证的安全不变量；没有独立契约文档不等于没有契约。只证明行为真实或影响严重不够；契约不明，或任一独立 reviewer 基于代码 / 文档提出尚未解决的 intentional / explicit opt-in 反证时，只能降为需作者确认的 comment 级疑问。
+**blocking/major 定性门禁**：必须同时有行为证据、被违反的适用项目契约 / 威胁模型 / 设计意图，以及实际影响。契约证据可来自仓库与 PR 文档、公开 API / 类型 / schema、代码注释、既有测试、调用方依赖的稳定行为或可验证的安全不变量；没有独立契约文档不等于没有契约。只证明行为真实或影响严重不够；契约不明，或任一独立 reviewer 基于代码 / 文档提出尚未解决的 intentional / explicit opt-in 反证时，只能降为需作者确认的 comment 级疑问。多个同源模型观察者一致只算视角复核，不增加模型独立性；仅有一致意见而没有测试、编译、源码/契约、官方文档或 sandbox 实测等可复算证据时，同样不得发布 major+。若影响只能由专家推理或生产环境证据判断，必须向用户/作者显式说明证据边界并经确认后方可维持定级。
 
 **架构级感知（维度 6 细则，范式适用性）**：范式是工具不是目标（Brooks 1986：范式降偶然复杂度，不降本质复杂度）。先读目标模块既有结构，再判新代码**顺应**还是**背离**：
 - **范式适用性三问**：① 本质复杂度（问题固有复杂度，由问题决定——表面 CRUD 常藏领域复杂度，需读领域逻辑再判）；② 范式前提（规模/变更频率/团队/领域满足吗）；③ 净收益（范式降的偶然复杂度 > 引入的吗）
@@ -155,7 +156,60 @@ reviewer: kixpower-orchestrator
 
 **关键原则**：这些是盲区**方向**，不是检查**清单**。补足工具是赋能（给独立视角/工具锚点），不是约束（规定怎么想）。**模型的推理能力是主力，图谱只补足已知盲区**——发现图谱之外的盲点同样有价值。
 
-##### 反方辩护测试（v5.4，发布 gate 前对所有 major+ finding + 所有"建议"类 finding 必跑）
+### 阶段 2.2：独立简约与语言原生语义观察（candidate scoped trial）
+
+**定位**：这是一个 discovery observer，只提供独立搜索方向；独立上下文不等于跨厂商/权重独立。恰好派 1 个综合观察者，不按 KISS/DRY/SOLID/YAGNI/LoD 拆五个角色，也不替代阶段 2.5 的 claim verification。
+
+**触发条件**（任一成立才启用）：
+- 用户明确点名 KISS、DRY、SOLID、YAGNI、LoD/迪米特、简约性、重复治理或目标语言原生实践；
+- PR 主体是跨模块重构/架构调整，或新增/移除的抽象、helper、interface 涉及跨模块结构或语义面变化，或出现跨模块同构 guard、映射、错误处理等重复结构；
+- 语义面明显超出主线程可完整覆盖（万行级 diff 只是信号，行数本身不自动触发）。
+
+**不触发**：纯格式/生成物/vendor 变更一律不触发；其余不触发条件优先于第 2/3 条自动触发，但不覆盖用户明确点名。用户未明确点名时，单模块且无跨模块语义面的局部小改，或只有命名偏好而无结构/语义面，均不触发。触发与不触发都在草稿记录一句理由；不触发不算 trial pass/fail。观察者不可用时记 `not-run`，不得用五个普通观察者补位。
+
+**时序与独立性**：
+1. 触发时在阶段 2 开始与 orchestrator/机械取证并行派发；orchestrator 派发后立即冻结自己的 `owner_candidate_ids`，回流前不得增改。
+2. 观察者只接收 worktree、diff 范围、目标语言与入口符号；不得读取 review 草稿、历史 review/known list、其他观察者结论或 orchestrator 推理。
+3. 回流后由 orchestrator 逐条读源码复核并过既有证据门禁；原则名、调用链长度或“看起来不优雅”都不能单独构成 finding。
+
+**DSH 调用模板**：
+
+```
+工具: subagent
+description: "独立简约与语言语义观察"
+run_in_background: true
+prompt: |
+  [SCOPE]
+  PR #<N>
+  review_mode: perspective-discovery
+  review_worktree: <path>
+  review_head_sha: <PR head 的完整 40 位 SHA>
+  target_language: <从 manifest/diff 识别>
+  changed_paths_or_symbols: <只给范围/入口，不给主线程结论>
+
+  [PERSPECTIVE]
+  从目标语言原生语义/idiom、偶然复杂度、重复变化与耦合边界独立审查。
+  KISS/DRY/SOLID/YAGNI/LoD 只作搜索镜头，不把偏离原则本身视为问题。
+
+  [EVIDENCE-SURFACE]
+  独立读取 diff、完整实现、调用方/被调用方、相关测试与项目契约；不得读取 review 草稿、历史评论、known list 或其他 reviewer 结论。
+
+  [ENTRY-POINT]
+  从 changed_paths_or_symbols 开始，按证据需要扩展到直接依赖边界。
+
+  [CONSTRAINTS]
+  - 目标语言原生语义、项目契约与安全边界优先于跨语言原则。
+  - KISS/YAGNI 不得用于削弱安全、校验、错误处理或必要领域复杂度。
+  - DRY 必须证明重复内容存在共同变化理由；相似文本本身不是抽象理由。
+  - SOLID/LoD 必须说明适用前提及当前耦合造成的可验证影响；目标语言类型、分派、错误、并发、所有权与资源生命周期语义优先。
+  - 不给严重级别或修复方案；证据不足进入 context_insufficient，不凑 finding。
+  - 只读，不修改文件，不发布评论；不得再派子 agent。
+  - 只输出 YAML：candidates: [{id, lenses, mechanism, evidence: [{path, line, fact}], applicability, impact, counterevidence}]; context_insufficient: [{question, searched}]
+```
+
+**trial 结算**：在本地 review 草稿记录 `simplicity_language_trial: {status, trigger_reason, result, owner_candidate_ids, candidates, verified_unique, overlap, rejected, context_insufficient, cost_note}`；`status` 仅允许 `triggered | not-triggered | not-run`，`result` 仅允许 `pending | pass | fail`。`owner_candidate_ids` 保存回流前冻结的实际 ID；`verified_unique/overlap/rejected` 保存 candidate ID 列表而非只记数字，且 `verified_unique` 只计冻结列表中没有、经源码/契约核验成立的 finding；公开 review 不暴露观察方法。单次 pass 只累积 observation、不晋级；至少 3 次匹配任务持续满足 candidate 的净收益与上下文不足率判据，阶段 2.7 才可晋升。每次结算后在 `<PROJECT_ROOT>/.kixpower/memory/repo/harness-backlog.md` 按同类项去重，将 `{task: "PR #N (docs/reviews/pr-<N>-draft.md)", kind: trial, result}` 追加到对应 review-workflow candidate 的 evidence；没有对应项才按阶段 2.7 第 4 条创建。后续 review 从该 canonical backlog 累计，禁止凭会话记忆或单次 pass 晋级。
+
+#### 反方辩护测试（v5.4，发布 gate 前对所有 major+ finding + 所有"建议"类 finding 必跑）
 
 对每条受测 finding，写答案到 review 草稿（不发布），三问：
 
@@ -256,18 +310,20 @@ prompt: |
 **不暴露方法论**：review body / summary 中禁止出现 三通道/kixParadigm/并发独立/多视角/交叉验证/主 agent/子 agent/盲点图谱/范式 等词。怎么思考是私事，呈现只讲技术问题。
 
 **finding 内容单一来源**：
-- 历史 review 已提出的 finding 不重复发布；发布前 GET 对比，重复的删，或声明「Items already raised in prior reviews (X, Y) are not repeated here」。
+- fresh discovery（以及触发时的阶段 2.5）完成后、发布前才建立 known list；不得把历史结论或治理文档中的结论提前喂给发现型观察者。known list 收录历史 review/comment、PR body/链接 issue，以及 PR 或目标模块引用的 AGENTS/ADR/consilium/remediation/QA sign-off 等治理工件，并记录 `{source, status, rationale}`。
+- 历史 review 已提出的 finding 不重复发布。已声明设计取舍在没有新反证时不得包装成新 finding；若发现新的契约违反或反证，必须引用原决策与新增证据，明确作为重新审议，而不是首次发现。
 - 同一个 pending review 内，blocking/major 的行内评论是该 finding 的唯一详实正文。PR 汇总只能列 `严重级别 + 一句话主题 + 文件:行号 + 详见行内评论`，禁止复述证据、触发条件或影响。
 - 没有可用 diff 锚点、因严重级别不发到行内、或属于 PR 级的 finding，才在汇总中详述一次。
 
 **POST 前必跑清单**（用户确认通过后、每条 review/comment 发布前自检）：
 
-1. **GET 校验**：发之前先 `gh api repos/<owner>/<repo>/pulls/<N>/reviews --jq '.[].id'` 看本次会话已发布的 review ID 列表，对比即将发布的，避免重复 POST
-2. **exit code 0 即成功**：`run_in_terminal` sync 模式下，**exit code 0 + 无 stderr error = 已成功**。PowerShell 长命令回显被截断（残留如 `d" -Raw -Encoding utf8`）**不是失败信号**，禁止据此重试
-3. **UTF-8 body**：保留正文语言、`✅`/`🔴`/`📋` 和 em dash；优先通过 GitHub typed tool 的 body 字段发送，不做 ASCII 降级
-4. **gh CLI 仅作降级**：typed tool 不可用时，多行 body 才写 UTF-8 JSON 并用 `--input`；禁止 `gh api -F body="$var"`
-5. **记录已发布 ID**：每条 POST 成功后立即记下返回的 review/comment ID 到会话笔记
-6. **不重试**：已发布 review 不可删除（DELETE 只对 PENDING 有效，外部贡献者 PUT 也 404），重复无法清理
+1. **known-list GET（执行上面的定义）**：用 `gh api --paginate` 获取 `repos/<owner>/<repo>/pulls/<N>/reviews`、`repos/<owner>/<repo>/pulls/<N>/comments`、`repos/<owner>/<repo>/issues/<N>/comments` 的正文，并读取 PR body/链接 issue 与相关治理工件；逐条对比草稿，删除重复项或注明「Items already raised in prior reviews (X, Y) are not repeated here」
+2. **POST ID 校验**：从第 1 步的 reviews 结果提取 ID，对比本次会话已发布 ID，避免重复 POST；不重复请求同一 endpoint
+3. **exit code 0 即成功**：`run_in_terminal` sync 模式下，**exit code 0 + 无 stderr error = 已成功**。PowerShell 长命令回显被截断（残留如 `d" -Raw -Encoding utf8`）**不是失败信号**，禁止据此重试
+4. **UTF-8 body**：保留正文语言、`✅`/`🔴`/`📋` 和 em dash；优先通过 GitHub typed tool 的 body 字段发送，不做 ASCII 降级
+5. **gh CLI 仅作降级**：typed tool 不可用时，多行 body 才写 UTF-8 JSON 并用 `--input`；禁止 `gh api -F body="$var"`
+6. **记录已发布 ID**：每条 POST 成功后立即记下返回的 review/comment ID 到会话笔记
+7. **不重试**：已发布 review 不可删除（DELETE 只对 PENDING 有效，外部贡献者 PUT 也 404），重复无法清理
 
 #### 评论格式规范（结论前置 + 双段结构）
 
@@ -386,7 +442,7 @@ body 模板（通过类）：
 
 ## 硬约束
 
-- **只读实现**：不修改源码、不 merge；只有 `--save` 且用户明确指示 push 时才推送 review summary，`--approve` 只授权正式 review state，不授权改代码
+- **只读实现**：不修改源码、不 merge；只有 `--save` 且阶段 3 用户确认 push 时可推送 review summary，`--approve` 只授权正式 review state，不授权改代码
 - **子 agent 有限调用（v5.7）**：满足阶段 2.5 条件时调用专用 `kixpower-reviewer` 两次，使用异质 prompt/model；deterministic gate 与独立复核都通过后才可发布确定结论
 - **Token 控制**：大 PR（>500 文件）只审查 top 50 改动最多的文件
 - **遵循 blast-radius**：`--save` 提交 review.md 时受 `blast-radius-check.ps1` 约束（feature branch 才允许）

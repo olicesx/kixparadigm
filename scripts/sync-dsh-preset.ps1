@@ -1,93 +1,97 @@
-# sync-dsh-preset.ps1 — 把 preset 镜像（dsh/preset 或 en/preset）同步到
-# DSH 实际安装的 preset（~/.dsh/.agent-presets/kixparadigm 或 kixparadigm-en）。
+# sync-dsh-preset.ps1 - synchronize a repository preset into DSH_HOME.
 #
-# 方向（单向）：
-#   dsh/preset/（CN）  ──►  ~/.dsh/.agent-presets/kixparadigm/
-#   en/preset/（EN）   ──►  ~/.dsh/.agent-presets/kixparadigm-en/   （-PresetId kixparadigm-en -SourceDir en\preset）
+# The repository preset is the source of truth. This script adds missing files
+# and updates changed files. Target-only files are reported but never deleted.
+# Compatible with Windows PowerShell 5.1 and PowerShell 7+.
 #
-# 规则：
-#   - 镜像是唯一事实源。维护 preset 内容 = 改镜像，再跑本脚本同步。
-#   - 幂等：内容相同的文件跳过；目标缺失 → 新增；内容不同 → -Force 覆盖（默认询问）。
-#   - 只同步 preset 布局（agent.cordis.yml / preset.yml / README.md / DSH-ADAPTATION.md /
-#     skills/ / agents/ / instructions/ / prompts/ / memories/ / plugins/）。
-#   - 目标侧独有文件（镜像没有的）只报告不删除——人工确认后再清理。
-#
-# 用法：
-#   .\scripts\sync-dsh-preset.ps1 -DryRun                        # 预览差异（CN）
-#   .\scripts\sync-dsh-preset.ps1 -Force                         # 全量同步（CN）
-#   .\scripts\sync-dsh-preset.ps1 -Force -PresetId kixparadigm-en -SourceDir en\preset   # EN
-#
-# 同步后：重启 DSH 进程（Ctrl+C → `dsh web`）再开新会话，preset 才重新组装。
+# Examples:
+#   .\scripts\sync-dsh-preset.ps1 -DryRun
+#   .\scripts\sync-dsh-preset.ps1 -Force
+#   .\scripts\sync-dsh-preset.ps1 -Force -PresetId kixparadigm-null -SourceDir dsh\preset-null
+#   .\scripts\sync-dsh-preset.ps1 -Force -PresetId kixparadigm-classic-en -SourceDir en\preset-classic-en
 
 param(
   [string]$BundleRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')),
   [string]$PresetId = 'kixparadigm',
   [string]$SourceDir = 'dsh\preset',
-  [string]$PresetRoot = (Join-Path ($env:DSH_HOME ?? (Join-Path $env:USERPROFILE '.dsh')) ('.agent-presets\' + $PresetId)),
+  [string]$PresetRoot = '',
   [switch]$DryRun,
   [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
-$src = Join-Path $BundleRoot $SourceDir
 
-if (-not (Test-Path $src)) {
-  Write-Error "镜像不存在: $src（需要 kix-bundle 的 dsh/preset 目录）"
+if (-not $PresetRoot) {
+  $dshHome = if ($env:DSH_HOME) {
+    $env:DSH_HOME
+  } else {
+    Join-Path $env:USERPROFILE '.dsh'
+  }
+  $PresetRoot = Join-Path $dshHome ('.agent-presets\' + $PresetId)
 }
+
+$src = Join-Path $BundleRoot $SourceDir
+if (-not (Test-Path $src)) {
+  Write-Error "Preset source does not exist: $src"
+}
+
 if (-not (Test-Path $PresetRoot)) {
-  Write-Host "[sync] 目标不存在，将全新安装: $PresetRoot" -ForegroundColor Yellow
+  Write-Host "[sync] Target does not exist and will be created: $PresetRoot" -ForegroundColor Yellow
   if (-not $DryRun -and -not $Force) {
-    $ans = Read-Host '确认全新安装? (y/N)'
-    if ($ans -notin @('y', 'Y')) { exit 1 }
+    $answer = Read-Host 'Create the target? (y/N)'
+    if ($answer -notin @('y', 'Y')) { exit 1 }
   }
 }
 
-function Get-FileHashSafe([string]$p) {
-  try { return (Get-FileHash -Path $p -Algorithm SHA256).Hash } catch { return '' }
+function Get-FileHashSafe([string]$Path) {
+  try { return (Get-FileHash -Path $Path -Algorithm SHA256).Hash } catch { return '' }
 }
 
 $srcFiles = Get-ChildItem -Path $src -Recurse -File
-$added = @(); $updated = @(); $same = @(); $removed = @()
+$added = @()
+$updated = @()
+$same = @()
+$targetOnly = @()
 
-foreach ($f in $srcFiles) {
-  $rel = $f.FullName.Substring($src.Length).TrimStart('\', '/')
-  $dst = Join-Path $PresetRoot $rel
-  if (-not (Test-Path $dst)) {
-    $added += $rel
+foreach ($file in $srcFiles) {
+  $relative = $file.FullName.Substring($src.Length).TrimStart('\', '/')
+  $destination = Join-Path $PresetRoot $relative
+  if (-not (Test-Path $destination)) {
+    $added += $relative
     if (-not $DryRun) {
-      New-Item -ItemType Directory -Path (Split-Path $dst) -Force | Out-Null
-      Copy-Item $f.FullName $dst -Force
+      New-Item -ItemType Directory -Path (Split-Path $destination) -Force | Out-Null
+      Copy-Item $file.FullName $destination -Force
     }
-  }
-  elseif ((Get-FileHashSafe $f.FullName) -ne (Get-FileHashSafe $dst)) {
-    $updated += $rel
+  } elseif ((Get-FileHashSafe $file.FullName) -ne (Get-FileHashSafe $destination)) {
+    $updated += $relative
     if (-not $DryRun) {
-      if ($Force) { Copy-Item $f.FullName $dst -Force }
-      else {
-        $ans = Read-Host "覆盖 $rel ? (y/N)"
-        if ($ans -in @('y', 'Y')) { Copy-Item $f.FullName $dst -Force }
-        else { Write-Host "  跳过 $rel" -ForegroundColor DarkGray }
+      if ($Force) {
+        Copy-Item $file.FullName $destination -Force
+      } else {
+        $answer = Read-Host "Overwrite $relative ? (y/N)"
+        if ($answer -in @('y', 'Y')) { Copy-Item $file.FullName $destination -Force }
+        else { Write-Host "  Skipped: $relative" -ForegroundColor DarkGray }
       }
     }
+  } else {
+    $same += $relative
   }
-  else { $same += $rel }
 }
 
 if (Test-Path $PresetRoot) {
-  $dstFiles = Get-ChildItem -Path $PresetRoot -Recurse -File
-  foreach ($f in $dstFiles) {
-    $rel = $f.FullName.Substring($PresetRoot.Length).TrimStart('\', '/')
-    if (-not (Test-Path (Join-Path $src $rel))) { $removed += $rel }
+  foreach ($file in (Get-ChildItem -Path $PresetRoot -Recurse -File)) {
+    $relative = $file.FullName.Substring($PresetRoot.Length).TrimStart('\', '/')
+    if (-not (Test-Path (Join-Path $src $relative))) { $targetOnly += $relative }
   }
 }
 
-$mode = if ($DryRun) { '预览' } else { '同步' }
+$mode = if ($DryRun) { 'dry-run' } else { 'sync' }
 Write-Host ''
-Write-Host "[sync] $mode 完成: 新增 $($added.Count) / 更新 $($updated.Count) / 相同 $($same.Count) / 目标独有 $($removed.Count)"
-if ($added.Count)   { Write-Host "  新增: $($added -join ', ')" -ForegroundColor Green }
-if ($updated.Count) { Write-Host "  更新: $($updated -join ', ')" -ForegroundColor Yellow }
-if ($removed.Count) { Write-Host "  目标独有(未删，人工确认): $($removed -join ', ')" -ForegroundColor Cyan }
+Write-Host "[sync] $mode complete: added $($added.Count) / updated $($updated.Count) / unchanged $($same.Count) / target-only $($targetOnly.Count)"
+if ($added.Count) { Write-Host "  Added: $($added -join ', ')" -ForegroundColor Green }
+if ($updated.Count) { Write-Host "  Updated: $($updated -join ', ')" -ForegroundColor Yellow }
+if ($targetOnly.Count) { Write-Host "  Target-only (not deleted): $($targetOnly -join ', ')" -ForegroundColor Cyan }
 if (-not $DryRun -and ($added.Count -or $updated.Count)) {
   Write-Host ''
-  Write-Host "[sync] 请重启 DSH 进程(Ctrl+C → dsh web)后开新会话，preset 才会重新组装并生效。" -ForegroundColor Magenta
+  Write-Host '[sync] Restart DSH and open a new session to load the synchronized preset.' -ForegroundColor Magenta
 }

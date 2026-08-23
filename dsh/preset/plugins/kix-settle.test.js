@@ -1,4 +1,4 @@
-// kix-settle 回归测试（P0，2026-08-20 补齐投递端；v2 2026-08-21 高置信提交）
+// kix-settle 回归测试（P0；v2 高置信提交；v3 2026-08-23 同源置信降档）
 //
 // 单元级验证：加载 kix-settle.js，mock DSH post-execute / agent/turn-stopping
 // 派发，覆盖：
@@ -7,8 +7,8 @@
 //   - turn-stopping 投递：有编辑 + 末次编辑后无执行 → steer 单发；
 //     有执行证据 → 不提醒；无编辑 → 不提醒；reminded 单发不重复
 //   - 工作区外文件不计入编辑
-//   - v2 高置信提交：无编辑 + 终稿像审查结论 + 无独立观察者 → commit-blind
-//     steer；派过 subagent/cross/reviewer（含 capability_call 代理）清账；
+//   - v2/v3 高置信提交：无 fresh observer → commit-blind；只有同源 fresh
+//     observer → 单模型置信降档；成功 cross → 清账；失败 observer 不记账；
 //     非结论姿态不触发；两路 reminded 各自单发
 // 运行：node plugins/kix-settle.test.js
 
@@ -160,8 +160,43 @@ await ok('软赞不命中', !I.looksLikeVerdict('看起来不错，暂无问题'
 await ok('空文本不命中', !I.looksLikeVerdict(''))
 await ok('capability_call 代理 reviewer 解析为目标名', I.resolvedToolName({ name: 'kix_capability_call', arguments: { tool: 'subagent_reviewer' } }) === 'subagent_reviewer')
 await ok('直呼 subagent_cross 原名', I.resolvedToolName({ name: 'subagent_cross' }) === 'subagent_cross')
-await ok('reviewer 算独立观察者', I.isIndependentObserver('subagent_reviewer'))
-await ok('lite 不算独立观察者（取证档不是对抗采样）', !I.isIndependentObserver('subagent_lite'))
+await ok('reviewer 只算 fresh observer', I.observerLevel('subagent_reviewer') === 'fresh')
+await ok('普通 subagent 只算 fresh observer', I.observerLevel('subagent') === 'fresh')
+await ok('cross 算 vendor-independent observer', I.observerLevel('subagent_cross') === 'vendor-independent')
+await ok('lite 不算观察者（取证档不是对抗采样）', I.observerLevel('subagent_lite') === undefined)
+await ok('直接失败的 observer 不记账', !I.observerResultSucceeded({ name: 'subagent_cross' }, { isError: true }))
+await ok('capability_call 内层失败不记账', !I.observerResultSucceeded(
+  { name: 'kix_capability_call' },
+  { isError: false, value: { ok: true, result: { isError: true } } },
+))
+await ok('capability_call 内层成功可记账', I.observerResultSucceeded(
+  { name: 'kix_capability_call' },
+  { isError: false, value: { ok: true, result: { isError: false } } },
+))
+await ok('capability_call 缺 value → unknown 不记账', !I.observerResultSucceeded(
+  { name: 'kix_capability_call' },
+  { isError: false },
+))
+await ok('capability_call 只有 content → unknown 不记账', !I.observerResultSucceeded(
+  { name: 'kix_capability_call' },
+  { isError: false, content: [{ type: 'text', text: 'done' }] },
+))
+await ok('capability_call null value → unknown 不记账', !I.observerResultSucceeded(
+  { name: 'kix_capability_call' },
+  { isError: false, value: null },
+))
+await ok('capability_call primitive value → unknown 不记账', !I.observerResultSucceeded(
+  { name: 'kix_capability_call' },
+  { isError: false, value: 'done' },
+))
+await ok('capability_call 缺 nested result → unknown 不记账', !I.observerResultSucceeded(
+  { name: 'kix_capability_call' },
+  { isError: false, value: { ok: true } },
+))
+await ok('capability_call null nested result → unknown 不记账', !I.observerResultSucceeded(
+  { name: 'kix_capability_call' },
+  { isError: false, value: { ok: true, result: null } },
+))
 await ok('lastAssistantText 取最近一条', I.lastAssistantText(assistantSurface('LGTM')) === 'LGTM')
 
 // ── 5. v2 高置信提交投递 ──────────────────────────────────────────────────
@@ -180,37 +215,69 @@ await ok('无编辑 + 无 sessionQuery → 静默跳过', (async () => {
   await turnStopping[0]({ agent: mkAgent('b3'), turn: 1, signal: undefined })
   return steered.length === 0
 })())
-await ok('派过 subagent_cross → 不提醒（独立性清账）', (async () => {
+await ok('成功 subagent_cross → 不提醒（跨厂商独立性清账）', (async () => {
   await dispatchPostAs('subagent_cross', { prompt: '独立读 fallback 链' }, undefined, 'b4')
   await dispatchTurnFor('b4', assistantSurface('LGTM'))
   return steered.length === 0
 })())
-await ok('capability_call 代理 subagent_reviewer → 不提醒', (async () => {
-  await dispatchPostAs('kix_capability_call', { tool: 'subagent_reviewer', arguments: { prompt: '反方' } }, undefined, 'b5')
+await ok('capability_call 代理 reviewer → 单模型置信提醒', (async () => {
+  await dispatchPostAs(
+    'kix_capability_call',
+    { tool: 'subagent_reviewer', arguments: { prompt: '反方' } },
+    { isError: false, value: { ok: true, result: { isError: false } } },
+    'b5',
+  )
   await dispatchTurnFor('b5', assistantSurface('request-changes'))
-  return steered.length === 0
+  return steered.length === 1 && /单模型置信/.test(steered[0].content[0].text)
+})())
+await ok('普通 subagent → 单模型置信提醒', (async () => {
+  await dispatchPostAs('subagent', { prompt: 'fresh context' }, undefined, 'b6')
+  await dispatchTurnFor('b6', assistantSurface('可以合并'))
+  return steered.length === 1 && /没有成功的跨厂商观察通道/.test(steered[0].content[0].text)
+})())
+await ok('失败 subagent_cross → 仍按无 fresh observer 提醒', (async () => {
+  await dispatchPostAs('subagent_cross', { prompt: 'cross' }, { isError: true }, 'b7')
+  await dispatchTurnFor('b7', assistantSurface('LGTM'))
+  return steered.length === 1 && /未派过任何成功的 fresh 观察者/.test(steered[0].content[0].text)
+})())
+await ok('capability_call 内层失败 reviewer → 不计 fresh observer', (async () => {
+  await dispatchPostAs(
+    'kix_capability_call',
+    { tool: 'subagent_reviewer', arguments: { prompt: '反方' } },
+    { isError: false, value: { ok: true, result: { isError: true } } },
+    'b8',
+  )
+  await dispatchTurnFor('b8', assistantSurface('APPROVE'))
+  return steered.length === 1 && /未派过任何成功的 fresh 观察者/.test(steered[0].content[0].text)
 })())
 await ok('直呼 subagent_lite 不清账（不是对抗观察）', (async () => {
-  await dispatchPostAs('subagent_lite', { prompt: '读文件' }, undefined, 'b6')
-  await dispatchTurnFor('b6', assistantSurface('可以合并'))
-  return steered.length === 1 && /独立观察者/.test(steered[0].content[0].text)
+  await dispatchPostAs('subagent_lite', { prompt: '读文件' }, undefined, 'b9')
+  await dispatchTurnFor('b9', assistantSurface('可以合并'))
+  return steered.length === 1 && /未派过任何成功的 fresh 观察者/.test(steered[0].content[0].text)
 })())
 await ok('有编辑的实现任务不走审查结论路', (async () => {
-  await dispatchPostAs('edit', { file_path: path.join(sessionRoot, 'j.py') }, undefined, 'b7')
-  await dispatchPostAs('probe', { code: 'print(1)' }, undefined, 'b7')
-  await dispatchTurnFor('b7', assistantSurface('LGTM'))
+  await dispatchPostAs('edit', { file_path: path.join(sessionRoot, 'j.py') }, undefined, 'b10')
+  await dispatchPostAs('probe', { code: 'print(1)' }, undefined, 'b10')
+  await dispatchTurnFor('b10', assistantSurface('LGTM'))
   return steered.length === 0
 })())
 await ok('commit-blind 同会话不重复', (async () => {
-  await dispatchTurnFor('b8', assistantSurface('APPROVE'))
+  await dispatchTurnFor('b11', assistantSurface('APPROVE'))
   const first = steered.length
-  await dispatchTurnFor('b8', assistantSurface('APPROVE'))
+  await dispatchTurnFor('b11', assistantSurface('APPROVE'))
+  return first === 1 && steered.length === 0
+})())
+await ok('单模型置信提醒同会话不重复', (async () => {
+  await dispatchPostAs('subagent', { prompt: 'fresh context' }, undefined, 'b12')
+  await dispatchTurnFor('b12', assistantSurface('APPROVE'))
+  const first = steered.length
+  await dispatchTurnFor('b12', assistantSurface('APPROVE'))
   return first === 1 && steered.length === 0
 })())
 await ok('readSurface 抛错静默', (async () => {
   sessionQueryMock = { readSurface: async () => { throw new Error('boom') } }
   steered = []
-  await turnStopping[0]({ agent: mkAgent('b9'), turn: 1, signal: undefined })
+  await turnStopping[0]({ agent: mkAgent('b13'), turn: 1, signal: undefined })
   return steered.length === 0
 })())
 
