@@ -5,7 +5,7 @@
 //   - lib 判定：estimateTokens / checkFilesEqual / checkPluginPair / checkMirrorTree
 //   - pre-execute 写时拦截：remind（放行+待注入）/ block（deny）/ 非 preset 路径放行 /
 //     非源仓库放行
-//   - post-execute：remind 注入 + remindOnce 每类别一次
+//   - post-execute：首写 persona/plugin 重算、失败/ask 短路、异常隔离、非 accept 不空耗、waterfall 保真
 // 运行：node plugins/kix-consistency.test.js
 
 const path = require('node:path')
@@ -188,6 +188,10 @@ function makePostExec(callId) {
   await ok('写插件测试 → 仅 pair 1 检查', testChecks.length === 1)
   const personaChecks = I.pickChecks(repo, 'dsh/preset/agent.cordis.yml')
   await ok('写 persona → 1 检查（契约）', personaChecks.length === 1)
+  const currentRoots = ['dsh/preset', 'dsh/preset-classic', 'dsh/preset-null', 'en/preset-classic-en']
+  await ok('当前 classic zh persona → zh 预算检查', I.pickChecks(repo, 'dsh/preset-classic/agent.cordis.yml', currentRoots, true).length === 1)
+  await ok('当前 classic en persona → en 预算检查', I.pickChecks(repo, 'en/preset-classic-en/agent.cordis.yml', currentRoots, true).length === 1)
+  await ok('null persona → 0 预算检查（消融边界不变）', I.pickChecks(repo, 'dsh/preset-null/agent.cordis.yml', currentRoots, true).length === 0)
   await ok('非 preset → 0 检查', I.pickChecks(repo, 'src/main.js').length === 0)
   // 外仓（自定义布局、无契约脚本）：只有通用身份组检查
   const foreign = mkdtemp('kix-cons-test-foreign-')
@@ -281,6 +285,91 @@ function makePostExec(callId) {
   await preExecute[0](e2, () => 'NEXT')
   const post2 = await postExecute[0](makePostExec(e2.callId), {}, () => 'NEXT')
   await ok('同类别第二次不注入（remindOnce）', post2 === 'NEXT')
+
+  section('post-execute: 写后结算覆盖首写盲点')
+  const repoPost = makeRepoRoot()
+  workspaceRootMock = repoPost
+  const personaPath = path.join(repoPost, 'dsh/preset/agent.cordis.yml')
+  const smallPersona = '- id: persona-incentive\n  config:\n    text: |-\n      short\n- id: agent-instructions\n  name: test\n'
+  fs.writeFileSync(personaPath, smallPersona, 'utf8')
+  const personaExec = {
+    name: 'edit', callId: 'post-persona', arguments: { file_path: 'dsh/preset/agent.cordis.yml' }, agent: { id: 'post-persona-agent' },
+  }
+  await preExecute[0](personaExec, () => 'NEXT')
+  fs.writeFileSync(personaPath, smallPersona.replace('short', 'x'.repeat(5000)), 'utf8')
+  const baseOutcome = { kind: 'accept', additionalContexts: [{ id: 'base-context' }] }
+  const personaPost = await postExecute[0](personaExec, { ok: true }, () => baseOutcome)
+  await ok('初始预算内、单次写入超预算 → 同次 post 提醒',
+    personaPost && personaPost.additionalContexts.length === 2 &&
+    personaPost.additionalContexts[1].content[0].text.includes('exceeds budget'))
+  await ok('写后提醒保留 waterfall 下游 context', personaPost.additionalContexts[0].id === 'base-context')
+
+  for (const r of ['dsh/preset', 'en/preset']) {
+    fs.mkdirSync(path.join(repoPost, r, 'plugins'), { recursive: true })
+    fs.writeFileSync(path.join(repoPost, r, 'plugins/post-drift.js'), 'SAME\n', 'utf8')
+  }
+  const driftExec = {
+    name: 'write', callId: 'post-plugin', arguments: { file_path: 'dsh/preset/plugins/post-drift.js' }, agent: { id: 'post-plugin-agent' },
+  }
+  await preExecute[0](driftExec, () => 'NEXT')
+  fs.writeFileSync(path.join(repoPost, 'dsh/preset/plugins/post-drift.js'), 'CHANGED\n', 'utf8')
+  const driftPost = await postExecute[0](driftExec, { ok: true }, () => 'NEXT')
+  await ok('初始镜像一致、单次写入引入漂移 → 同次 post 提醒',
+    !!(driftPost && driftPost.additionalContexts && driftPost.additionalContexts[0].content[0].text.includes('not identical')))
+
+  fs.writeFileSync(path.join(repoPost, 'dsh/preset/plugins/repair.js'), 'REPAIRED\n', 'utf8')
+  const repairExec = {
+    name: 'write', callId: 'post-repair', arguments: { file_path: 'en/preset/plugins/repair.js' }, agent: { id: 'post-repair-agent' },
+  }
+  await preExecute[0](repairExec, () => 'NEXT')
+  fs.writeFileSync(path.join(repoPost, 'en/preset/plugins/repair.js'), 'REPAIRED\n', 'utf8')
+  const repairPost = await postExecute[0](repairExec, { ok: true }, () => 'NEXT')
+  await ok('写入修复 pre 发现的旧漂移 → post 重算后不发过期提醒', repairPost === 'NEXT')
+
+  const failedExec = {
+    name: 'write', callId: 'post-failed', arguments: { file_path: 'dsh/preset/plugins/failed.js' }, agent: { id: 'post-failed-agent' },
+  }
+  await preExecute[0](failedExec, () => 'NEXT')
+  const failedOutcome = { kind: 'accept', additionalContexts: [] }
+  let failedNextCalls = 0
+  const failedPost = await postExecute[0](failedExec, { isError: true }, () => {
+    failedNextCalls += 1
+    return failedOutcome
+  })
+  await ok('失败写入不投递 pre 提醒且 next 只调用一次',
+    failedPost === failedOutcome && failedPost.additionalContexts.length === 0 && failedNextCalls === 1)
+
+  for (const r of ['dsh/preset', 'en/preset']) {
+    fs.writeFileSync(path.join(repoPost, r, 'plugins/post-throw.js'), 'SAME\n', 'utf8')
+  }
+  const throwExec = {
+    name: 'write', callId: 'post-throw', arguments: { file_path: 'dsh/preset/plugins/post-throw.js' }, agent: { id: 'post-throw-agent' },
+  }
+  await preExecute[0](throwExec, () => 'NEXT')
+  fs.writeFileSync(path.join(repoPost, 'dsh/preset/plugins/post-throw.js'), 'CHANGED\n', 'utf8')
+  const originalCheckPluginPair = lib.checkPluginPair
+  let throwPost
+  try {
+    lib.checkPluginPair = () => { throw new Error('synthetic post I/O failure') }
+    throwPost = await postExecute[0](throwExec, { isError: false }, () => baseOutcome)
+  } finally {
+    lib.checkPluginPair = originalCheckPluginPair
+  }
+  await ok('写后重算抛错 → 保留成功 outcome，不把 write 改报失败', throwPost === baseOutcome)
+
+  fs.writeFileSync(path.join(repoPost, 'dsh/preset/plugins/post-block.js'), 'ONLY-ZH\n', 'utf8')
+  const blockAgent = { id: 'post-block-agent' }
+  const blockedExec = {
+    name: 'write', callId: 'post-block-1', arguments: { file_path: 'dsh/preset/plugins/post-block.js' }, agent: blockAgent,
+  }
+  await preExecute[0](blockedExec, () => 'NEXT')
+  const downstreamBlock = { kind: 'block', feedback: 'downstream blocked' }
+  const blockedPost = await postExecute[0](blockedExec, { isError: false }, () => downstreamBlock)
+  const retryExec = { ...blockedExec, callId: 'post-block-2' }
+  await preExecute[0](retryExec, () => 'NEXT')
+  const retryPost = await postExecute[0](retryExec, { isError: false }, () => 'NEXT')
+  await ok('非 accept 下游不空耗 remindOnce，后续 accept 仍能投递',
+    blockedPost === downstreamBlock && !!(retryPost && retryPost.additionalContexts && retryPost.additionalContexts.length === 1))
 
   section('pre-execute: 非 preset 路径 / 非源仓库 / 非写工具放行')
   const e3 = makeExec('write', 'src/main.js')
@@ -479,6 +568,14 @@ function makePostExec(callId) {
   await ok('ask 强度下 parity 写入不打断提问', aPre === 'NEXT' && askCalls === 0)
   const aPost = await askListeners['tools/post-execute'][0]({ name: 'write', callId: 'ask-par', agent: ap.agent }, {}, () => 'NEXT')
   await ok('ask 强度下 parity hint 照常注入', !!(aPost && aPost.additionalContexts && aPost.additionalContexts.length === 1))
+  const repoAsk = makeRepoRoot()
+  workspaceRootMock = repoAsk
+  fs.mkdirSync(path.join(repoAsk, 'dsh/preset/plugins'), { recursive: true })
+  fs.writeFileSync(path.join(repoAsk, 'dsh/preset/plugins/ask.js'), 'ONLY-ZH\n', 'utf8')
+  const askExec = { name: 'write', callId: 'ask-confirmed', arguments: { file_path: 'dsh/preset/plugins/ask.js' }, agent: { id: 'cons-ask-confirmed' } }
+  const askPre = await askListeners['tools/pre-execute'][0](askExec, () => 'NEXT')
+  const askPost = await askListeners['tools/post-execute'][0](askExec, { isError: false }, () => 'NEXT')
+  await ok('ask 用户确认继续后 → 同次 post 不重复提醒', askPre === 'NEXT' && askCalls === 1 && askPost === 'NEXT')
 
   // ── 多根 / 多 agent / 深路径 / 扩展名形态 ──────────────────────────────
   section('形态：N=3 根 hint 点名其余两根 / 双 agent 独立 / 深路径 / 扩展名')
@@ -641,6 +738,41 @@ function makePostExec(callId) {
     await ok('运行时插件消费单源预算（无本地 maxChars 字面量）', pluginSrc.includes('lib.PERSONA_BUDGETS') && !/maxChars:\s*\d/.test(pluginSrc))
     const libSrc = fs.readFileSync(path.join(__dirname, 'consistency-lib.cjs'), 'utf8')
     await ok('runAllZh 不再硬编码 6000/3400（双源漂移已单源化）', !/6000,\s*maxEstTokens:\s*3400/.test(libSrc) && /PERSONA_BUDGETS\.zh/.test(libSrc))
+  }
+
+
+  // ── v1.3.7: subagent_cross capability binding ──────────────────────────
+  {
+    section('__internals: subagent_cross route binding')
+    const crossRoot = mkdtemp('kix-cons-cross-route-')
+    const rel = 'agent.cordis.yml'
+    const good = [
+      '    - id: tool-subagent-cross',
+      "      name: '@deepseek-ai/dsh-tool-subagent'",
+      '      config:',
+      '        toolName: subagent_cross',
+      '        agentOptions:',
+      '          model: kix-route:cross',
+      '- id: kix-route',
+      '  name: ./plugins/kix-route.js',
+    ].join('\n')
+    fs.writeFileSync(path.join(crossRoot, rel), good, 'utf8')
+    await ok('cross 工具绑定哨兵且 route 启用 → 通过',
+      lib.checkCrossRouteBinding({ root: crossRoot, rel }).failures.length === 0)
+    fs.writeFileSync(path.join(crossRoot, rel), good.replace('model: kix-route:cross', 'model: inherited'), 'utf8')
+    await ok('cross 工具脱离哨兵 → 失败', (() => {
+      const r = lib.checkCrossRouteBinding({ root: crossRoot, rel })
+      return r.failures.length === 1 && r.failures[0].includes('must bind')
+    })())
+    fs.writeFileSync(path.join(crossRoot, rel), good.replace('        agentOptions:\n          model: kix-route:cross', '        model: kix-route:cross'), 'utf8')
+    await ok('cross 哨兵位于 config.model 错层级 → 失败',
+      lib.checkCrossRouteBinding({ root: crossRoot, rel }).failures.some((f) => f.includes('config.agentOptions.model')))
+    fs.writeFileSync(path.join(crossRoot, rel), good.replace('- id: kix-route\n  name: ./plugins/kix-route.js', ''), 'utf8')
+    await ok('route 行缺失 → 失败',
+      lib.checkCrossRouteBinding({ root: crossRoot, rel }).failures.some((f) => f.includes('plugin row missing')))
+    fs.writeFileSync(path.join(crossRoot, rel), good.replace('  name: ./plugins/kix-route.js', '  name: ./plugins/kix-route.js\n  disabled: true'), 'utf8')
+    await ok('route 显式禁用 → 失败',
+      lib.checkCrossRouteBinding({ root: crossRoot, rel }).failures.some((f) => f.includes('must be enabled')))
   }
 
   // ── 收尾：清理夹具 ─────────────────────────────────────────────────────

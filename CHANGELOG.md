@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v1.3.7（2026-08-23）独立观察者分级 + 审查去重 + 写后结算
+
+- **同步与路由契约加固**：`scripts/sync-dsh-preset.ps1` 改为纯 ASCII、Windows PowerShell 5.1/PowerShell 7 通用实现，移除 `??` 与 UTF-8 无 BOM 解析依赖；仍保持只新增/覆盖、不删除目标独有文件。共享 `consistency-lib.cjs` 新增 `subagent_cross` 配置契约门，要求工具行固定绑定非降级的 `kix-route:cross` 哨兵且路由插件启用，并以正反例回归防止未来同厂商误结算。
+
+- **独立简约与语言原生语义 observer（candidate scoped trial）**：kixpower-review 阶段 2.2 在用户明确点名 KISS/DRY/SOLID/YAGNI/LoD、跨模块重构/抽象/重复结构，或语义面明显超出主线程覆盖时，恰好派 1 个独立 discovery observer；小改/格式/生成物不触发。观察者复用现有只读 reviewer 的 `perspective-discovery` 模式，不读 review 草稿、历史评论、known list 或其他结论；五原则只作 lens，目标语言原生语义与项目/安全契约优先，不给严重度/修法。主线程回流前冻结 own candidates，回流后按源码/契约核验，并记录 candidates/verified_unique/overlap/rejected/context_insufficient 供至少 3 次匹配任务后的晋退判断。不进 persona、不拆五角色、不替代阶段 2.5 claim verification。
+
+- **ZCode 移植回馈的 DSH 原生吸收**：review 发布前在 fresh 复核完成后 GET 历史 review/inline/issue comments，并连同 PR/issue 与 AGENTS/ADR/consilium/remediation/QA sign-off 建 `{source,status,rationale}` known list；已声明取舍无新反证不重复发布，有新证据则引用原决策作重新审议。deterministic gate 改为从当前 CI workflow + manifest/scripts 推导，保留 build tags/features/target/文件模式与环境前提；同源模型一致不增加独立置信，major+ 仍需可复算证据。大型审查正交视角、机械等价验证、修复红绿结算、观察 prompt 防渗入均按 n=1/Tier 2 进入 candidate memories，不升 persona/固定拓扑。
+- **kix-consistency 写后结算**：修复 pre 只检查旧文件导致的首写盲点；成功 write/edit 后按实际文件重跑相关子检查，初始全绿后同次写入引入 persona 超预算或 plugin 镜像漂移会在同一次 post-execute advisory，修复旧漂移不再收到过期提醒，失败/被拦/取消写入不结算，ask 已确认不重复提示；写后 I/O 异常静默降级，非 accept 下游不空耗 remindOnce。新增 persona/plugin 首写、修复消旧提醒、失败短路、异常隔离、非 accept 与 waterfall context 保真回归，四副本继续字节一致。
+
 ## v1.3.6（2026-08-21）激励面选择压 + settle v2 + 可选 contract
 
 - **kix-settle v2（高置信提交时刻结算）**：出生证明 PR#33 审查实验（merry，glm-5.2）。4 个 fresh 评审人全部 request-changes，唯一 LGTM 来自写过结论的主代理；拉取式记忆在发布 review 前未被查询。现有 kix-settle 只盯「有编辑且无执行」，审查类无编辑交付打不中。机制：无工作区编辑 + 终稿像审查结论（LGTM / APPROVE / request-changes / 可以合并）+ 本会话未派独立观察者 → advisory steer（每会话一次）。清账 = 派过 `subagent` / `subagent_cross` / `subagent_reviewer`（含 `kix_capability_call` 代理）。不阻断、不规定验证方式。进行中/软赞不触发。明确不升格：契约长度假说已被本实验处决；注入裁剪不进机制。契约二分 / 严重度校准进 `incentive-lessons` ⑯。default / null byte-identical；classic 仍无 settle（设计如此）。
