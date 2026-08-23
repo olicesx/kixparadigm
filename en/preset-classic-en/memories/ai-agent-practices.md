@@ -241,5 +241,7 @@ PR#26 教训是"没取证"。PR#2984 是**升级版失败**：取了证，但**�
 ## 验证链纪律（2026-08-19 自常驻层迁入的实证化石）
 
 - **stub 链藏 bug**：FakePlatform 不调真实 move → float 崩溃未被发现（前端项目实证）。非平凡逻辑留一条真实链路端到端检查，不只测 stub；"已验证"要核对验证的是真实风险点还是表面（测调用链存在 ≠ 测被调用方语义，测 FakePlatform ≠ 测真实 platform）
-- **多次 CI 红都是 fmt/clippy 未过**：代码改动提交前本地跑 `cargo fmt --check` + `cargo clippy --all-targets --all-features -- -D warnings` + 相关 test（TS：eslint/prettier/typecheck）。固定命令不依赖读 CI；项目独有白名单/grep 门禁仅在改动该类代码时查一眼 CI
+- **[candidate·ZCode n=1 纠偏] 本地 gate 从当前 CI + manifest/scripts 推导**（2026-08-23 修正旧「固定命令不依赖 CI」过度概括）：`cargo fmt/clippy/test`、eslint/prettier/typecheck 等是跨仓基线，不是完整 gate。先读 workflow 保留 build tags/features/target、文件模式/生成物检查与环境前提；特权 capability、容器或平台步骤本地不可复现时逐项标 `not-run`，禁止用局部通过代称 CI 通过。出生证明：原多次 CI 红来自漏跑 fmt/lint；ZCode n=1 回馈补出 build tag、CAP_NET_ADMIN 路径与 `core.filemode=false` 三类反例（原始工件不可本地复核）
+- **[candidate·ZCode n=1] 语义保持重构先找可逆机械等价面**：机械改名/路径迁移等若存在确定性逆变换，先还原新旧规范差异再逐行 diff；它能抓编译器和常规测试不覆盖的字符串/文档/配置漂移。适用边界=变换可逆且目标确为语义保持；无法规范化时不强套。晋级=后续匹配任务再次抓到真实遗漏；误报或规范化成本超过人工核验即退役
+- **[candidate·ZCode n=1] 修复本身按新变更结算**：高风险修复先在隔离 worktree/反向 patch 上确认红灯，再按预注册的故障概率与置信目标重复验证绿灯；稳定且直指根因的探针才转回归测试。禁止固定「30 次」或用 stash 扰动用户工作树。晋级=跨任务重复拦截回归；探针脆弱/成本高于风险即退役
 - **转录/萃取归档前必须对源逐字复核**（候选·2026-08-19 本会话自省实证）：从上下文记忆转写表格入档，三代演化链 `eaa8→c227258f→T3` 被错叠成两代且丢首代——错叠由主线程自查发现并修复；用户粘贴原文暴露的是第二层失败（压缩损耗×3）——归因经 cross 审计修正。根因：验证三问习惯性锚在"代码"面，萃取/转录类工作没触发"证据维度检查"；"读过"≠"记得"是 ⑩ 所指自信偏差的微观形态。规则：任何转录入档（化石附注/对话萃取/表格引用）= claim，落笔前 grep 源文件逐字核对

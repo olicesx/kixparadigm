@@ -1,4 +1,4 @@
-// kix-settle — 结算信号（L1+L4 合并落地，2026-08-19；v2 高置信提交，2026-08-21）
+// kix-settle — 结算信号（L1+L4 合并落地；v3 同源置信降档，2026-08-23）
 //
 // 出生证明：
 //   EXP1/2/3 的共同结构——报告可以正确而实现错位；每次我们让裁决变真
@@ -11,12 +11,13 @@
 //   ① 实现结算（v1）：有工作区编辑且最后一次编辑后无任何新进程执行。
 //      任何执行证据（probe/run_code/python/pytest）都算清账。与
 //      kix-discipline 的 green gate 互补但更宽。
-//   ② 高置信提交（v2，PR#33 审查实验）：无工作区编辑、终稿像审查结论
-//      （LGTM / APPROVE / request-changes / 可以合并），且本会话未派过
-//      独立观察者。拉取式记忆对「高置信提交时刻」失明——全程无迷茫就
-//      不查库；修法是换信道，不是往索引加条目。清账 = 派过独立观察
-//      （subagent / subagent_cross / subagent_reviewer，含 kix_capability_call
-//      代理这些工具）。启发式只匹配结论姿态，进行中/提问不触发。
+//   ② 高置信提交（v2，PR#33；v3，ZCode P4）：无工作区编辑、终稿像
+//      审查结论时，按成功观察通道分级结算：无 fresh observer → 提醒补独立
+//      复核；只有同源 fresh observer → 提醒按单模型置信表述；成功的
+//      subagent_cross → 跨厂商清账。失败调用不记账。启发式只匹配结论姿态。
+//      出生证明：kix-route 单厂商 cross 会响亮失败并建议同源复核，但 v2 把
+//      subagent/reviewer 与 cross 同记为 independent，造成权重级独立性虚高。
+//      退役条件：宿主提供实际 resolved provider 元数据后，改为按真实厂商结算。
 //
 // 退役条件：
 //   ① 实现结算：trace 数据显示采纳本提醒后未验证交付率趋零 → 通道已内化。
@@ -27,11 +28,12 @@ const { randomUUID } = require('node:crypto')
 
 const EXEC_RE = /\b(python|python3|pytest|pip\s+install|node|probe\b)/i
 
-const INDEPENDENT_OBSERVERS = new Set([
+const FRESH_OBSERVERS = new Set([
   'subagent',
   'subagent_cross',
   'subagent_reviewer',
 ])
+const VENDOR_INDEPENDENT_OBSERVERS = new Set(['subagent_cross'])
 
 // 审查结论姿态：终稿在交付审查判定，不是过程叙述。
 // 刻意收窄——「看起来不错」「暂无问题」等软赞不触发（避免过程中途误报）。
@@ -63,9 +65,16 @@ function settleText(n) {
 
 function commitBlindText() {
   return 'kix-settle: 本回合终稿像审查结论（LGTM / APPROVE / request-changes / 可以合并），' +
-    '但本会话未派过独立观察者。拉取式记忆对高置信提交时刻失明——自信时不会去查库。' +
+    '但本会话未派过任何成功的 fresh 观察者。拉取式记忆对高置信提交时刻失明——自信时不会去查库。' +
     '独立性是验证杠杆：fresh 评审人（无先验结论）覆盖缺陷空间，原审者复审自己最差。' +
     '消费对抗 finding 时复核严重度（对抗侧易过升，承诺侧易偏松）。已派过则忽略。'
+}
+
+function singleVendorText() {
+  return 'kix-settle: 本回合终稿像审查结论，已有成功的 fresh 观察者，' +
+    '但没有成功的跨厂商观察通道。同源复核能去相关上下文与 prompt 视角，不能消除权重级共享盲点。' +
+    '请将结论按「单模型置信」表述；blocking/major 判断至少补一条可重放的非模型证据' +
+    '（测试/构建输出、官方契约原文或 sandbox 实测）。已按此降档则忽略。'
 }
 
 function lastAssistantText(surface) {
@@ -99,8 +108,20 @@ function resolvedToolName(exec) {
   return name
 }
 
-function isIndependentObserver(name) {
-  return INDEPENDENT_OBSERVERS.has(String(name || '').toLowerCase())
+function observerLevel(name) {
+  const normalized = String(name || '').toLowerCase()
+  if (VENDOR_INDEPENDENT_OBSERVERS.has(normalized)) return 'vendor-independent'
+  if (FRESH_OBSERVERS.has(normalized)) return 'fresh'
+  return undefined
+}
+
+function observerResultSucceeded(exec, result) {
+  if (!result || result.isError === true) return false
+  if (String(exec && exec.name || '').toLowerCase() !== 'kix_capability_call') return true
+  const value = result.value
+  if (!value || typeof value !== 'object' || value.ok !== true) return false
+  const nested = value.result
+  return Boolean(nested && typeof nested === 'object' && nested.isError === false)
 }
 
 module.exports = {
@@ -118,7 +139,8 @@ module.exports = {
           executedSinceLastEdit: false,
           execs: 0,
           reminded: false,
-          independentObservers: 0,
+          freshObserverSeen: false,
+          vendorIndependentObserverSeen: false,
           commitBlindReminded: false,
         })
       }
@@ -158,8 +180,10 @@ module.exports = {
               st.executedSinceLastEdit = true
             }
           }
-          if (isIndependentObserver(resolvedToolName(exec))) {
-            st.independentObservers += 1
+          const observer = observerLevel(resolvedToolName(exec))
+          if (observer && observerResultSucceeded(exec, result)) {
+            st.freshObserverSeen = true
+            if (observer === 'vendor-independent') st.vendorIndependentObserverSeen = true
           }
         }
       } catch (_) { /* observation must never break execution */ }
@@ -171,8 +195,8 @@ module.exports = {
     // "交付时（agent/turn-stopping）单发一条 steer 提醒" 从未落地——makeUserMessage/
     // settleText 定义后零调用，reminded 字段预留未读。v1.3.2 补齐投递端。
     // v2：PR#33 实证——审查 LGTM 无工作区编辑，v1 条件打不中；拉取式记忆对
-    // 高置信提交时刻失明。新增第二路：无编辑 + 终稿像审查结论 + 未派独立
-    // 观察者 → advisory（每会话一次）。readSurface 缺失/失败静默跳过。
+    // 高置信提交时刻失明。v3 按 fresh / vendor-independent 两级布尔证据位结算；
+    // 布尔位同时吸收 capability proxy 内外层重复 post 事件。readSurface 失败静默跳过。
     ctx.on('agent/turn-stopping', async (payload) => {
       try {
         const agent = payload && payload.agent
@@ -184,9 +208,9 @@ module.exports = {
           st.reminded = true
           agent.steer(makeUserMessage(settleText(st.edits)))
         }
-        // ② 高置信提交：无编辑 + 未派独立观察 + 终稿像审查结论。
+        // ② 高置信提交：无编辑 + 无成功跨厂商观察 + 终稿像审查结论。
         // 有编辑走 ①，不在审查结论路上叠提醒（实现任务不是审查交付）。
-        if (st.edits === 0 && st.independentObservers === 0 && !st.commitBlindReminded) {
+        if (st.edits === 0 && !st.vendorIndependentObserverSeen && !st.commitBlindReminded) {
           const sessionQuery = ctx.get && ctx.get('sessionQuery')
           const sessionId = agent && agent.session && agent.session.id
           if (sessionQuery && sessionId) {
@@ -195,7 +219,8 @@ module.exports = {
               const text = lastAssistantText(surface)
               if (looksLikeVerdict(text)) {
                 st.commitBlindReminded = true
-                agent.steer(makeUserMessage(commitBlindText()))
+                const notice = st.freshObserverSeen ? singleVendorText() : commitBlindText()
+                agent.steer(makeUserMessage(notice))
               }
             } catch (_) { /* 表面读取失败静默：本路是可选项 */ }
           }
@@ -209,9 +234,12 @@ module.exports.__internals = {
   looksLikeVerdict,
   lastAssistantText,
   resolvedToolName,
-  isIndependentObserver,
+  observerLevel,
+  observerResultSucceeded,
   settleText,
   commitBlindText,
+  singleVendorText,
   VERDICT_RES,
-  INDEPENDENT_OBSERVERS,
+  FRESH_OBSERVERS,
+  VENDOR_INDEPENDENT_OBSERVERS,
 }
