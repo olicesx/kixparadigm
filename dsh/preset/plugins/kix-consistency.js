@@ -5,6 +5,12 @@
 // 本插件把「唯一事实源」约定从自觉变机械：写 preset 相关文件时跑**相关子检查**，
 // 失败 → remind（放行 + 注入提醒，文档可回滚不 deny）。
 //
+// 写后结算出生证明（2026-08-23，ZCode P6.1 + 本地复现）：旧实现只在 pre
+// 检查旧文件；初始 persona 在预算内时，同次 edit 写到 5092 chars，post 提醒为 0。
+// 现成功 write/edit 后按实际文件重算，既抓首写 drift/超预算，也避免修复后投递旧提醒；
+// 失败写入不结算。退役条件：真实 trace 中首写增量提醒长期零贡献，且宿主提供原子
+// write-result 校验或 CI 前移到同一交付时刻。
+//
 // 单一事实源：检查逻辑全部在 ./consistency-lib.cjs（zh/en 字节一致共享）；
 // CI 脚本与本插件共用同一实现——不复制断言，防「CI 一套、运行时一套」双源漂移。
 //
@@ -91,6 +97,12 @@ function classifyWrite(rel, presetRoots, withContract) {
   return null
 }
 
+function personaBudgetFor(home) {
+  if (home === 'dsh/preset' || home === 'dsh/preset-classic') return PERSONA_BUDGET.zh
+  if (home === 'en/preset' || home === 'en/preset-classic-en') return PERSONA_BUDGET.en
+  return null
+}
+
 // 写入路径 → 相关子检查函数数组（增量：每次写入只跑与目标文件相关的检查）
 // roots / withContract 可选（测试直呼时现场发现）；插件运行时传缓存值。
 function pickChecks(root, rel, presetRoots, withContract) {
@@ -104,8 +116,8 @@ function pickChecks(root, rel, presetRoots, withContract) {
   if (!category) return checks
   const home = lib.presetRootOf(p, roots)
   if (category === 'persona') {
-    // 预算是本仓两套 edition 的常量；未知名 preset 根无预算可查 → 不硬套
-    const budget = home === 'dsh/preset' ? PERSONA_BUDGET.zh : home === 'en/preset' ? PERSONA_BUDGET.en : null
+    // 预算是本仓当前 edition 的单源常量；null/未知 preset 根无预算可查 → 不硬套
+    const budget = personaBudgetFor(home)
     if (budget) checks.push(() => lib.checkPersonaBudget({ root, rel: p, ...budget }))
   }
   if (category === 'plugins') {
@@ -137,6 +149,19 @@ function makeUserMessage(text) {
     content: [{ type: 'text', text }],
     source: { kind: 'plugin', plugin: 'kix-consistency', form: 'notice', summary: text.slice(0, 100) },
   }
+}
+
+function resultFailed(result) {
+  return Boolean(result && result.isError === true)
+}
+
+function collectFailures(checks) {
+  const failures = []
+  for (const run of checks) {
+    const r = run()
+    if (r && Array.isArray(r.failures)) failures.push(...r.failures)
+  }
+  return [...new Set(failures)]
 }
 
 // 从写入目标反推工作区（首派发兜底）：live 首次工具派发时 agent 可能还解析不出
@@ -215,6 +240,16 @@ module.exports = {
       return st
     }
 
+    function ensureWorkspaceState(st, rawPath) {
+      if (st.workspaceRoot && Array.isArray(st.presetRoots) && st.presetRoots.length >= 2) return true
+      const healed = discoverRootsFromFile(rawPath, configuredRoots)
+      if (!healed) return false
+      st.workspaceRoot = healed.workspaceRoot
+      st.presetRoots = healed.presetRoots
+      st.contract = hasContractEntry(healed.workspaceRoot)
+      return true
+    }
+
     async function askUser(exec, reason) {
       const userQuestions = ctx.get('userQuestions')
       if (userQuestions === void 0 || exec === void 0 || exec.agent === void 0) return undefined
@@ -255,13 +290,7 @@ module.exports = {
       // 首派发兜底：live 会话的首次工具派发可能解析不出会话 cwd（WSL2 实弹实锤：
       // 首写 hint 丢失、第二写靠 stateFor 自愈才触发）——此时写入目标本身是绝对
       // 路径，从它反推含 ≥2 preset 根的祖先工作区，找到即固化进 state 供后续复用。
-      if (!st.workspaceRoot || !Array.isArray(st.presetRoots) || st.presetRoots.length < 2) {
-        const healed = discoverRootsFromFile(rawPath, configuredRoots)
-        if (!healed) return next()
-        st.workspaceRoot = healed.workspaceRoot
-        st.presetRoots = healed.presetRoots
-        st.contract = hasContractEntry(healed.workspaceRoot)
-      }
+      if (!ensureWorkspaceState(st, rawPath)) return next()
 
       const relPath = toRepoRel(st.workspaceRoot, rawPath)
       const category = classifyWrite(relPath, st.presetRoots, st.contract)
@@ -279,16 +308,11 @@ module.exports = {
       const checks = pickChecks(st.workspaceRoot, relPath, st.presetRoots, st.contract)
       if (checks.length === 0) return next()
 
-      const failures = []
-      for (const run of checks) {
-        const r = run()
-        if (r && r.failures) failures.push(...r.failures)
-      }
+      const failures = collectFailures(checks)
       if (failures.length === 0) return next()
 
       // 去重：同一缺失可能被身份组与语法检查重复报（WSL2 实弹曾三连 missing）
-      const unique = [...new Set(failures)]
-      const reason = 'kix-consistency: ' + unique.join(' ')
+      const reason = 'kix-consistency: ' + failures.join(' ')
 
       if (intensity === 'block') {
         return { kind: 'deny', reason }
@@ -297,6 +321,7 @@ module.exports = {
         const ok = await askUser(exec, reason)
         if (ok === false) return { kind: 'deny', reason: 'kix-consistency: 用户取消，先修复一致性再写。' }
         if (ok === void 0) return { kind: 'deny', reason: 'kix-consistency: 无法向用户提问（无提问通道），已自动拒绝。' }
+        st.pendingRemind.set(exec.callId, { category, acknowledged: true })
         return next()
       }
       // remind：放行 + 注入提醒（每会话每类别一次；投递成功才消耗，同 kix-orchestration）。
@@ -307,19 +332,48 @@ module.exports = {
       return next()
     })
 
-    // ── post-execute：注入 remind（按 callId 匹配消费，防错位注入）────────
+    // ── post-execute：成功写入后按实际文件重算，再注入 remind ─────────────
+    // pre 检查负责 block/ask 与旧债提示；post 重算填上「初始全绿、单次写入引入
+    // drift/超预算」的首写盲点。真实调用携带原 exec.arguments；旧测试/异常适配器
+    // 若未回传路径，才退回 pre 挂起理由。失败、被策略拦截或取消的写入均不结算。
     ctx.on('tools/post-execute', async (exec, result, next) => {
-      const st = stateFor(exec && exec.agent)
-      if (!st.enabled) return next()
+      const outcome = await next()
+      try {
+        const st = stateFor(exec && exec.agent)
+        if (!st.enabled) return outcome
 
-      if (st.pendingRemind.size === 0) return next()
-      const pending = st.pendingRemind.get(exec && exec.callId)
-      if (!pending) return next()
-      st.pendingRemind.delete(exec.callId)
-      // 并发同类别双写：首条投递已消耗该类别，后续挂起条目静默丢弃（remindOnce）
-      if (st.reminded.has(pending.category)) return next()
-      st.reminded.add(pending.category)
-      return lib.appendContexts(await next(), [makeUserMessage(pending.reason)])
+        const callId = exec && exec.callId
+        const pending = callId ? st.pendingRemind.get(callId) : undefined
+        if (callId) st.pendingRemind.delete(callId)
+        if (resultFailed(result) || (pending && pending.acknowledged)) return outcome
+
+        let category = pending && pending.category
+        let reason = pending && pending.reason
+        const tool = String(exec && exec.name || '').toLowerCase()
+        const args = exec && (exec.arguments ?? exec.args)
+        const rawPath = args && (args.file_path || args.path)
+
+        if (MUTATION_TOOLS.has(tool) && typeof rawPath === 'string' && rawPath.length > 0 && ensureWorkspaceState(st, rawPath)) {
+          const relPath = toRepoRel(st.workspaceRoot, rawPath)
+          const actualCategory = classifyWrite(relPath, st.presetRoots, st.contract)
+          if (actualCategory && actualCategory !== 'parity') {
+            category = actualCategory
+            const failures = collectFailures(pickChecks(st.workspaceRoot, relPath, st.presetRoots, st.contract))
+            reason = failures.length > 0 ? 'kix-consistency: ' + failures.join(' ') : undefined
+          }
+        }
+
+        if (!category || !reason || st.reminded.has(category)) return outcome
+        // 非 accept decision 不携带 additionalContexts；此时不得空耗 remindOnce。
+        if (outcome && typeof outcome === 'object' && outcome.kind && outcome.kind !== 'accept') return outcome
+        // 并发同类别双写：首条真实投递消耗该类别，后续条目静默丢弃（remindOnce）。
+        st.reminded.add(category)
+        return lib.appendContexts(outcome, [makeUserMessage(reason)])
+      } catch (e) {
+        // post 观察绝不能把已成功的 write/edit 改报失败（DSH 会传播监听器异常）。
+        ctx.logger?.warn?.('kix-consistency: 写后重算跳过：' + (e && e.message ? e.message : String(e)))
+        return outcome
+      }
     })
 
     ctx.logger?.info?.('[kix-consistency] 一致性写时拦截已挂载（边界自感知：≥2 preset 根才引导，身份组 = 各根同名 plugins；契约层由 scripts 入口自声明；与 CI 共用 consistency-lib 单一事实源）')
@@ -330,6 +384,7 @@ module.exports.__internals = {
   hasContractEntry,
   toRepoRel,
   classifyWrite,
+  personaBudgetFor,
   pickChecks,
   buildParityHint,
   discoverRootsFromFile,

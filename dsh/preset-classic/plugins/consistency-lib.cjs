@@ -337,6 +337,75 @@ function checkEnPkgVersion({ root, rel, expected }) {
   return { failures, notes }
 }
 
+// subagent_cross is a capability contract, not a naming hint: the managed tool row must
+// stay bound to the non-degrading kix-route:cross sentinel, and the route plugin must
+// remain enabled. This closes the only configuration-drift path that could make
+// kix-settle overstate vendor independence after a successful same-vendor call.
+function checkCrossRouteBinding({ root, rel }) {
+  const failures = []
+  const notes = []
+  const text = read(root, rel)
+  if (text === null) return { failures: [rel + ': unreadable'], notes }
+  const lines = text.split(/\r?\n/)
+  const indentOf = (line) => (line.match(/^ */) || [''])[0].length
+  const entryBlock = (index, entryRe) => {
+    let start = index
+    while (start >= 0 && !entryRe.test(lines[start])) start--
+    if (start < 0) return []
+    const entryIndent = indentOf(lines[start])
+    let end = start + 1
+    while (end < lines.length) {
+      const line = lines[end]
+      if (line.trim() !== '' && !/^\s*#/.test(line)) {
+        const indent = indentOf(line)
+        if (indent < entryIndent || (indent === entryIndent && entryRe.test(line))) break
+      }
+      end++
+    }
+    return lines.slice(start, end)
+  }
+  const directChildIndex = (block, parentIndex, expected) => {
+    if (parentIndex < 0) return -1
+    const parentIndent = indentOf(block[parentIndex])
+    for (let index = parentIndex + 1; index < block.length; index++) {
+      const line = block[index]
+      if (line.trim() === '' || /^\s*#/.test(line)) continue
+      const indent = indentOf(line)
+      if (indent <= parentIndent) return -1
+      if (indent === parentIndent + 2 && line.trim() === expected) return index
+    }
+    return -1
+  }
+  const crossRows = lines
+    .map((line, index) => (/^\s+toolName:\s*subagent_cross\s*$/.test(line) ? index : -1))
+    .filter((index) => index >= 0)
+  if (crossRows.length !== 1) {
+    failures.push(rel + ': expected exactly one subagent_cross tool row, got ' + crossRows.length)
+  } else {
+    const block = entryBlock(crossRows[0], /^ {4}- id:\s*\S+/)
+    const toolIndent = block.length > 0 ? indentOf(block[0]) : -1
+    const configIndex = block.findIndex((line) =>
+      indentOf(line) === toolIndent + 2 && line.trim() === 'config:')
+    const agentOptionsIndex = directChildIndex(block, configIndex, 'agentOptions:')
+    const modelIndex = directChildIndex(block, agentOptionsIndex, 'model: kix-route:cross')
+    if (modelIndex < 0) {
+      failures.push(rel + ': subagent_cross must bind config.agentOptions.model to kix-route:cross')
+    }
+  }
+  const routeIndex = lines.findIndex((line) => /^- id:\s*kix-route\s*$/.test(line))
+  if (routeIndex < 0) {
+    failures.push(rel + ': enabled kix-route plugin row missing')
+  } else {
+    const block = entryBlock(routeIndex, /^- id:\s*\S+/)
+    if (!block.some((line) => /^ {2}name:\s*\.\/plugins\/kix-route\.js\s*$/.test(line)) ||
+        block.some((line) => /^ {2}disabled:\s*true\s*$/.test(line))) {
+      failures.push(rel + ': kix-route plugin must be enabled and load ./plugins/kix-route.js')
+    }
+  }
+  if (failures.length === 0) notes.push(rel + ': subagent_cross is bound to enabled kix-route:cross')
+  return { failures, notes }
+}
+
 // 本地 markdown 链接可达（相对链接目标；https/mailto/锚点跳过）
 function checkMarkdownLinks({ root, rel }) {
   const failures = []
@@ -435,6 +504,8 @@ function runAllZh(root) {
     checkPersonaBudget({ root, rel: 'dsh/preset/agent.cordis.yml', ...PERSONA_BUDGETS.zh }),
     checkPersonaBudget({ root, rel: 'dsh/preset-classic/agent.cordis.yml', ...PERSONA_BUDGETS.zh }),
     checkPersonaBudget({ root, rel: 'en/preset-classic-en/agent.cordis.yml', ...PERSONA_BUDGETS.en }),
+    ...['dsh/preset/agent.cordis.yml', 'dsh/preset-classic/agent.cordis.yml', 'dsh/preset-null/agent.cordis.yml', 'en/preset-classic-en/agent.cordis.yml']
+      .map((rel) => checkCrossRouteBinding({ root, rel })),
     // v1.3.0 身分组豁免：kix-budget 默认侧含 L3 验证补贴补丁（设计差异）；
     // probe/settle/mem 三件套仅存在于默认 preset（设计如此）。
     ...pluginNames(root)
@@ -463,6 +534,7 @@ function runAllZh(root) {
 function runAllEn(root, expectedVersion) {
   return merge(
     checkPersonaBudget({ root, rel: 'preset-classic-en/agent.cordis.yml', ...PERSONA_BUDGETS.en }),
+    checkCrossRouteBinding({ root, rel: 'preset-classic-en/agent.cordis.yml' }),
     checkEnPkgVersion({ root, rel: 'package.json', expected: expectedVersion }),
     checkMarkdownLinks({ root, rel: 'preset-classic-en' }),
     checkSyntax({ root, rel: 'preset-classic-en', label: 'en/preset-classic-en' }),
@@ -490,6 +562,7 @@ module.exports = {
   checkPluginPair,
   checkVersionPair,
   checkEnPkgVersion,
+  checkCrossRouteBinding,
   checkMarkdownLinks,
   checkSyntax,
   checkFileSyntax,
