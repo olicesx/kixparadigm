@@ -468,7 +468,7 @@ L3 当前是**降级实验模板**，不是已实现的自动编排。没有可�
 | max_tokens_per_session | 窗口×0.88（1M=880K） | 立即 handoff | Dojo + NeedleInAHaystack 2026 |
 | max_tokens_per_subagent_run | 窗口×0.25（1M=250K） | 中止该 run | Dojo per-run budget |
 | no_progress_threshold | 连续 2 轮无变化 | 标记 silent_failure | Dojo |
-| tool_failure_circuit_breaker | 同工具失败 3 次 | 降级 | Dojo |
+| tool_failure_circuit_breaker | 参数/schema 首错不原样重试；权限按审批契约；幂等暂态≤3 次总尝试（含首次） | 修正参数；仅不可满足 schema 换面；不得绕权限 | Dojo |
 | single_subagent_retry_cap | stage 间重试 1 次 | Blocked | Dojo |
 | l2_verification_retry_cap | L2 内 rubric-retry 2 次 | 转 Dual Loop | LangChain L2 |
 | blast_radius_commit_budget | task_sizing 派生（v5.0 公式 `dag_layers+strong_coupling_count+bug_reserve`，hard_cap=10） | hook 三级回退（progress.md→plan.md→默认 3） | 9 Ways blast radius |

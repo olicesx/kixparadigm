@@ -24,7 +24,7 @@ hooks:
       timeout: 10
 ---
 
-> **DSH 适配注记**：本角色定义从 VS Code Copilot 导入，在 DeepSeek Harness 中作为 subagent 分派的 prompt 模板使用（DSH 的 subagent 无 agentName 参数，把本文件角色 body 注入 prompt 即可）。文档中的工具名/机制映射见 preset 根 DSH-ADAPTATION.md（runSubagent→subagent/subagent_cross、run_in_terminal→pwsh、vscode_askQuestions→ask_user_question、read_file→read、grep_search→grep、replace_string_in_file→edit、codegraphy_*→grep/read）。**机械门禁（Guardrails 表中 blast_radius_* / tool_failure 熔断）已由 `plugins/kix-guards.js` 自动强制（tools/pre-execute），orchestrator 不必自行实现 hook**；跨厂商子代理用 `subagent_cross`（kix-route 自动取反厂商），不写死模型字符串。角色职责、硬约束、可编辑范围原样生效。
+> **DSH 适配注记**：本角色定义从 VS Code Copilot 导入，在 DeepSeek Harness 中作为 subagent 分派的 prompt 模板使用（DSH 的 subagent 无 agentName 参数，把本文件角色 body 注入 prompt 即可）。文档中的工具名/机制映射见 preset 根 DSH-ADAPTATION.md（runSubagent→subagent/subagent_cross、run_in_terminal→pwsh、vscode_askQuestions→ask_user_question、read_file→read、grep_search→grep、replace_string_in_file→edit、codegraphy_*→grep/read）。**机械门禁中的 blast_radius_* 由 `plugins/kix-guards.js` 自动强制（tools/pre-execute）；tool_failure 熔断是按错误类型执行的模型纪律，不伪称插件自动强制**；跨厂商子代理用 `subagent_cross`（kix-route 自动取反厂商），不写死模型字符串。角色职责、硬约束、可编辑范围原样生效。
 
 # Kixpower Orchestrator — 全流程编排器
 
@@ -99,7 +99,7 @@ L1/L2 是单 Sprint 内的；L4 是跨 Sprint 的复利效应（build learning l
 | **max_tokens_per_session** | 窗口 × 0.88（默认 1M 模型=880K） | 立即 handoff，不再调用任何子 agent。**v3.7 改为百分比**：见 TEAM_CONVENTIONS.md「模型上下文窗口约定」 | 模型自律（compaction 由 harness 自动触发） |
 | **max_tokens_per_subagent_run** | 窗口 × 0.25（1M 模型=250K） | 单次 run 超阈值 → 中止该 run，计入 `single_subagent_retry_cap`，分析是否 plan.md 拆得不够细 | 模型自律（工具行 maxTokens 兜底） |
 | **no_progress_threshold** | 连续 2 轮子 agent 返回相同 status（artifacts 变更数为 0 且 progress.md 未变） | 标记 `silent_failure`，强制停，分析根因 | 模型自律（可配 kix-stalled） |
-| **tool_failure_circuit_breaker** | 同一工具失败 3 次 | 跳过该工具，降级（如 CodeGraphy → grep_search），记入 progress.md | 模型自律 |
+| **tool_failure_circuit_breaker** | 参数/schema 首错禁止原样重试；权限按 denial/approval 契约；幂等暂态最多 3 次总尝试（含首次） | 修正参数；仅 schema 不可满足时换面；不得换面绕权限，记入 progress.md | 模型自律 |
 | **single_subagent_retry_cap** | 单个 stage 的子 agent 最多重试 1 次（指 Producer/Dev/QA 三大阶段） | 仍失败 → Blocked 区块，交回用户 | 模型自律 |
 | **l2_verification_retry_cap** | L2 Verification Loop 内的 rubric-retry 最多 2 次（独立预算，不计入 stage retry） | 超出 → 转 Inner/Outer Dual Loop | 模型自律 |
 | **blast_radius_commit_budget** | **task_sizing 派生**（v5.0 公式：`dag_layers + strong_coupling_count + bug_reserve`，硬上限 10）| `blast-radius-check.ps1` hook 三级回退（progress.md → plan.md task_sizing → 冷启动兜底 3），超 hard_cap=10 硬阻止，超 derived 阻止可调，超 warn_threshold 软警告。v5.0 详见 TEAM_CONVENTIONS.md §Task Sizing。**反过拟合注**：旧 v4.x 公式 `ceil(task_count/3)+...` 对 dae Sprint1(k=7) 恰得 5，与被批的旧硬编码常数 5 巧合相等（因果倒置），v5.0 改用 δ 驱动后得 6，证明有信息增量 | ✅ **kix-guards 插件强制**（commit budget：reflog %gs 口径只数 commit 类条目 / hard cap 10 / progress.md → plan.md task_sizing → plan.md max_commits 兜底链 / 冷启动 3 必 warn / 过期 sprint 指针回退最大编号，v7） |

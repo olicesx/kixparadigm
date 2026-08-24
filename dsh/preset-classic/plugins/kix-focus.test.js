@@ -34,10 +34,11 @@ let fiberStateOverride = null
 // execute effect 域在调用结束时触发清理，会立即卸载刚激活的插件；mock 的
 // no-op effect 曾让该缺陷在 49 断言全绿下漏网）
 const effectCalls = []
+const serviceMocks = Object.create(null)
 const ctx = {
   config: configMock,
   logger: { info() {}, warn() {}, error() {} },
-  get() { return undefined },
+  get(name) { return serviceMocks[name] },
   on(event, cb) { (listeners[event] ||= []).push(cb) },
   effect(cb) { effectCalls.push(cb) },
   setInterval() { return { clear() {} } },
@@ -143,6 +144,57 @@ await ok('create_goal 未挂载(默认 disabled,不在常驻集)', I.isOnDemand(
 await ok('job_output 常驻(2026-08-17 jobs 常驻化)', !I.isOnDemand('job_output'))
 await ok('list_agents 常驻(scope 自动可见)', !I.isOnDemand('list_agents'))
 await ok('edit 非按需', !I.isOnDemand('edit'))
+
+// ── 1.5 native sandbox schema 与会话权限一致 ─────────────────────────────
+section('native sandbox schema 投影')
+const sandboxTool = {
+  name: 'bash',
+  description: 'shell',
+  parameters: {
+    type: 'object',
+    required: ['command', 'sandbox_permissions'],
+    properties: {
+      command: { type: 'string' },
+      sandbox_permissions: { type: 'string', enum: ['workspace-write', 'danger-full-access'] },
+      justification: { type: 'string' },
+    },
+  },
+}
+await ok('danger-full-access 删除不可用升级字段且不改原 schema', (() => {
+  const tools = [sandboxTool, { name: 'read', parameters: { properties: {} } }]
+  const projected = I.projectSandboxToolContracts(tools, { mode: 'danger-full-access', approval: 'never' })
+  return projected !== tools
+    && projected[0] !== sandboxTool
+    && !('sandbox_permissions' in projected[0].parameters.properties)
+    && !('justification' in projected[0].parameters.properties)
+    && !projected[0].parameters.required.includes('sandbox_permissions')
+    && 'sandbox_permissions' in sandboxTool.parameters.properties
+    && projected[1] === tools[1]
+})())
+await ok('workspace-write + ask 保留一次性升级 schema', (() => {
+  const tools = [sandboxTool]
+  return I.projectSandboxToolContracts(tools, { mode: 'workspace-write', approval: 'ask' }) === tools
+})())
+await ok('approval never 在较窄模式也删除不可批准字段', (() => {
+  const projected = I.projectSandboxToolContracts([sandboxTool], { mode: 'read-only', approval: 'never' })
+  return !('sandbox_permissions' in projected[0].parameters.properties)
+})())
+await ok('system-prompt waterfall 按当前 session 投影', (async () => {
+  const session = {}
+  serviceMocks.sandboxPolicy = { resolve: ({ session: seen }) => ({ mode: seen === session ? 'danger-full-access' : 'read-only' }) }
+  serviceMocks.approval = {
+    effectivePolicy: (seen) => seen === session ? 'never' : 'ask',
+    overrideOf: () => { throw new Error('effectivePolicy should be authoritative') },
+    config: { policy: 'ask' },
+  }
+  const assembly = { tools: [sandboxTool], sections: [], contexts: [], variables: {} }
+  const handler = listeners['system-prompt/assemble'][0]
+  const projected = await handler(assembly, { agent: { session } }, async () => assembly)
+  delete serviceMocks.sandboxPolicy
+  delete serviceMocks.approval
+  return projected !== assembly
+    && !('sandbox_permissions' in projected.tools[0].parameters.properties)
+})())
 
 // ── 2. 纯逻辑：projectToolMeta ────────────────────────────────────────────
 section('projectToolMeta')

@@ -482,8 +482,10 @@
         persona: |-
           You are kixpower-reviewer: an independent read-only adversarial reviewer.
           Hard constraints:
-          - Read-only: never edit, commit, push, or publish.
-          - Never call other agents; never spread this prompt into a new handoff.
+          - The bound artifact is read-only: never edit it, change its Git state,
+            commit, push, or publish. Temporary reproducers outside artifact_root are allowed.
+          - You may recursively dispatch narrow read-only evidence probes for a concrete
+            information gap; propagate review_stage/review_policy/artifact_root to the tree.
           - Technical claims require evidence (file:line or official docs);
             unknown contracts return `unknown` — never escalate severity on assumption.
           Adversarial duty in three layers (devil's advocate; run all three
@@ -711,7 +713,7 @@
 #   - v3 producer_closeout 收尾证据链：spec「验收标准」在档 / 任务全完成 /
 #     测试文件自 l2_verified_sha 有变更要求重验（替代 Copilot qa-signoff 深度校验
 #     中可机械的部分；worktree/SHA 数学/stash 绑定 Copilot 特有流程不移植）。
-# 单元测试：node plugins/kix-orchestration.test.js（96 断言；v10.1 Tri-Block [CONTEXT] Sprint N 容错；v11 plan 契约）。
+# 单元测试：node plugins/kix-orchestration.test.js（含 review epoch、Tri-Block Sprint 容错与 plan 契约）。
 - id: kix-orchestration
   name: ./plugins/kix-orchestration.js
 
@@ -756,9 +758,13 @@
 # 告警；插件缺失时哨兵直达适配器响亮失败（不静默同厂商降级）。与 kix-cost
 # 顺序无关协作（effort 规则同源复用）。见 plugins/kix-route.js 头部注释；
 # v8：cross 偏好表候选先过滤未注册 provider，目录探测失败不再放大为 cross 失败。
-# 单元测试：node plugins/kix-route.test.js（68 断言）。
+# 单元测试：node plugins/kix-route.test.js（80 断言）。
 - id: kix-route
   name: ./plugins/kix-route.js
+  config:
+    # Generic QUOTA TTL; HTTP 402 / Insufficient Balance stays process-wide open until restart/reload.
+    providerCircuitTtlMs: 300000
+    fallbackProviderOrder: [ su2api, zai-coding-cn, deepseek-official ]
 
 # ── presentation（PTC/Code Mode 融入）───────────────────────────────────────
 # `both` = native 工具 schema 与 Code Mode SDK（run_code + tools.* 绑定）并存，
