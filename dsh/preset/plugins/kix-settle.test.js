@@ -1,289 +1,298 @@
-// kix-settle 回归测试（P0；v2 高置信提交；v3 2026-08-23 同源置信降档）
+// kix-settle 回归测试（terminal lifecycle + revision freshness，2026-08-24）
 //
-// 单元级验证：加载 kix-settle.js，mock DSH post-execute / agent/turn-stopping
-// 派发，覆盖：
-//   - 监听器注册：post-execute 观察 + turn-stopping 投递各一个
-//   - post-execute 记账：edit/write 计数、probe/run_code/执行类 bash 记为证据
-//   - turn-stopping 投递：有编辑 + 末次编辑后无执行 → steer 单发；
-//     有执行证据 → 不提醒；无编辑 → 不提醒；reminded 单发不重复
-//   - 工作区外文件不计入编辑
-//   - v2/v3 高置信提交：无 fresh observer → commit-blind；只有同源 fresh
-//     observer → 单模型置信降档；成功 cross → 清账；失败 observer 不记账；
-//     非结论姿态不触发；两路 reminded 各自单发
-// 运行：node plugins/kix-settle.test.js
+// 覆盖：
+//   - 源码/测试编辑跨 worktree 记账；文档/运行产物不触发实现结算
+//   - bash/Go foreground 只按 exitCode=0 的 terminal 结果记账
+//   - background job 启动/运行不算证据；同 edit generation 的 completed 才清账
+//   - subagent spawn 不算 fresh；subagent/end=completed 且有 closing message 才算
+//   - 不以工具名推断 provider 独立性，不因已有成功 fresh observer 机械追加观察
+'use strict'
 
-const path = require('node:path')
 const assert = require('node:assert')
 const os = require('node:os')
+const path = require('node:path')
 const fs = require('node:fs')
 
-// ── mock ctx ───────────────────────────────────────────────────────────────
 const listeners = {}
+const runtimeAgents = new Map()
 let sessionQueryMock = null
 const ctx = {
   logger: { info() {}, warn() {}, error() {} },
-  get(name) { if (name === 'sessionQuery') return sessionQueryMock; return undefined },
-  on(event, cb) { ;(listeners[event] ||= []).push(cb) },
-  effect() {},
+  get(name) {
+    if (name === 'sessionQuery') return sessionQueryMock
+    if (name === 'agents') return { get: (id) => runtimeAgents.get(String(id)) }
+    return undefined
+  },
+  on(event, cb) { (listeners[event] ||= []).push(cb) },
 }
 
-// ── 加载被测试插件 ────────────────────────────────────────────────────────
-const plugin = require(path.join(__dirname, 'kix-settle.js'))
-assert.strictEqual(plugin.name, 'kix-settle')
-plugin.apply(ctx)
-const postExecute = listeners['tools/post-execute']
-const turnStopping = listeners['agent/turn-stopping']
-assert.ok(Array.isArray(postExecute) && postExecute.length === 1, 'post-execute 监听器已注册')
-assert.ok(Array.isArray(turnStopping) && turnStopping.length === 1, 'turn-stopping 监听器已注册（投递端补齐）')
-
+const plugin = require('./kix-settle.js')
 const I = plugin.__internals
-assert.ok(I && typeof I.looksLikeVerdict === 'function', '__internals 导出判定函数')
+plugin.apply(ctx)
 
-// ── 模拟 DSH 派发 ─────────────────────────────────────────────────────────
-let steered = []
+assert.strictEqual(listeners['tools/post-execute'].length, 1, 'post-execute 监听器')
+assert.strictEqual(listeners['agent/turn-stopping'].length, 1, 'turn-stopping 监听器')
+assert.strictEqual(listeners['subagent/start'].length, 1, 'subagent/start 监听器')
+assert.strictEqual(listeners['subagent/end'].length, 1, 'subagent/end 监听器')
+assert.ok(I && typeof I.terminalJobOutcome === 'function', '__internals 导出终态判定')
+
+const postExecute = listeners['tools/post-execute'][0]
+const turnStopping = listeners['agent/turn-stopping'][0]
+const subagentStart = listeners['subagent/start'][0]
+const subagentEnd = listeners['subagent/end'][0]
 const sessionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kix-settle-session-'))
-const sessionHeader = { cwd: sessionRoot }
+const steered = []
 
-function mkAgent(agentId) {
-  return { id: agentId, session: { id: 'session-' + agentId, header: sessionHeader }, steer(msg) { steered.push(msg) } }
-}
-
-function dispatchPostAs(name, args, result, agentId = 'a1') {
-  const exec = { name, arguments: args, token: 't', callId: 'c', agent: mkAgent(agentId) }
-  return postExecute[0](exec, result || { isError: false }, () => Promise.resolve({ kind: 'accept' }))
-}
-function dispatchPost(name, args, result) { return dispatchPostAs(name, args, result) }
-
-async function dispatchTurnAs(agentId = 'a1') {
-  steered = []
-  return turnStopping[0]({ agent: mkAgent(agentId), turn: 1, signal: undefined })
-}
-
-function assistantSurface(text) {
+function mkAgent(id) {
   return {
-    events: [{
-      type: 'assistant/message',
-      data: { message: { content: [{ type: 'text', text }] } },
-    }],
+    id,
+    session: { id: 'session-' + id, header: { cwd: sessionRoot } },
+    steer(msg) { steered.push(msg) },
   }
 }
 
-function dispatchTurnFor(agentId, surface) {
-  sessionQueryMock = surface ? { readSurface: async () => surface } : null
-  steered = []
-  return turnStopping[0]({ agent: mkAgent(agentId), turn: 1, signal: undefined })
+function emitSubagentEnd(parent, info) {
+  const event = { runId: 'run-' + info.id, provider: 'spawn', local: true, ...info }
+  const child = { id: info.id, session: { id: info.id, header: { parentSession: parent.session.id } } }
+  runtimeAgents.set(parent.session.id, parent)
+  runtimeAgents.set(child.id, child)
+  subagentStart({ runId: event.runId, provider: event.provider, id: event.id, local: event.local })
+  runtimeAgents.delete(child.id)
+  subagentEnd(event)
+}
+
+function sourceEdit(agent, file = path.join(sessionRoot, 'src', 'x.js')) {
+  return postExecute({ name: 'edit', arguments: { file_path: file }, callId: 'edit', agent }, { isError: false }, () => Promise.resolve({ kind: 'accept' }))
+}
+
+function post(agent, name, args, value, isError = false) {
+  return postExecute(
+    { name, arguments: args || {}, callId: name + '-call', agent },
+    { isError, value },
+    () => Promise.resolve({ kind: 'accept' }),
+  )
+}
+
+function foreground(exitCode = 0, extra = {}) {
+  return { kind: 'foreground', exitCode, timedOut: false, aborted: false, ...extra }
+}
+
+function background(jobId) { return { kind: 'background', jobId } }
+function job(id, status, detail) { return { text: '', job: { id, status, detail } } }
+
+function surface(text) {
+  return { events: [{ type: 'assistant/message', data: { message: { content: [{ type: 'text', text }] } } }] }
+}
+
+async function stop(agent, text = 'Implementation complete') {
+  sessionQueryMock = { readSurface: async () => surface(text) }
+  await turnStopping({ agent, turn: 1, signal: undefined })
 }
 
 let passed = 0
 let failed = 0
-async function ok(label, cond) {
-  let value = false
-  try { value = Boolean(await cond) } catch (e) { console.error(e); value = false }
-  if (value) { passed++ } else { failed++ }
-  console.log(`${value ? 'PASS' : 'FAIL'}  ${label}`)
+async function ok(label, fn) {
+  try {
+    const value = await fn()
+    assert.ok(value)
+    passed++
+    console.log('PASS  ' + label)
+  } catch (error) {
+    failed++
+    console.error('FAIL  ' + label + ': ' + error.message)
+  }
 }
 function section(title) { console.log('\n── ' + title + ' ──') }
 
-async function main() {
-// ── 1. post-execute 记账 ──────────────────────────────────────────────────
-section('post-execute 记账')
-await ok('edit 计入编辑且清除执行证据', (async () => {
-  await dispatchPost('edit', { file_path: path.join(sessionRoot, 'a.py') })
-  await dispatchTurnAs()
+;(async () => {
+section('pure lifecycle predicates')
+await ok('foreground 仅 exitCode=0 且无 timeout/denial 成功', () =>
+  I.foregroundExecutionSucceeded({ isError: false, value: foreground(0) }) &&
+  !I.foregroundExecutionSucceeded({ isError: false, value: foreground(1) }) &&
+  !I.foregroundExecutionSucceeded({ isError: false, value: foreground(0, { timedOut: true }) }) &&
+  !I.foregroundExecutionSucceeded({ isError: false, value: foreground(0, { sandbox: { denied: true } }) }))
+await ok('background 只提取 jobId，不伪装 terminal', () =>
+  I.backgroundJobId({ isError: false, value: background('j1') }) === 'j1' &&
+  I.foregroundExecutionSucceeded({ isError: false, value: background('j1') }) === false)
+await ok('job completed exit0 成功，nonzero/failed/killed 失败，running 未终态', () => {
+  const yes = I.terminalJobOutcome({ isError: false, value: job('j1', 'completed', 'exit code: 0') })
+  const nonzero = I.terminalJobOutcome({ isError: false, value: job('j2', 'completed', 'exit code: 2') })
+  const failedJob = I.terminalJobOutcome({ isError: false, value: job('j3', 'failed', 'boom') })
+  const running = I.terminalJobOutcome({ isError: false, value: job('j4', 'running') })
+  return yes.success && !nonzero.success && !failedJob.success && running === undefined
+})
+await ok('subagent 仅 completed + closing message 成功', () =>
+  I.subagentCompleted({ stopReason: 'completed', lastAssistantMessage: [{ type: 'text', text: 'evidence' }] }) &&
+  !I.subagentCompleted({ stopReason: 'max-tokens', lastAssistantMessage: [{ type: 'text', text: 'partial' }] }) &&
+  !I.subagentCompleted({ stopReason: 'completed', lastAssistantMessage: undefined }))
+
+section('cross-worktree edit and foreground verification')
+await ok('workspace 外源码编辑仍记账', async () => {
+  const agent = mkAgent('outside-edit')
+  steered.length = 0
+  await sourceEdit(agent, path.join(os.tmpdir(), 'other-worktree', 'x.go'))
+  await stop(agent)
+  return steered.length === 1 && steered[0].content[0].text.includes('源码/测试编辑')
+})
+await ok('文档编辑不要求执行结算', async () => {
+  const agent = mkAgent('docs-edit')
+  steered.length = 0
+  await sourceEdit(agent, path.join(sessionRoot, 'README.md'))
+  await stop(agent)
+  return steered.length === 0
+})
+await ok('失败的 edit/write 调用不伪装已发生 mutation', async () => {
+  const agent = mkAgent('failed-edit')
+  steered.length = 0
+  await post(agent, 'edit', { file_path: path.join(sessionRoot, 'src', 'failed.js') }, undefined, true)
+  await stop(agent)
+  return steered.length === 0
+})
+await ok('Go test foreground exit0 清账', async () => {
+  const agent = mkAgent('go-green')
+  steered.length = 0
+  await sourceEdit(agent)
+  await post(agent, 'bash', { command: 'go test ./...' }, foreground(0))
+  await stop(agent)
+  return steered.length === 0
+})
+await ok('Go test foreground nonzero 不清账', async () => {
+  const agent = mkAgent('go-red')
+  steered.length = 0
+  await sourceEdit(agent)
+  await post(agent, 'bash', { command: 'go test ./...' }, foreground(1))
+  await stop(agent)
+  return steered.length === 1 && steered[0].content[0].text.includes('没有成功终态')
+})
+await ok('go build/vet/mod verify 属于结算验证，不冒充 red-green test', async () => {
+  const agent = mkAgent('go-verify')
+  steered.length = 0
+  await sourceEdit(agent)
+  await post(agent, 'bash', { command: 'go vet ./... && go build ./... && go mod verify' }, foreground(0))
+  await stop(agent)
+  return steered.length === 0
+})
+await ok('普通 git status 不清账', async () => {
+  const agent = mkAgent('git-status')
+  steered.length = 0
+  await sourceEdit(agent)
+  await post(agent, 'bash', { command: 'git status --short' }, foreground(0))
+  await stop(agent)
   return steered.length === 1
-})())
-
-// ── 2. turn-stopping 投递 ─────────────────────────────────────────────────
-section('turn-stopping 投递')
-await ok('有编辑 + 无执行证据 → steer 单发', (async () => {
-  await dispatchPostAs('edit', { file_path: path.join(sessionRoot, 'b.py') }, undefined, 'a2')
-  await dispatchTurnAs('a2')
-  return steered.length === 1 && steered[0].role === 'user' && /kix-settle/.test(steered[0].content[0].text)
-})())
-await ok('steer 含按零结算语义', (async () => {
-  await dispatchPostAs('edit', { file_path: path.join(sessionRoot, 'c.py') }, undefined, 'a3')
-  await dispatchTurnAs('a3')
-  return steered.length === 1 && /无执行证据的结论按零结算/.test(steered[0].content[0].text)
-})())
-await ok('编辑后 probe → 不提醒（执行证据清账）', (async () => {
-  await dispatchPostAs('edit', { file_path: path.join(sessionRoot, 'd.py') }, undefined, 'a4')
-  await dispatchPostAs('probe', { code: 'print(1)' }, undefined, 'a4')
-  await dispatchTurnAs('a4')
-  return steered.length === 0
-})())
-await ok('编辑后 run_code → 不提醒', (async () => {
-  await dispatchPostAs('edit', { file_path: path.join(sessionRoot, 'e.py') }, undefined, 'a5')
-  await dispatchPostAs('run_code', { code: 'return 1', description: 'x' }, undefined, 'a5')
-  await dispatchTurnAs('a5')
-  return steered.length === 0
-})())
-await ok('编辑后执行类 bash → 不提醒', (async () => {
-  await dispatchPostAs('edit', { file_path: path.join(sessionRoot, 'f.py') }, undefined, 'a6')
-  await dispatchPostAs('bash', { command: 'python -c "print(1)"' }, undefined, 'a6')
-  await dispatchTurnAs('a6')
-  return steered.length === 0
-})())
-await ok('无编辑 → 不提醒', (async () => {
-  await dispatchTurnAs('a7')
-  return steered.length === 0
-})())
-await ok('write 也算编辑', (async () => {
-  await dispatchPostAs('write', { file_path: path.join(sessionRoot, 'g.py'), content: 'x' }, undefined, 'a8')
-  await dispatchTurnAs('a8')
+})
+await ok('probe exit0 清账，exit1 不清账', async () => {
+  const green = mkAgent('probe-green')
+  steered.length = 0
+  await sourceEdit(green)
+  await post(green, 'probe', { code: 'print(1)' }, { exitCode: 0 })
+  await stop(green)
+  if (steered.length !== 0) return false
+  const red = mkAgent('probe-red')
+  await sourceEdit(red)
+  await post(red, 'probe', { code: 'raise Exception()' }, { exitCode: 1 })
+  await stop(red)
   return steered.length === 1
-})())
-await ok('工作区外文件不计入编辑', (async () => {
-  await dispatchPostAs('edit', { file_path: path.join(os.tmpdir(), 'outside.py') }, undefined, 'a9')
-  await dispatchTurnAs('a9')
-  return steered.length === 0
-})())
+})
 
-// ── 3. 单发语义 ───────────────────────────────────────────────────────────
-section('reminded 单发')
-await ok('同会话第二次满足条件不重复提醒', (async () => {
-  await dispatchPostAs('edit', { file_path: path.join(sessionRoot, 'h.py') }, undefined, 'a10')
-  await dispatchTurnAs('a10')
-  const first = steered.length
-  await dispatchPostAs('edit', { file_path: path.join(sessionRoot, 'i.py') }, undefined, 'a10')
-  await dispatchTurnAs('a10')
-  return first === 1 && steered.length === 0
-})())
+section('background terminal accounting')
+await ok('background start/运行中不算证据，提示该等未等', async () => {
+  const agent = mkAgent('job-pending')
+  steered.length = 0
+  await sourceEdit(agent)
+  await post(agent, 'bash', { command: 'go test ./...' }, background('job-pending'))
+  await post(agent, 'job_output', { job_id: 'job-pending' }, job('job-pending', 'running'))
+  await stop(agent)
+  return steered.length === 1 && steered[0].content[0].text.includes('仍未终态')
+})
+await ok('同 revision background completed exit0 清账', async () => {
+  const agent = mkAgent('job-green')
+  steered.length = 0
+  await sourceEdit(agent)
+  await post(agent, 'bash', { command: 'go test ./...' }, background('job-green'))
+  await post(agent, 'job_output', { job_id: 'job-green' }, job('job-green', 'completed', 'exit code: 0'))
+  await stop(agent)
+  return steered.length === 0
+})
+await ok('background completed nonzero 不清账', async () => {
+  const agent = mkAgent('job-red')
+  steered.length = 0
+  await sourceEdit(agent)
+  await post(agent, 'bash', { command: 'go test ./...' }, background('job-red'))
+  await post(agent, 'job_output', { job_id: 'job-red' }, job('job-red', 'completed', 'exit code: 1'))
+  await stop(agent)
+  return steered.length === 1 && steered[0].content[0].text.includes('没有成功终态')
+})
+await ok('旧 revision job 成功不能清掉新编辑', async () => {
+  const agent = mkAgent('job-stale')
+  steered.length = 0
+  await sourceEdit(agent, path.join(sessionRoot, 'src', 'a.go'))
+  await post(agent, 'bash', { command: 'go test ./...' }, background('job-stale'))
+  await sourceEdit(agent, path.join(sessionRoot, 'src', 'b.go'))
+  await post(agent, 'job_output', { job_id: 'job-stale' }, job('job-stale', 'completed', 'exit code: 0'))
+  await stop(agent)
+  return steered.length === 1 && steered[0].content[0].text.includes('没有成功终态')
+})
 
-// ── 4. v2 纯判定 ──────────────────────────────────────────────────────────
-section('v2 纯判定 __internals')
-await ok('LGTM 命中结论姿态', I.looksLikeVerdict('**LGTM**，附 4 条 minor note'))
-await ok('APPROVE 命中', I.looksLikeVerdict('Verdict: APPROVE'))
-await ok('request-changes 命中', I.looksLikeVerdict('判定：request-changes'))
-await ok('可以合并命中', I.looksLikeVerdict('结论：可以合并，附注意事项'))
-await ok('进行中不命中', !I.looksLikeVerdict('正在读 diff，下一步跑测试'))
-await ok('软赞不命中', !I.looksLikeVerdict('看起来不错，暂无问题'))
-await ok('空文本不命中', !I.looksLikeVerdict(''))
-await ok('capability_call 代理 reviewer 解析为目标名', I.resolvedToolName({ name: 'kix_capability_call', arguments: { tool: 'subagent_reviewer' } }) === 'subagent_reviewer')
-await ok('直呼 subagent_cross 原名', I.resolvedToolName({ name: 'subagent_cross' }) === 'subagent_cross')
-await ok('reviewer 只算 fresh observer', I.observerLevel('subagent_reviewer') === 'fresh')
-await ok('普通 subagent 只算 fresh observer', I.observerLevel('subagent') === 'fresh')
-await ok('cross 算 vendor-independent observer', I.observerLevel('subagent_cross') === 'vendor-independent')
-await ok('lite 不算观察者（取证档不是对抗采样）', I.observerLevel('subagent_lite') === undefined)
-await ok('直接失败的 observer 不记账', !I.observerResultSucceeded({ name: 'subagent_cross' }, { isError: true }))
-await ok('capability_call 内层失败不记账', !I.observerResultSucceeded(
-  { name: 'kix_capability_call' },
-  { isError: false, value: { ok: true, result: { isError: true } } },
-))
-await ok('capability_call 内层成功可记账', I.observerResultSucceeded(
-  { name: 'kix_capability_call' },
-  { isError: false, value: { ok: true, result: { isError: false } } },
-))
-await ok('capability_call 缺 value → unknown 不记账', !I.observerResultSucceeded(
-  { name: 'kix_capability_call' },
-  { isError: false },
-))
-await ok('capability_call 只有 content → unknown 不记账', !I.observerResultSucceeded(
-  { name: 'kix_capability_call' },
-  { isError: false, content: [{ type: 'text', text: 'done' }] },
-))
-await ok('capability_call null value → unknown 不记账', !I.observerResultSucceeded(
-  { name: 'kix_capability_call' },
-  { isError: false, value: null },
-))
-await ok('capability_call primitive value → unknown 不记账', !I.observerResultSucceeded(
-  { name: 'kix_capability_call' },
-  { isError: false, value: 'done' },
-))
-await ok('capability_call 缺 nested result → unknown 不记账', !I.observerResultSucceeded(
-  { name: 'kix_capability_call' },
-  { isError: false, value: { ok: true } },
-))
-await ok('capability_call null nested result → unknown 不记账', !I.observerResultSucceeded(
-  { name: 'kix_capability_call' },
-  { isError: false, value: { ok: true, result: null } },
-))
-await ok('lastAssistantText 取最近一条', I.lastAssistantText(assistantSurface('LGTM')) === 'LGTM')
-
-// ── 5. v2 高置信提交投递 ──────────────────────────────────────────────────
-section('v2 高置信提交')
-await ok('无编辑 + LGTM 终稿 + 无观察者 → commit-blind steer', (async () => {
-  await dispatchTurnFor('b1', assistantSurface('**LGTM**，4 条 minor'))
-  return steered.length === 1 && /高置信提交时刻失明/.test(steered[0].content[0].text)
-})())
-await ok('无编辑 + 进行中终稿 → 不提醒', (async () => {
-  await dispatchTurnFor('b2', assistantSurface('正在读 runtime.rs 兜底链'))
+section('observer terminal accounting and stopping pressure')
+await ok('subagent spawn 成功但未 end → 不算 fresh', async () => {
+  const agent = mkAgent('spawn-only')
+  steered.length = 0
+  await post(agent, 'subagent_cross', { prompt: 'review' }, { kind: 'continuable', subagentId: 'child-spawn' })
+  await stop(agent, 'APPROVE')
+  return steered.length === 1 && steered[0].content[0].text.includes('未派过任何成功')
+})
+await ok('失败/无 closing message child 不算 fresh', async () => {
+  const failedAgent = mkAgent('child-failed')
+  steered.length = 0
+  emitSubagentEnd(failedAgent, { id: 'c-fail', stopReason: 'error', lastAssistantMessage: [{ type: 'text', text: 'partial' }] })
+  await stop(failedAgent, 'APPROVE')
+  if (steered.length !== 1) return false
+  const emptyAgent = mkAgent('child-empty')
+  steered.length = 0
+  emitSubagentEnd(emptyAgent, { id: 'c-empty', stopReason: 'completed', lastAssistantMessage: undefined })
+  await stop(emptyAgent, 'APPROVE')
+  return steered.length === 1
+})
+await ok('任意成功 fresh child 已足够结算，不因 provider 工具名补票', async () => {
+  const agent = mkAgent('child-green')
+  steered.length = 0
+  emitSubagentEnd(agent, { id: 'c-green', stopReason: 'completed', lastAssistantMessage: [{ type: 'text', text: 'evidence-backed review' }] })
+  await stop(agent, 'APPROVE')
   return steered.length === 0
-})())
-await ok('无编辑 + 无 sessionQuery → 静默跳过', (async () => {
-  sessionQueryMock = null
-  steered = []
-  await turnStopping[0]({ agent: mkAgent('b3'), turn: 1, signal: undefined })
+})
+await ok('可复算物证已存在时不机械要求 fresh observer', async () => {
+  const agent = mkAgent('physical-green')
+  steered.length = 0
+  await post(agent, 'bash', { command: 'go test ./...' }, foreground(0))
+  await stop(agent, 'APPROVE')
   return steered.length === 0
-})())
-await ok('成功 subagent_cross → 不提醒（跨厂商独立性清账）', (async () => {
-  await dispatchPostAs('subagent_cross', { prompt: '独立读 fallback 链' }, undefined, 'b4')
-  await dispatchTurnFor('b4', assistantSurface('LGTM'))
+})
+await ok('非 verdict 文本不触发 commit-blind', async () => {
+  const agent = mkAgent('no-verdict')
+  steered.length = 0
+  await stop(agent, 'Still investigating the implementation')
   return steered.length === 0
-})())
-await ok('capability_call 代理 reviewer → 单模型置信提醒', (async () => {
-  await dispatchPostAs(
-    'kix_capability_call',
-    { tool: 'subagent_reviewer', arguments: { prompt: '反方' } },
-    { isError: false, value: { ok: true, result: { isError: false } } },
-    'b5',
-  )
-  await dispatchTurnFor('b5', assistantSurface('request-changes'))
-  return steered.length === 1 && /单模型置信/.test(steered[0].content[0].text)
-})())
-await ok('普通 subagent → 单模型置信提醒', (async () => {
-  await dispatchPostAs('subagent', { prompt: 'fresh context' }, undefined, 'b6')
-  await dispatchTurnFor('b6', assistantSurface('可以合并'))
-  return steered.length === 1 && /没有成功的跨厂商观察通道/.test(steered[0].content[0].text)
-})())
-await ok('失败 subagent_cross → 仍按无 fresh observer 提醒', (async () => {
-  await dispatchPostAs('subagent_cross', { prompt: 'cross' }, { isError: true }, 'b7')
-  await dispatchTurnFor('b7', assistantSurface('LGTM'))
-  return steered.length === 1 && /未派过任何成功的 fresh 观察者/.test(steered[0].content[0].text)
-})())
-await ok('capability_call 内层失败 reviewer → 不计 fresh observer', (async () => {
-  await dispatchPostAs(
-    'kix_capability_call',
-    { tool: 'subagent_reviewer', arguments: { prompt: '反方' } },
-    { isError: false, value: { ok: true, result: { isError: true } } },
-    'b8',
-  )
-  await dispatchTurnFor('b8', assistantSurface('APPROVE'))
-  return steered.length === 1 && /未派过任何成功的 fresh 观察者/.test(steered[0].content[0].text)
-})())
-await ok('直呼 subagent_lite 不清账（不是对抗观察）', (async () => {
-  await dispatchPostAs('subagent_lite', { prompt: '读文件' }, undefined, 'b9')
-  await dispatchTurnFor('b9', assistantSurface('可以合并'))
-  return steered.length === 1 && /未派过任何成功的 fresh 观察者/.test(steered[0].content[0].text)
-})())
-await ok('有编辑的实现任务不走审查结论路', (async () => {
-  await dispatchPostAs('edit', { file_path: path.join(sessionRoot, 'j.py') }, undefined, 'b10')
-  await dispatchPostAs('probe', { code: 'print(1)' }, undefined, 'b10')
-  await dispatchTurnFor('b10', assistantSurface('LGTM'))
-  return steered.length === 0
-})())
-await ok('commit-blind 同会话不重复', (async () => {
-  await dispatchTurnFor('b11', assistantSurface('APPROVE'))
-  const first = steered.length
-  await dispatchTurnFor('b11', assistantSurface('APPROVE'))
-  return first === 1 && steered.length === 0
-})())
-await ok('单模型置信提醒同会话不重复', (async () => {
-  await dispatchPostAs('subagent', { prompt: 'fresh context' }, undefined, 'b12')
-  await dispatchTurnFor('b12', assistantSurface('APPROVE'))
-  const first = steered.length
-  await dispatchTurnFor('b12', assistantSurface('APPROVE'))
-  return first === 1 && steered.length === 0
-})())
-await ok('readSurface 抛错静默', (async () => {
+})
+await ok('commit-blind 同会话只提醒一次', async () => {
+  const agent = mkAgent('blind-once')
+  steered.length = 0
+  await stop(agent, 'APPROVE')
+  await stop(agent, 'APPROVE')
+  return steered.length === 1
+})
+await ok('readSurface 抛错静默', async () => {
+  const agent = mkAgent('surface-error')
+  steered.length = 0
   sessionQueryMock = { readSurface: async () => { throw new Error('boom') } }
-  steered = []
-  await turnStopping[0]({ agent: mkAgent('b13'), turn: 1, signal: undefined })
+  await turnStopping({ agent, turn: 1, signal: undefined })
   return steered.length === 0
-})())
+})
 
-// ── 汇总 ──────────────────────────────────────────────────────────────────
 console.log(`\n${passed} passed, ${failed} failed`)
+fs.rmSync(sessionRoot, { recursive: true, force: true })
 if (failed > 0) process.exit(1)
-}
-
-main()
+})().catch((error) => {
+  console.error(error)
+  fs.rmSync(sessionRoot, { recursive: true, force: true })
+  process.exit(1)
+})

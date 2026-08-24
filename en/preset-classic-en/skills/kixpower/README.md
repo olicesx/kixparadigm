@@ -81,7 +81,7 @@ VS Code Copilot Chat 输入 `/` 选择命令：
 ### 核心 Hard Guardrails + v5.7 信任链合同门禁
 
 - max_subagent_calls=10 / **max_tokens_per_session=窗口×0.88**（v3.7 改百分比，1M 模型=880K）/ **per-run=窗口×0.25**（1M=250K）
-- no_progress=2 / tool_failure=3 / stage retry=1 / L2 retry=2
+- no_progress=2 / tool_failure（参数/schema 原样重试=0，权限按审批契约，幂等暂态≤3 次总尝试（含首次））/ stage retry=1 / L2 retry=2
 - blast_radius: **commit_hard_cap=10（v4.0，取代旧的 commit≤5 常量）** / commit_budget 由 task_sizing 派生 / feature branch / no force push / no destructive SQL / no MCP main write
 - **max_parallelism=min(user_setting, dag.ω, 8)**（无 DAG 时回退项目历史，再无则 3）/ **synthesis_iteration_cap=5**（v3.5 终止兜底）
 
