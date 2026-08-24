@@ -18,8 +18,16 @@ const {
   resolveCrossRoute,
   resolveVisionRoute,
   resolveThinkerRoute,
+  resolveFallbackRoute,
   pickModel,
   decideTierAction,
+  quotaFailureOf,
+  hardQuotaFailure,
+  createProviderHealthCache,
+  quotaIncidentOf,
+  quotaFeedbackText,
+  providerCircuitFailText,
+  DEFAULT_PROVIDER_CIRCUIT_TTL_MS,
   crossFailText,
   visionFailText,
   thinkerFailText,
@@ -62,6 +70,43 @@ async function withListener(mod, services, fn) {
   mod.apply(ctx)
   if (typeof handler !== 'function') throw new Error('agent/request listener not captured')
   return fn({ call: (payload, seed) => handler(payload, () => Promise.resolve(seed)), services, warns })
+}
+
+async function withRuntime(mod, services, config, fn) {
+  const listeners = Object.create(null)
+  const listenerOptions = Object.create(null)
+  const warns = []
+  const ctx = {
+    on: (event, handler, options) => {
+      const list = (listeners[event] ||= [])
+      const prepend = options === true || options?.prepend === true
+      if (prepend) list.unshift(handler)
+      else list.push(handler)
+      ;(listenerOptions[event] ||= []).push(options)
+    },
+    get: (name) => services[name],
+    logger: { warn: (message) => warns.push(String(message)) },
+  }
+  mod.apply(ctx, config)
+  const emit = async (event, ...args) => {
+    for (const handler of listeners[event] || []) await handler(...args)
+  }
+  const waterfall = async (event, payload, terminal = () => Promise.resolve(undefined)) => {
+    const chain = listeners[event] || []
+    let next = terminal
+    for (let index = chain.length - 1; index >= 0; index--) {
+      const handler = chain[index]
+      const downstream = next
+      next = () => handler(payload, downstream)
+    }
+    return next()
+  }
+  const call = async (payload, seed) => {
+    const handler = (listeners['agent/request'] || [])[0]
+    if (typeof handler !== 'function') throw new Error('agent/request listener not captured')
+    return handler(payload, () => Promise.resolve(seed))
+  }
+  return fn({ emit, waterfall, call, listeners, listenerOptions, services, warns })
 }
 
 async function main() {
@@ -463,6 +508,160 @@ async function main() {
       const out = await handler(child(65536), () => Promise.resolve({ provider: 'zai-coding-cn', model: 'kix-route:cross', maxTokens: 65536 }))
       check('L11h config 覆盖 apply → cross 路由 other-org', out.provider === 'other-org' && out.model === 'm1')
     }
+  }
+
+  // ── Q1-Q10：QUOTA/402 provider 熔断、TTL、父代理反馈与新 child 改路由 ──
+  {
+    const byCode = quotaFailureOf({ failure: { code: 'QUOTA', message: 'Insufficient Balance' } })
+    const byStatus = quotaFailureOf({ cause: { status: 402, message: 'payment required' } })
+    check('Q1 QUOTA 或嵌套 HTTP 402 精确识别', byCode?.code === 'QUOTA' && byStatus?.status === 402)
+    check('Q2 429/网络/仅消息文本不误熔断',
+      quotaFailureOf({ code: 'RATE_LIMIT', status: 429 }) === undefined &&
+      quotaFailureOf({ code: 'NETWORK', message: 'Insufficient Balance' }) === undefined)
+  }
+  {
+    let now = 1000
+    const health = createProviderHealthCache(DEFAULT_PROVIDER_CIRCUIT_TTL_MS, () => now)
+    const hard = health.markQuota('deepseek-official', { code: 'QUOTA', status: 402, message: 'Insufficient Balance' })
+    now += DEFAULT_PROVIDER_CIRCUIT_TTL_MS * 100
+    const hardStillOpen = !health.isHealthy('deepseek-official')
+    const soft = health.markQuota('su2api', { code: 'QUOTA', message: 'temporary quota' })
+    now += DEFAULT_PROVIDER_CIRCUIT_TTL_MS
+    check('Q3 HTTP 402/余额不足硬熔断；其他 QUOTA 保留 TTL 半开',
+      hard.hard === true && hardStillOpen && soft.hard === false && health.isHealthy('su2api') &&
+      hardQuotaFailure({ status: 402 }) && hardQuotaFailure({ message: 'Insufficient Balance' }))
+  }
+  {
+    const agent = {
+      id: 'child-quota',
+      options: { subagentDepth: 1, provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+      session: { header: { origin: 'subagent', delegationDepth: 1 }, requestContext: () => ({ provider: 'deepseek-official', model: 'deepseek-v4-flash' }) },
+    }
+    const incident = quotaIncidentOf({ agent, turn: 1, step: 1, provider: 'deepseek-official', failure: { code: 'QUOTA', status: 402, message: 'Insufficient Balance' } })
+    check('Q4 仅真实 request-error 的 child 首轮首步生成熔断 incident', incident?.provider === 'deepseek-official' &&
+      quotaIncidentOf({ agent, turn: 1, step: 2, provider: 'deepseek-official', failure: { code: 'QUOTA' } }) === undefined &&
+      quotaIncidentOf({ agent: { ...agent, options: { subagentDepth: 0 }, session: { header: {}, requestContext: agent.session.requestContext } }, turn: 1, step: 1, provider: 'deepseek-official', failure: { code: 'QUOTA' } }) === undefined)
+    const entry = { hard: true, openedAt: 0, until: Number.POSITIVE_INFINITY }
+    const text = quotaFeedbackText(incident, entry)
+    check('Q5 父代理反馈包含零证据、禁止复用且不机械补派',
+      text.includes('deepseek-official/deepseek-v4-flash') && text.includes('零证据') &&
+      text.includes('不要等待或复用') && text.includes('不要为补票机械重派') && text.includes('未解决信息缺口'))
+  }
+  {
+    const llm = mockLlm({
+      providers: ['deepseek-official', 'zai-coding-cn', 'su2api'],
+      models: { 'deepseek-official': ['deepseek-v4-flash'], 'zai-coding-cn': ['glm-5.3'], su2api: ['gpt-5.6-luna', 'gpt-5.6-sol'] },
+      resolvable: new Set(['deepseek-official/deepseek-v4-flash', 'zai-coding-cn/glm-5.3', 'su2api/gpt-5.6-luna', 'su2api/gpt-5.6-sol']),
+    })
+    const hit = await resolveFallbackRoute(llm, undefined, undefined, (provider) => provider !== 'deepseek-official')
+    const crossHit = await resolveCrossRoute(llm, 'zai-coding-cn', undefined, undefined, (provider) => provider !== 'deepseek-official')
+    check('Q6 普通 fallback 跳过熔断并按偏好选择 su2api/sol', hit?.provider === 'su2api' && hit?.model === 'gpt-5.6-sol')
+    check('Q7 cross 保持异厂商约束并跳过熔断 DeepSeek', crossHit?.provider === 'su2api')
+  }
+  {
+    const llm = mockLlm({
+      providers: ['deepseek-official', 'su2api'],
+      models: { 'deepseek-official': ['deepseek-v4-flash'], su2api: ['gpt-5.6-luna', 'gpt-5.6-sol'] },
+      resolvable: new Set(['deepseek-official/deepseek-v4-flash', 'su2api/gpt-5.6-luna', 'su2api/gpt-5.6-sol']),
+    })
+    const realNow = Date.now
+    let fakeNow = 1000
+    Date.now = () => fakeNow
+    try {
+      const runtimeAgents = new Map()
+      const agents = { get: (id) => runtimeAgents.get(String(id)) }
+      await withRuntime(routeMod, { llm, agents }, { providerCircuitTtlMs: 200 }, async ({ emit, waterfall, call, listenerOptions, warns }) => {
+        const steers = []
+        const parent = { id: 'parent-1', steer: (message) => steers.push(message) }
+        const failedChild = {
+          id: 'child-402',
+          options: { subagentDepth: 1, provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+          session: { header: { origin: 'subagent', delegationDepth: 1, parentSession: 'parent-1' }, requestContext: () => ({ provider: 'deepseek-official', model: 'deepseek-v4-flash' }) },
+        }
+        runtimeAgents.set(parent.id, parent)
+        runtimeAgents.set(failedChild.id, failedChild)
+        await emit('subagent/start', { runId: 'run-child-402', id: 'child-402' })
+        const failure = { agent: failedChild, turn: 1, step: 1, provider: 'deepseek-official', failure: { code: 'QUOTA', status: 402, message: 'Insufficient Balance' } }
+        let retryCalls = 0
+        const firstAction = await waterfall('agent/request-error', failure, async () => { retryCalls++; return { kind: 'retry' } })
+        fakeNow += 120
+        const secondAction = await waterfall('agent/request-error', failure, async () => { retryCalls++; return { kind: 'retry' } })
+        // 跨过第一次 deadline（200ms），但仍处于第二次 QUOTA 刷新的 deadline 内。
+        fakeNow += 120
+        const notice = steers[0]?.content?.[0]?.text || ''
+        check('Q8 request-error prepend 首次 402 即硬熔断、阻止旧 child retry、恰好 steer 一次且不命令重派',
+          listenerOptions['agent/request-error']?.[0] === true && firstAction === undefined && secondAction === undefined && retryCalls === 0 &&
+          steers.length === 1 && steers[0]?.source?.plugin === 'kix-route' && notice.includes('零证据') &&
+          notice.includes('不要为补票机械重派') && !notice.includes('立即用一个新的'))
+        const fresh = { agent: { id: 'child-retry', options: { subagentDepth: 1 } }, signal: undefined }
+        const rerouted = await call(fresh, { provider: 'deepseek-official', model: 'deepseek-v4-flash', maxTokens: 8192 })
+        check('Q9 协调线程仅在信息缺口仍存在时另派 child，健康路由会跳过硬熔断 provider', rerouted.provider === 'su2api' && rerouted.model === 'gpt-5.6-sol' && warns.some((w) => w.includes('改路由')))
+      })
+    } finally {
+      Date.now = realNow
+    }
+  }
+  {
+    const llm = mockLlm({ providers: ['deepseek-official'], models: { 'deepseek-official': ['deepseek-v4-flash'] }, resolvable: new Set(['deepseek-official/deepseek-v4-flash']) })
+    const runtimeAgents = new Map()
+    const agents = { get: (id) => runtimeAgents.get(String(id)) }
+    await withRuntime(routeMod, { llm, agents }, undefined, async ({ emit, waterfall, call }) => {
+      const steers = []
+      const parent = { id: 'parent-rate-limit', steer: (message) => steers.push(message) }
+      const failedChild = {
+        id: 'child-rate-limit',
+        options: { subagentDepth: 1 },
+        session: { header: { origin: 'subagent', delegationDepth: 1, parentSession: parent.id }, requestContext: () => ({ provider: 'deepseek-official', model: 'deepseek-v4-flash' }) },
+      }
+      runtimeAgents.set(parent.id, parent)
+      runtimeAgents.set(failedChild.id, failedChild)
+      await emit('subagent/start', { runId: 'run-rate-limit', id: 'child-rate-limit' })
+      let downstream = 0
+      const action = await waterfall('agent/request-error', { agent: failedChild, turn: 1, step: 1, provider: 'deepseek-official', failure: { code: 'RATE_LIMIT', status: 429 } }, async () => { downstream++; return { kind: 'retry' } })
+      const seed = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }
+      const out = await call({ agent: { options: { subagentDepth: 1 } }, signal: undefined }, seed)
+      check('Q10 非 QUOTA 下传既有 retry、不 steer、不熔断、不改路由', steers.length === 0 && downstream === 1 && action?.kind === 'retry' && out === seed)
+    })
+  }
+  {
+    let now = 0
+    const health = createProviderHealthCache(DEFAULT_PROVIDER_CIRCUIT_TTL_MS, () => now)
+    health.markQuota('deepseek-official', { code: 'QUOTA' })
+    now += 4 * 60 * 1000
+    health.markQuota('deepseek-official', { code: 'QUOTA' })
+    now += 2 * 60 * 1000
+    const refreshedStillOpen = !health.isHealthy('deepseek-official')
+    now += 3 * 60 * 1000
+    check('Q11 并行/重复 QUOTA 刷新 provider TTL，旧 deadline 不会误半开', refreshedStillOpen && health.isHealthy('deepseek-official'))
+  }
+  {
+    const llm = mockLlm({
+      providers: ['zai-coding-cn', 'deepseek-official', 'su2api'],
+      models: { 'zai-coding-cn': ['glm-5.3'], 'deepseek-official': ['deepseek-v4-flash'], su2api: ['gpt-5.6-sol'] },
+      resolvable: new Set(['zai-coding-cn/glm-5.3', 'deepseek-official/deepseek-v4-flash', 'su2api/gpt-5.6-sol']),
+    })
+    const runtimeAgents = new Map()
+    const agents = { get: (id) => runtimeAgents.get(String(id)) }
+    await withRuntime(routeMod, { llm, agents }, { providerCircuitTtlMs: 5 }, async ({ emit, waterfall, call }) => {
+      const cachedAgent = { agent: { id: 'cached-cross', options: { subagentDepth: 1, maxTokens: 65536 } }, signal: undefined }
+      const seed = { provider: 'zai-coding-cn', model: 'kix-route:cross', maxTokens: 65536 }
+      const before = await call(cachedAgent, seed)
+      const parent = { id: 'parallel-parent', steer() {} }
+      const failedChild = {
+        id: 'parallel-402',
+        options: { subagentDepth: 1 },
+        session: { header: { origin: 'subagent', delegationDepth: 1, parentSession: parent.id }, requestContext: () => ({ provider: 'deepseek-official', model: 'deepseek-v4-flash' }) },
+      }
+      runtimeAgents.set(parent.id, parent)
+      runtimeAgents.set(failedChild.id, failedChild)
+      await emit('subagent/start', { runId: 'run-parallel-402', id: 'parallel-402' })
+      await waterfall('agent/request-error', { agent: failedChild, turn: 1, step: 1, provider: 'deepseek-official', failure: { code: 'QUOTA', status: 402 } })
+      const during = await call(cachedAgent, seed)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      const after = await call(cachedAgent, seed)
+      check('Q12 已缓存 agent 遇 402 硬熔断后持续失效，不因短 TTL 自动撞回余额不足 provider',
+        before.provider === 'deepseek-official' && during.provider === 'su2api' && after.provider === 'su2api')
+    })
   }
 
   console.log(`\n${passed} passed, ${failed} failed`)

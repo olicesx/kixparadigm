@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## v1.3.8（2026-08-24）provider 熔断 + 递归 review epoch + terminal settle
+
+- **subagent lifecycle parent 绑定闭环（发版审查修复）**：宿主 `subagent/start` / `subagent/end` 是 scope-keyed 单参数事件，`parent` 不作为第二实参传入。kix-route、kix-orchestration、kix-settle 改为在 start publication 边界通过 `ctx.agents.get(info.id).session.header.parentSession` 恢复父代理；orchestration/settle 再按 `runId` 缓存到 end，覆盖 end 前 child 已从 registry 移除。真实单参数事件与递归 child 回归关闭了 QUOTA parent steer、递归 review tree、QA return 和 fresh observer 原先的静默失效。
+- **环境同步伪 symlink 展开**：`sync-dsh-preset.ps1` 只展开显式声明的仓库内目录指针（默认 preset 注入 `dsh/preset/skills`），兼容 Windows `core.symlinks=false` 文本指针与原生 symlink；普通单行文件保持文件语义，缺失/越界声明 fail-closed。避免把 `skills` 指针复制成错误的 `skills/skills`，并让 target-only / dry-run 幂等统计基于展开后的真实来源。新增 Node 驱动的 PowerShell 7 / Windows PowerShell 5.1 回归。
+- **子代理 QUOTA/402 provider 熔断闭环**：kix-route 在 prepend 的 `agent/request-error` 边界识别 child 首轮首步 `QUOTA`/HTTP 402，阻止旧 child 进入宿主 LLM retry，并将其按零证据反馈给父代理。HTTP 402/Insufficient Balance 进程内硬熔断，其他 QUOTA 保留可配置 TTL；健康 child 仍统一跳过 unhealthy provider。反馈不再命令立即重派，只有该异质视角仍是当前 claim 的未解决信息缺口时才由协调线程另派；429/网络/非首轮失败沿用宿主既有 retry 契约。
+- **递归 review epoch 与 artifact 新鲜度**：kix-orchestration 识别 `review_stage` / `review_policy: read-only` / 绝对 `artifact_root` 元数据，把整个递归 review tree 绑定到同一冻结 revision。树内最后一个 child 结算前，协调线程不能编辑该 artifact；只读观察者仍可递归派 probe、运行验证和在 artifact 外写临时 reproducer，但 `edit`/`write`、常见 shell 写入及 Git 状态变更会被拒绝。结算时复算 HEAD、tracked diff、status 与 untracked 内容指纹；变化使旧 review/APPROVE 失效。
+- **terminal settle 与 revision 绑定**：kix-settle 跨初始 cwd 统计源码/测试编辑，复用 kix-discipline 的测试/build/lint/typecheck/verify 分类；foreground 只按真实 exitCode=0 记账，background 必须由 `job_output` 到 terminal success，且只清当前 edit generation。subagent spawn 不再算 fresh，只有 `subagent/end=completed` 且有 closing message 才算；工具名不再伪装实际 provider 独立性，也不因同 provider/APPROVE/失败调用机械补票。
+- **native sandbox schema 与会话权限对齐**：kix-focus 在 system-prompt assembly 读取当前 session 的有效 sandbox/approval；danger-full-access 或 approval=never 时，从 bash/pwsh/write/edit 的模型可见 schema 删除不可用的 sandbox_permissions/justification，不修改执行定义与 run_code SDK。严格 native 桥接不再逼模型伪造站立权限或空 justification；较窄 + ask 会话仍保留真实 denial 后的一次性升级。新增 full/never、narrow/ask、session override 与零突变回归。
+- **宿主 native optional 根修**：DSH 仅在模型直呼 wire clone（native/both，以及 code 模式唯一的 run_code 传输工具）中把根级 optional 且原 schema 不接受 null 的字段投影为 `original | null`；Code Mode SDK 与原 ToolDefinition 保持不变。agent-loop 在模型调用进入调度、tool/call 持久化、guards 和 validation 前，把这些 synthetic null 规范化为 omission；required、未知、nested、原生 nullable、false/0/空串及程序化/Code Mode 子调用均不改。权限配对、strict-wider 与 allowed-once 审批继续由原执行契约强制。
+- **tool_failure 分类勘误**：参数/schema 错误首错禁止原样重试，仅确认 native schema 不可满足时换呈现；sandbox denial 只按 denial/approval 契约处理，不得换面绕权限；网络/服务暂态错误仅在幂等且无未知副作用时最多 3 次总尝试（含首次）。同步事实源、classic 与 en 镜像，并删除“tool_failure 已由 kix-guards 机械强制”的失实声明。
+
 ## v1.3.7（2026-08-23）独立观察者分级 + 审查去重 + 写后结算
 
 - **同步与路由契约加固**：`scripts/sync-dsh-preset.ps1` 改为纯 ASCII、Windows PowerShell 5.1/PowerShell 7 通用实现，移除 `??` 与 UTF-8 无 BOM 解析依赖；仍保持只新增/覆盖、不删除目标独有文件。共享 `consistency-lib.cjs` 新增 `subagent_cross` 配置契约门，要求工具行固定绑定非降级的 `kix-route:cross` 哨兵且路由插件启用，并以正反例回归防止未来同厂商误结算。

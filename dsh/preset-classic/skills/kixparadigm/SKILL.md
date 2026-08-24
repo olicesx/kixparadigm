@@ -7,7 +7,7 @@ description: "kixParadigm — AI 自编排最小范式 + 统一入口，适合�
 
 > **DSH 适配注记**：本文件从 VS Code Copilot 导入，其中的工具名（`runSubagent`/`vscode_askQuestions`/`read_file`/`grep_search`/`run_in_terminal` 等）与 Copilot 机制（PreToolUse hooks、跨厂商模型字符串、VS Code 对齐）在 DeepSeek Harness 中有对应映射，**权威映射见 preset 根的 `DSH-ADAPTATION.md`，与本文件冲突时以该文件为准**。机制与判断（三通道/二相性/需求三检/写码前/盲点/验证 gate）原样适用。
 >
-> **2026-08-16 插件化改造注记**：本文件中「机械门禁」「验证 gate」「需求三检契约」等**机制性纪律已插件化**——由 `plugins/kix-guards.js`（机械门禁）、`plugins/kix-discipline.js`（需求三检契约 gate + 验证 gate + `kix_discipline_spec` 工具）、`plugins/kix-cost.js`（成本分层）、`plugins/kix-route.js`（跨厂商/识图路由）强制，不再靠模型自觉遵守本文件的说明。本文件保留的是**认知方法层**（怎么思考/怎么呈现）与按需参考（hook 细节、跨厂商判据）；与插件冲突时以插件行为为准。改造总览见 preset 根 `PLUGINIZATION-ROADMAP.md`。
+> **2026-08-16 插件化改造注记**：本文件中「机械门禁」「验证 gate」「需求三检契约」「编排交接」等**机制性纪律已插件化**——由 `plugins/kix-guards.js`（机械门禁）、`plugins/kix-discipline.js`（需求三检契约 gate + 验证 gate + `kix_discipline_spec` 工具）、`plugins/kix-orchestration.js`（编排交接门禁：sprint marker/plan/progress/blocker 校验）、`plugins/kix-cost.js`（成本分层）、`plugins/kix-route.js`（跨厂商/识图路由）强制，不再靠模型自觉遵守本文件的说明。本文件保留的是**认知方法层**（怎么思考/怎么呈现）与按需参考（hook 细节、跨厂商判据）；与插件冲突时以插件行为准。改造总览见 preset 根 `PLUGINIZATION-ROADMAP.md`。
 
 > **分层**：核心认知范式（三通道/二相性/规则是负债/需求三检/写码前/盲点/CEO 概览）**常驻**于 `../../instructions/kixparadigm-core.instructions.md`（每次会话生效）。本文件为**机制细节层**（按需加载）：机械门禁、验证 gate、输出格式、团队目录、VS Code 对齐、还债机制。
 > 不是流程引擎，不是规则手册。是 AI 为自己设计的最小工具箱 + 安全网 + 盲点提醒。
@@ -15,15 +15,26 @@ description: "kixParadigm — AI 自编排最小范式 + 统一入口，适合�
 
 ## 三通道原则（并发多视角交叉验证）
 
-执行/观察/汇总三阶段串行推进，**并发发生在观察通道内部**——多个独立 agent 同时看，盲点不重合。
+执行/观察/汇总三阶段推进，**并发与递归发散发生在观察通道内部**——多个独立 agent 同时看，盲点不重合。
 
 | 通道 | AI 执行 | 并发性 |
 |---|---|---|
-| **执行（手）** | 主 agent 操作 + 产出 claim | 主线程 |
-| **观察（眼）** | 并发启动多个子 agent，各自独立验证 | 并发（一个 message 里放 2-3 个 runSubagent 同时跑） |
-| **汇总（嘴）** | 聚合多视角结论 | 主线程 |
+| **执行（手）** | 主 agent 操作 + 产出 claim | 主线程单写者 |
+| **观察（眼）** | 异质观察集群独立验证；review lead 可按局部缺口递归派 probe | 自由并发/递归 |
+| **汇总（嘴）** | 聚合 finding、裁决反例与证据新鲜度 | 主线程或 review lead |
 
-**核心**：对重要 claim，同时启动 2-3 个**异质**子 agent（不同 prompt 视角），它们**并发**读代码、独立判断。汇总先拆成**机制事实 / 适用契约与设计意图 / 影响与结论**，只在同一层判断一致性；禁止用机制层多数一致外推契约层或严重度。各层异质多数一致 → 高置信可发布；任一独立观察者基于证据提出反证 → 你的盲点，深挖分歧点，契约不明时不发布确定结论。**异质性是一切；同质"一致"是虚假置信**。同一 agent 多步验证盲点系统性（每次漏同样的），多个独立 agent 盲点随机交叉覆盖。**并发而非串行**：更快、更独立。
+**核心**：对重要 claim，按信息缺口自主展开**异质观察集群**；review epoch/结算机制不新增人数、深度、fan-out、token 或验证面限制。有效反例按可达性、契约和证据裁决，不能被多个 APPROVE 投票冲掉。APPROVE 不是新增证据，也不触发补票式追加观察；失败或零输出 child 按零证据记账。**异质性是一切；同质"一致"是虚假置信**。
+
+**阶段边界**：会改变实现方向的 design observer 是编码前依赖，结算前不编辑目标 artifact；final review 绑定冻结 revision，编辑即使旧 review/gate 失效。需要机械冻结时在分派 prompt 声明：
+
+```text
+review_stage: design|final|verification
+review_policy: read-only
+artifact_root: /absolute/repository/path
+artifact_revision: <optional commit SHA or diff hash>
+```
+
+整个递归观察树继承同一 review epoch；协调线程可以做不相关工作，观察者可以继续递归取证和写 artifact 外的临时 reproducer。只有新有效反例、新风险维度或 artifact 变化才重开；当前 revision 无 blocking finding、相关 terminal gates 绿、既定观察树无新增反例即停止。
 
 > 观察为何必须独立 agent：主 agent 是产物创造者，自我验证会被创造视角污染——二相性要求发散（创造）与收敛（验证）互不泄漏，独立 agent 正是收敛视角的物理隔离。
 
@@ -41,7 +52,7 @@ description: "kixParadigm — AI 自编排最小范式 + 统一入口，适合�
 - 判据：优先取与主模型**解分布差异**最大者（跨厂商 > 同厂商不同代际 > 自验证）
 - 权衡：观察者要**够强但不同**——太弱放行主模型错误（LLM-judge 高估效应），太强则错误相关滑向同质；观察者的"验证通过"结论始终受其能力天花板限制
 - 权衡边界：基线够强时协作收益消失（来源与实证见 AUDIT.md §2）
-- 调用（DSH）：普通分派 `subagent`；跨厂商观察 `subagent_cross`（失败时错误信息自带已注册 provider 清单，按其建议重选）
+- 调用（DSH）：普通分派 `subagent`；跨厂商观察 `subagent_cross`。失败按零证据记账且不机械重派；只有该视角仍是 claim 的未解决缺口时，才按健康 provider 另派
 
 ### 调用
 
@@ -171,7 +182,7 @@ kixParadigm 革新了**怎么思考**（自由推理 + 并发验证），但**�
 - **提交前必跑标准 lint/测试（2026-08-12 多次实证）**：任何代码改动在提交前，用语言工具链的标准命令**本地跑一遍**——Rust 为 `cargo fmt --check` + `cargo clippy --all-targets --all-features -- -D warnings` + 相关 `cargo test`；TS/其他语言同理（`eslint`/`prettier --check`/typecheck 等）。这些是固定命令，**不依赖读 CI workflow**；本地绿了 CI 的对应步骤才可能绿。多次 CI 红都是 fmt/clippy 未过（本地没跑）导致的，不是 CI 逻辑问题。**项目独有门禁**（白名单/grep diff 类，如 duty-B `grep -rl "redis.call" src`）：仅在改动涉及该类代码（增删/移动含特定模式的片段）时查一眼 CI workflow 确认，不逐条复现整个 CI
 - **实证佐证**：落地判断不拍脑袋——可疑行为写最小测试实证；平台/库行为查仓库实际定义 + 官方文档；审 PR 用 `git worktree` 检出分支跑 build/vet/test，审后清理
 - **silent_failure 检测**：artifacts 变更数 = 0 且 progress 未变 → 标记，停，分析根因
-- **tool_failure 熔断**：同一工具失败 3 次 → 换工具降级（如 CodeGraphy → grep_search）
+- **tool_failure 熔断**：参数/schema 错误首错禁止原样重试，先在同一工具修正参数，仅确认 native schema 不可满足时换呈现面；sandbox denial 只按 denial/approval 契约处理（approval never 停止，ask 仅精确重试一次），不得换面绕权限；网络/服务暂态错误仅在幂等且无未知副作用时最多 3 次总尝试（含首次）后降级
 - **基准先行**：性能/有争议改动前先出量化基准（同负载、防测量陷阱），数据出来再动手
 - **最小测试**：非平凡逻辑留一个能失败的检查；测行为不测实现——stub/mock 常藏 bug，须镜像真实语义
 - **所有权路径枚举**：涉及资源生命周期（pool/conn/channel/buffer）时，先枚举产生→转移→消费→丢弃路径确认恰好一次；用 alloc/计数回归测试作守护（allocs = 归还次数的可观测代理）

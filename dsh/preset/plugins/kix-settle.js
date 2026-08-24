@@ -1,4 +1,4 @@
-// kix-settle — 结算信号（L1+L4 合并落地；v3 同源置信降档，2026-08-23）
+// kix-settle — 结算信号（v4 terminal lifecycle + revision freshness，2026-08-24）
 //
 // 出生证明：
 //   EXP1/2/3 的共同结构——报告可以正确而实现错位；每次我们让裁决变真
@@ -8,16 +8,13 @@
 //   advisory 提醒。不阻断、不规定验证方式。
 //
 // 两条触发（互补，各自每会话单发）：
-//   ① 实现结算（v1）：有工作区编辑且最后一次编辑后无任何新进程执行。
-//      任何执行证据（probe/run_code/python/pytest）都算清账。与
-//      kix-discipline 的 green gate 互补但更宽。
-//   ② 高置信提交（v2，PR#33；v3，ZCode P4）：无工作区编辑、终稿像
-//      审查结论时，按成功观察通道分级结算：无 fresh observer → 提醒补独立
-//      复核；只有同源 fresh observer → 提醒按单模型置信表述；成功的
-//      subagent_cross → 跨厂商清账。失败调用不记账。启发式只匹配结论姿态。
-//      出生证明：kix-route 单厂商 cross 会响亮失败并建议同源复核，但 v2 把
-//      subagent/reviewer 与 cross 同记为 independent，造成权重级独立性虚高。
-//      退役条件：宿主提供实际 resolved provider 元数据后，改为按真实厂商结算。
+//   ① 实现结算：源码/测试编辑跨 worktree 记账；只有当前 edit generation 的
+//      foreground exitCode=0 或 background job terminal success 才清账。spawn、
+//      running、nonzero、旧 revision job 都不算。后台仍运行时提示“该等未等”。
+//   ② 高置信提交：无编辑、无可复算执行证据、终稿像审查结论时，只有
+//      subagent/end=completed 且有 closing message 才算 fresh。工具启动和失败
+//      child 不记账；不再按 subagent_cross 工具名推断实际 provider，也不因
+//      同 provider 机械追加观察者。观察面扩展仍由 claim 风险和信息缺口决定。
 //
 // 退役条件：
 //   ① 实现结算：trace 数据显示采纳本提醒后未验证交付率趋零 → 通道已内化。
@@ -25,15 +22,11 @@
 //      且误报（非结论姿态被提醒）> 真报 → 收紧启发式或删除本路。
 'use strict'
 const { randomUUID } = require('node:crypto')
+const disciplineInternals = require('./kix-discipline.js').__internals
 
-const EXEC_RE = /\b(python|python3|pytest|pip\s+install|node|probe\b)/i
-
-const FRESH_OBSERVERS = new Set([
-  'subagent',
-  'subagent_cross',
-  'subagent_reviewer',
-])
-const VENDOR_INDEPENDENT_OBSERVERS = new Set(['subagent_cross'])
+const DIRECT_EXECUTION_TOOLS = new Set(['probe', 'run_code'])
+const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'killed'])
+const FAILED_JOB_STATUSES = new Set(['failed', 'killed'])
 
 // 审查结论姿态：终稿在交付审查判定，不是过程叙述。
 // 刻意收窄——「看起来不错」「暂无问题」等软赞不触发（避免过程中途误报）。
@@ -58,9 +51,14 @@ function makeUserMessage(text) {
 }
 
 function settleText(n) {
-  return 'kix-settle: 本会话有 ' + n + ' 处工作区编辑，最后一次编辑后没有任何新进程执行（python/pytest/probe）。' +
-    '无执行证据的结论按零结算——交付时每个关键判断只按可重放证据计价。' +
-    '若环境限制确实无法执行，请在交付说明中显式声明未验证点及其影响。已验证过则忽略本提醒。'
+  return 'kix-settle: 本会话有 ' + n + ' 处源码/测试编辑，最后一次编辑后没有成功终态的验证命令。' +
+    '后台启动、仍运行 job、失败 child 和工具 spawn 都不算执行证据；交付时只按可重放的 terminal 结果计价。' +
+    '若环境限制确实无法执行，请在交付说明中显式声明未验证点及其影响。'
+}
+
+function pendingVerificationText(n) {
+  return 'kix-settle: 本会话有 ' + n + ' 处源码/测试编辑，相关后台验证仍未终态。' +
+    '该等未等：先收集 job_output 的 completed/failed 结果再交付；等待期间可做不修改被验证 artifact 的独立工作。'
 }
 
 function commitBlindText() {
@@ -68,13 +66,6 @@ function commitBlindText() {
     '但本会话未派过任何成功的 fresh 观察者。拉取式记忆对高置信提交时刻失明——自信时不会去查库。' +
     '独立性是验证杠杆：fresh 评审人（无先验结论）覆盖缺陷空间，原审者复审自己最差。' +
     '消费对抗 finding 时复核严重度（对抗侧易过升，承诺侧易偏松）。已派过则忽略。'
-}
-
-function singleVendorText() {
-  return 'kix-settle: 本回合终稿像审查结论，已有成功的 fresh 观察者，' +
-    '但没有成功的跨厂商观察通道。同源复核能去相关上下文与 prompt 视角，不能消除权重级共享盲点。' +
-    '请将结论按「单模型置信」表述；blocking/major 判断至少补一条可重放的非模型证据' +
-    '（测试/构建输出、官方契约原文或 sandbox 实测）。已按此降档则忽略。'
 }
 
 function lastAssistantText(surface) {
@@ -99,29 +90,62 @@ function looksLikeVerdict(text) {
   return VERDICT_RES.some((re) => re.test(t))
 }
 
-function resolvedToolName(exec) {
-  const name = String((exec && exec.name) || '').toLowerCase()
-  if (name === 'kix_capability_call') {
-    const args = (exec && exec.arguments) || {}
-    return String(args.tool || '').toLowerCase()
-  }
-  return name
+function resultValue(result) {
+  let value = result && Object.prototype.hasOwnProperty.call(result, 'value') ? result.value : result
+  if (value && value.ok === true && Object.prototype.hasOwnProperty.call(value, 'result')) value = value.result
+  return value
 }
 
-function observerLevel(name) {
-  const normalized = String(name || '').toLowerCase()
-  if (VENDOR_INDEPENDENT_OBSERVERS.has(normalized)) return 'vendor-independent'
-  if (FRESH_OBSERVERS.has(normalized)) return 'fresh'
-  return undefined
-}
-
-function observerResultSucceeded(exec, result) {
+function foregroundExecutionSucceeded(result) {
   if (!result || result.isError === true) return false
-  if (String(exec && exec.name || '').toLowerCase() !== 'kix_capability_call') return true
-  const value = result.value
-  if (!value || typeof value !== 'object' || value.ok !== true) return false
-  const nested = value.result
-  return Boolean(nested && typeof nested === 'object' && nested.isError === false)
+  const value = resultValue(result)
+  if (!value || value.kind !== 'foreground') return false
+  return value.exitCode === 0 && value.timedOut !== true && value.aborted !== true && value.sandbox?.denied !== true
+}
+
+function backgroundJobId(result) {
+  if (!result || result.isError === true) return undefined
+  const value = resultValue(result)
+  return value && value.kind === 'background' && typeof value.jobId === 'string' ? value.jobId : undefined
+}
+
+function terminalJobOutcome(result) {
+  if (!result || result.isError === true) return undefined
+  const value = resultValue(result)
+  const job = value && value.job
+  if (!job || !TERMINAL_JOB_STATUSES.has(job.status)) return undefined
+  const detail = String(job.detail || '')
+  const failed = FAILED_JOB_STATUSES.has(job.status) || /exit code:\s*[1-9]\d*/i.test(detail)
+  return { id: String(job.id || ''), success: !failed && job.status === 'completed' }
+}
+
+function directExecutionSucceeded(tool, result) {
+  if (!DIRECT_EXECUTION_TOOLS.has(tool) || !result || result.isError === true) return false
+  const value = resultValue(result)
+  if (value && typeof value.exitCode === 'number') return value.exitCode === 0
+  return true
+}
+
+function assistantMessageText(message) {
+  const content = Array.isArray(message) ? message : message && message.content
+  if (!Array.isArray(content)) return ''
+  return content.filter((b) => b && b.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n')
+}
+
+function subagentCompleted(info) {
+  return Boolean(info && info.stopReason === 'completed' && assistantMessageText(info.lastAssistantMessage).trim())
+}
+
+function lifecycleRunKey(info) {
+  return info && (info.runId || info.id) ? String(info.runId || info.id) : undefined
+}
+
+function lifecycleParentAgent(ctx, info) {
+  const agents = ctx.get && ctx.get('agents')
+  if (!agents || typeof agents.get !== 'function' || !info || !info.id) return undefined
+  const child = agents.get(String(info.id))
+  const parentId = child && child.session && child.session.header && child.session.header.parentSession
+  return parentId ? agents.get(parentId) : undefined
 }
 
 module.exports = {
@@ -129,6 +153,7 @@ module.exports = {
   inject: ['tools'],
   apply(ctx) {
     const states = new Map()
+    const lifecycleParents = new Map()
 
     function stateFor(agent) {
       const sid = agent && agent.session && agent.session.id
@@ -136,23 +161,43 @@ module.exports = {
       if (!states.has(sid)) {
         states.set(sid, {
           edits: 0,
+          editGeneration: 0,
           executedSinceLastEdit: false,
           execs: 0,
           reminded: false,
           freshObserverSeen: false,
-          vendorIndependentObserverSeen: false,
           commitBlindReminded: false,
+          pendingVerificationJobs: new Map(),
         })
       }
       return states.get(sid)
     }
 
-    function cwdOf(agent) {
-      try {
-        const c = agent && agent.session && agent.session.header && agent.session.header.cwd
-        return typeof c === 'string' && c.length ? c : undefined
-      } catch (_) { return undefined }
+    function recordExecution(st) {
+      st.execs += 1
+      st.executedSinceLastEdit = true
     }
+
+    // child 启动不是证据；只有 subagent/end=completed 且存在 closing message 才记 fresh。
+    // 生命周期事件只传 info，因此 start 时从 child lineage 捕获 parent，end 时按 runId 取回。
+    // provider/model 不能从工具名推断，因此 settle 不再把 subagent_cross spawn 当跨厂商成功。
+    ctx.on('subagent/start', (info) => {
+      try {
+        const key = lifecycleRunKey(info)
+        const parent = lifecycleParentAgent(ctx, info)
+        if (key && parent) lifecycleParents.set(key, parent)
+      } catch (_) { /* observation must never break execution */ }
+    })
+    ctx.on('subagent/end', (info) => {
+      try {
+        const key = lifecycleRunKey(info)
+        const parent = key && lifecycleParents.get(key)
+        if (key) lifecycleParents.delete(key)
+        if (!subagentCompleted(info)) return
+        const st = stateFor(parent || lifecycleParentAgent(ctx, info))
+        if (st) st.freshObserverSeen = true
+      } catch (_) { /* observation must never break execution */ }
+    })
 
     ctx.on('tools/post-execute', async (exec, result, next) => {
       // 防御包裹：任何状态下绝不让本插件的观察逻辑抛异常——
@@ -165,25 +210,28 @@ module.exports = {
           const args = exec.arguments || {}
           if (name === 'edit' || name === 'write') {
             const fp = String(args.file_path || args.path || '')
-            const cwd = cwdOf(agent)
-            if (fp && (!cwd || fp.startsWith(cwd))) {
+            const kind = disciplineInternals.classifyMutationPath(fp)
+            if (result && result.isError !== true && fp && (kind === 'source' || kind === 'test')) {
               st.edits += 1
+              st.editGeneration += 1
               st.executedSinceLastEdit = false
             }
-          } else if (name === 'probe' || name === 'run_code') {
-            st.execs += 1
-            st.executedSinceLastEdit = true
+          } else if (directExecutionSucceeded(name, result)) {
+            recordExecution(st)
           } else if (name === 'bash' || name === 'pwsh' || name === 'shell') {
             const cmd = String(args.command || args.cmd || '')
-            if (EXEC_RE.test(cmd)) {
-              st.execs += 1
-              st.executedSinceLastEdit = true
+            if (disciplineInternals.isVerificationCommand(cmd)) {
+              const jobId = backgroundJobId(result)
+              if (jobId) st.pendingVerificationJobs.set(jobId, st.editGeneration)
+              else if (foregroundExecutionSucceeded(result)) recordExecution(st)
             }
-          }
-          const observer = observerLevel(resolvedToolName(exec))
-          if (observer && observerResultSucceeded(exec, result)) {
-            st.freshObserverSeen = true
-            if (observer === 'vendor-independent') st.vendorIndependentObserverSeen = true
+          } else if (name === 'job_output') {
+            const outcome = terminalJobOutcome(result)
+            if (outcome && st.pendingVerificationJobs.has(outcome.id)) {
+              const generation = st.pendingVerificationJobs.get(outcome.id)
+              st.pendingVerificationJobs.delete(outcome.id)
+              if (outcome.success && generation === st.editGeneration) recordExecution(st)
+            }
           }
         }
       } catch (_) { /* observation must never break execution */ }
@@ -203,14 +251,17 @@ module.exports = {
         if (!agent) return
         const st = stateFor(agent)
         if (!st) return
-        // ① 实现结算：有编辑 + 最后一次编辑后无执行 + 本会话未提醒过。
+        // ① 实现结算：后台验证尚在运行时明确“该等未等”；无 pending 且无成功
+        // terminal 验证时按零结算。两者共用一次提醒槽，避免回合收尾反复 steer。
         if (st.edits > 0 && !st.executedSinceLastEdit && !st.reminded) {
           st.reminded = true
-          agent.steer(makeUserMessage(settleText(st.edits)))
+          const currentJobPending = [...st.pendingVerificationJobs.values()].some((generation) => generation === st.editGeneration)
+          const notice = currentJobPending ? pendingVerificationText(st.edits) : settleText(st.edits)
+          agent.steer(makeUserMessage(notice))
         }
-        // ② 高置信提交：无编辑 + 无成功跨厂商观察 + 终稿像审查结论。
-        // 有编辑走 ①，不在审查结论路上叠提醒（实现任务不是审查交付）。
-        if (st.edits === 0 && !st.vendorIndependentObserverSeen && !st.commitBlindReminded) {
+        // ② 高置信提交：没有编辑、没有成功 fresh observer，也没有可复算物证时才提醒。
+        // 同 provider/cross 工具名不再作为机械门槛；模型可按风险自由扩展观察面。
+        if (st.edits === 0 && !st.freshObserverSeen && st.execs === 0 && !st.commitBlindReminded) {
           const sessionQuery = ctx.get && ctx.get('sessionQuery')
           const sessionId = agent && agent.session && agent.session.id
           if (sessionQuery && sessionId) {
@@ -219,8 +270,7 @@ module.exports = {
               const text = lastAssistantText(surface)
               if (looksLikeVerdict(text)) {
                 st.commitBlindReminded = true
-                const notice = st.freshObserverSeen ? singleVendorText() : commitBlindText()
-                agent.steer(makeUserMessage(notice))
+                agent.steer(makeUserMessage(commitBlindText()))
               }
             } catch (_) { /* 表面读取失败静默：本路是可选项 */ }
           }
@@ -233,13 +283,17 @@ module.exports = {
 module.exports.__internals = {
   looksLikeVerdict,
   lastAssistantText,
-  resolvedToolName,
-  observerLevel,
-  observerResultSucceeded,
+  resultValue,
+  foregroundExecutionSucceeded,
+  backgroundJobId,
+  terminalJobOutcome,
+  directExecutionSucceeded,
+  assistantMessageText,
+  subagentCompleted,
   settleText,
+  pendingVerificationText,
   commitBlindText,
-  singleVendorText,
   VERDICT_RES,
-  FRESH_OBSERVERS,
-  VENDOR_INDEPENDENT_OBSERVERS,
+  DIRECT_EXECUTION_TOOLS,
+  TERMINAL_JOB_STATUSES,
 }

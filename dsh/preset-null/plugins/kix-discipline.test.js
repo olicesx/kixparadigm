@@ -124,6 +124,16 @@ await ok('isTestCommand: cargo test', I.isTestCommand('cargo test'))
 await ok('isTestCommand: node --test', I.isTestCommand('node --test'))
 await ok('isTestCommand 否定: git commit', !I.isTestCommand('git commit -m "test fix"'))
 await ok('isTestCommand 否定: echo', !I.isTestCommand('echo test'))
+await ok('isVerificationCommand: Go test/vet/build/mod verify',
+  I.isVerificationCommand('go test ./...') && I.isVerificationCommand('go vet ./...') &&
+  I.isVerificationCommand('go build ./...') && I.isVerificationCommand('go mod verify'))
+await ok('isVerificationCommand: JS lint/typecheck/build',
+  I.isVerificationCommand('npm run lint') && I.isVerificationCommand('pnpm typecheck') && I.isVerificationCommand('yarn build'))
+await ok('isVerificationCommand: direct Node test/check scripts',
+  I.isVerificationCommand('node dsh/preset/plugins/kix-route.test.js') &&
+  I.isVerificationCommand('node scripts/check-dsh-consistency.cjs'))
+await ok('isVerificationCommand 否定: git status/echo',
+  !I.isVerificationCommand('git status --short') && !I.isVerificationCommand('echo verify'))
 await ok('isTestFile: src/a.test.ts', I.isTestFile('src/a.test.ts'))
 await ok('isTestFile: tests/foo.py', I.isTestFile('tests/foo.py'))
 await ok('isTestFile: __tests__/x.js', I.isTestFile('__tests__/x.js'))

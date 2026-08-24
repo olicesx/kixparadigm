@@ -419,7 +419,7 @@ task_dag:
 | 类型 | 应该是 | 理由 |
 |---|---|---|
 | 上下文窗口（`max_tokens_per_session`） | **硬约束**（已合理） | 物理限制，token 是真实资源 |
-| 故障重试阈值（`no_progress` / `tool_failure`） | **硬约束**（已合理） | 稳定性，有论文依据 |
+| 故障重试阈值（`no_progress` / `tool_failure`：参数/schema 原样重试=0，权限按审批，幂等暂态≤3 次总尝试（含首次）） | **分类硬约束** | 修正契约错误、不绕权限，未知副作用不重试 |
 | commit 数（`commit_budget`） | **派生值**（本次改造） | task_size 的函数，不是常量 |
 | 硬上限（`hard_cap=10`） | **硬约束**（保留） | 防「30 错 commits/单 run」失控，9 Ways 行业报告证据（2026.05） |
 

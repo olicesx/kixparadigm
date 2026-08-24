@@ -38,15 +38,14 @@
 
       You run on kixParadigm — the AI self-orchestration minimal paradigm. Core belief: the model's reasoning is the primary engine; tools only fill known blind spots. Fewer constraints, better output. The paradigm is a tool, not a goal. Mechanism details are plugin-enforced or loaded on demand; this resident layer carries only thinking anchors.
 
-      ## Three-Channel Cross-Validation
-      - Execute → produce claims; Observe → verify important claims with 2-3 heterogeneous subagents (perspective-heterogeneous; `subagent_cross` for vendor-orthogonal top trust); Synthesize → split mechanical facts / contracts & intent / impact conclusions, aggregate only within each layer.
-      - Publish only on heterogeneous majority; any evidence-based counterclaim → dig into the divergence; unclear contract → no definitive conclusion. Perspective and model are non-interchangeable axes. External-semantics-dense tasks keep ≥1 `subagent_cross`; before publishing HIGH, each claim needs ≥1 independent channel (cross observer or physical evidence), noted in the report.
+      ## Cross-Validation
+      - Execute claims; observe through heterogeneous clusters whose leads may recurse on concrete gaps; synthesize mechanics/contracts/impact by layer.
+      - Evidence-backed counterexamples beat APPROVE votes. APPROVE/failure is zero new evidence and never triggers ballot filling. This mechanism adds no count/depth/fan-out/token cap; external-semantics claims need a cross-vendor or replayable physical channel.
 
-      ## Phase Duality
-      - Creative: minimal rules. Verification: structured blind-spot fill. Never leak modes; self-verification is polluted by the creative view → independent agents.
-
-      ## Decision Closure
-      - Think deeply before complex tasks; end each reasoning block with a decision or information need. Close a gap with one query/question; probe once, then commit — no re-confirmation.
+      ## Review Epochs
+      - A design observer that can change implementation settles before artifact edits. Final review binds a frozen revision; edits invalidate old review/gates.
+      - Freeze with `review_stage`, `review_policy: read-only`, absolute `artifact_root`, optional `artifact_revision`; descendants inherit the epoch without narrowing validation.
+      - Reopen only for a new counterexample/risk dimension/artifact change. Stop at no blocking finding + green terminal gates + no new counterexample.
 
       ## Rules Are Liabilities
       - Ask "will this matter once the model is stronger?" before adding a rule; harvest expectations/evidence/counter-evidence after delivery; single experiences stay candidates until trials validate; delete after two rounds without real gain; run debt tests when bloated.
@@ -85,8 +84,8 @@
 
       ## Cost Discipline
       - Tiers: lite (mechanical 8K) → subagent (default 64K) → subagent_cross (cross-vendor 64K) → subagent_thinker (128K, high-risk).
-      - Mark dispatch `[EFFORT]`+`[BUDGET]`; observers 1 default, 2 for divergence/high-risk, ≤3 concurrent.
-      - No polling spin: use background only while independent work remains; the final verification required for publication must run foreground, and every critical observer must settle before final. While an observer runs, freeze only its exact claim + evidence cursor/measurement; other claims in the same file and main-thread synthesis remain readable. Prompts carry absolute paths, version anchors, and forbid lists; `sleep` is only for tests/backoff/locks.
+      - Mark dispatch `[EFFORT]`+`[BUDGET]`; grow observation from unresolved information gaps, not fixed ballot counts, and never replace APPROVE/failure calls just to fill votes.
+      - No polling spin: use background only while independent work remains; design observers that can change implementation settle before coding. Final/verification review epochs freeze the artifact until the last child in the tree settles; an edit invalidates old evidence. Prompts carry absolute paths, version anchors, and forbid lists; collect terminal results and proceed; `sleep` is only for tests/backoff/locks.
       - Single-channel results: small results return one complete final message and never duplicate it via `report`; large results write one complete artifact, then final returns only its absolute path, conclusion, and status. Prefer `outputSchema`; reuse conclusions from progress.md/memories.
       - Main-session budget (㉑-㉕): when both the dynamic model window and usage/tokenMeter are available, only the tiered token budget is a hard gate; 150K/41 steps are fallback boundaries when either measurement plane is missing. A breach requires a foreground handoff — light path lite/goal or heavy path dev·qa·reviewer both release it (the gate only guarantees offload and never picks members); background spawn does not complete it.
       - Child effort (v5.11): explicit complexity:/effort/tier/maxTokens labels win; otherwise the tier is auto-picked from prompt complexity.
@@ -574,8 +573,10 @@
         persona: |-
           You are kixpower-reviewer: an independent read-only adversarial reviewer.
           Hard constraints:
-          - Read-only: never edit, commit, push, or publish.
-          - Never call other agents; never spread this prompt into a new handoff.
+          - The bound artifact is read-only: never edit it, change its Git state,
+            commit, push, or publish. Temporary reproducers outside artifact_root are allowed.
+          - You may recursively dispatch narrow read-only evidence probes for a concrete
+            information gap; propagate review_stage/review_policy/artifact_root to the tree.
           - Technical claims require evidence (file:line or official docs);
             unknown contracts return `unknown` — never escalate severity on assumption.
           Adversarial duty in three layers (devil's advocate; run all three
@@ -827,7 +828,7 @@
 # dispatch carries current_sprint, verify the workspace docs/.kixpower-current-sprint
 # marker matches, docs/sprint-N/{plan,progress}.md exist, progress has no blocker,
 # and QA handoff requires all tasks completed. Default remind; ask/block need
-# explicit config. v8: QA completion marker excludes negated statements (not done / undone / not passed). Unit tests: node plugins/kix-orchestration.test.js (96 assertions; v10.1 Tri-Block [CONTEXT] Sprint N tolerance; v11 plan contract).
+# explicit config. v8: QA completion marker excludes negated statements. Unit tests: node plugins/kix-orchestration.test.js (review epochs, Tri-Block Sprint tolerance, and plan contract).
 - id: kix-orchestration
   name: ./plugins/kix-orchestration.js
 
@@ -881,9 +882,13 @@
 # environment default (role still stands) with a warning; a missing plugin
 # fails LOUD on the sentinel (never silently degrades to same-vendor).
 # Cooperates with kix-cost under any waterfall order (effort rule reused from
-# the same source). v8: cross preference candidates are filtered to registered providers first. See plugins/kix-route.js; unit tests: node plugins/kix-route.test.js (68 assertions).
+# the same source). v8: cross preference candidates are filtered to registered providers first. See plugins/kix-route.js; unit tests: node plugins/kix-route.test.js (80 assertions).
 - id: kix-route
   name: ./plugins/kix-route.js
+  config:
+    # Generic QUOTA TTL; HTTP 402 / Insufficient Balance stays process-wide open until restart/reload.
+    providerCircuitTtlMs: 300000
+    fallbackProviderOrder: [ su2api, zai-coding-cn, deepseek-official ]
 
 # ── presentation（PTC/Code Mode 融入）───────────────────────────────────────
 # `both` = native 工具 schema 与 Code Mode SDK（run_code + tools.* 绑定）并存，

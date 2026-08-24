@@ -95,6 +95,18 @@ const TEST_COMMAND_PATTERNS = [
   /(?:^|[;&|]\s*)(?:node\s+--test(?:\s|$))/,
   /(?:^|[;&|]\s*)(?:deno\s+test|uv\s+run\s+pytest)(?:\s|$)/,
 ]
+// settle 与 red/green 共用的“可复算验证”分类。测试仍由上面的窄模式单独
+// 驱动 red/green；build/lint/typecheck/verify 只用于结算，不伪装成测试。
+const VERIFICATION_COMMAND_PATTERNS = [
+  ...TEST_COMMAND_PATTERNS,
+  /(?:^|[;&|]\s*)(?:go\s+(?:vet|build)(?:\s|$)|go\s+mod\s+verify(?:\s|$))/,
+  /(?:^|[;&|]\s*)(?:cargo\s+(?:check|clippy|build)(?:\s|$)|rustc\s+--emit(?:\s|=))/,
+  /(?:^|[;&|]\s*)(?:(?:pnpm|npm|npx|yarn|bun)(?:\s+run)?\s+(?:build|lint|typecheck|check|verify)(?:\s|$))/,
+  /(?:^|[;&|]\s*)(?:node\s+(?:--\S+\s+)*\S+\.(?:test|spec)\.(?:js|cjs|mjs)(?:\s|$))/,
+  /(?:^|[;&|]\s*)(?:node\s+(?:--\S+\s+)*(?:\S+[\\/])?(?:check|verify)-\S+\.(?:js|cjs|mjs)(?:\s|$))/,
+  /(?:^|[;&|]\s*)(?:tsc(?:\s|$)|eslint(?:\s|$)|biome\s+check(?:\s|$)|ruff\s+check(?:\s|$)|mypy(?:\s|$))/,
+  /(?:^|[;&|]\s*)(?:dotnet\s+(?:test|build)(?:\s|$)|mvn\s+(?:test|verify)(?:\s|$)|gradle\s+(?:test|check|build)(?:\s|$))/,
+]
 // 实现编辑工具（写测试文件永远放行）
 const MUTATION_TOOLS = new Set(['edit', 'write'])
 // 测试文件模式（这些路径的编辑不算"实现编辑"，不触发 red/green gate）
@@ -147,6 +159,10 @@ function lastAssistantText(surface) {
 
 function isTestCommand(text) {
   return TEST_COMMAND_PATTERNS.some((re) => re.test(String(text || '')))
+}
+
+function isVerificationCommand(text) {
+  return VERIFICATION_COMMAND_PATTERNS.some((re) => re.test(String(text || '')))
 }
 
 function normalizeFilePath(path) {
@@ -590,6 +606,7 @@ module.exports = {
 
 module.exports.__internals = {
   isTestCommand,
+  isVerificationCommand,
   isTestFile,
   classifyMutationPath,
   isMutationTool,
@@ -603,6 +620,7 @@ module.exports.__internals = {
   DEFLECTION_ASK_TEXT,
   DEFLECTION_MARKERS,
   TEST_COMMAND_PATTERNS,
+  VERIFICATION_COMMAND_PATTERNS,
   TEST_FILE_PATTERNS,
   OPERATIONAL_ARTIFACT_PATTERNS,
   DOCUMENTATION_FILE_PATTERN,

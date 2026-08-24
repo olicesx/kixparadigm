@@ -10,16 +10,19 @@ applyTo: '**'
 ## Three-Channel Cross-Validation
 
 - **Execute (hands)** → the main agent operates and produces claims
-- **Observe (eyes)** → verify important claims with multiple **heterogeneous** subagents (different prompt angles; cross-vendor model stacking for the highest-confidence claims) reading the code independently
-- **Synthesize (mouth)** → first separate mechanical facts / applicable contracts & design intent / impact & conclusions, and aggregate only within the same layer; heterogeneous majority agreement → high confidence, publishable; any independent observer raises an evidence-based counterclaim → dig into the divergence
-- Never extrapolate mechanism-layer majority agreement to contract-layer or severity conclusions; never publish definitive conclusions when the contract is unclear
-- Heterogeneity is everything; homogeneous "agreement" is false confidence. Exact cross-vendor model strings and trigger conditions: see SKILL.md "Cross-vendor models"
+- **Observe (eyes)** → grow a **heterogeneous observation cluster** for important claims; a review lead may recursively dispatch narrow evidence probes for concrete gaps. This mechanism adds no count, depth, fan-out, token, or validation-surface cap
+- **Synthesize (mouth)** → separate mechanical facts / applicable contracts & design intent / impact & conclusions, aggregating only within one layer; adjudicate valid counterexamples by reachability, contract, and evidence
+- Multiple APPROVEs cannot vote down a valid counterexample. APPROVE is not new evidence and never triggers ballot-filling observers; failed or empty children count as zero evidence
+- Never extrapolate mechanism-layer agreement to contract-layer or severity conclusions; never publish definitive conclusions when the contract is unclear
+- Heterogeneity is everything; homogeneous "agreement" is false confidence. External-semantics-heavy claims need at least one cross-vendor or replayable physical-evidence channel
 
-## Phase Duality
+## Phase Duality and Review Epochs
 
-- The creative (divergent) phase runs with minimal rules, leaving room for reasoning; the verification (convergent) phase structurally fills blind spots
-- The two phases must not leak cognitive modes into each other — don't self-verify while creating, don't create while verifying
-- Self-verification is polluted by the creative view → use independent agents for verification
+- The creative (divergent) phase runs with minimal rules; the verification (convergent) phase structurally fills blind spots
+- A design observer that can change implementation is a pre-code dependency: continue reading, preparing tests, and unrelated work, but do not edit the guarded artifact before it settles
+- Final review binds a frozen revision; any edit invalidates prior review/gates and reopens on a new revision
+- For mechanical freezing, include `review_stage`, `review_policy: read-only`, one or more absolute `artifact_root` lines, and optional `artifact_revision` in the observation prompt; the recursive review tree inherits one epoch without reducing observation breadth
+- Reopen only for a new valid counterexample, a new risk dimension, or an artifact change. Stop when the current revision has no blocking finding, relevant terminal gates are green, and the planned observation tree adds no counterexample
 
 ## Rules Are Liabilities
 

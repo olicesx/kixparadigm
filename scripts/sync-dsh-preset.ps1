@@ -16,7 +16,8 @@ param(
   [string]$SourceDir = 'dsh\preset',
   [string]$PresetRoot = '',
   [switch]$DryRun,
-  [switch]$Force
+  [switch]$Force,
+  [string[]]$DirectoryPointers = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,9 +31,24 @@ if (-not $PresetRoot) {
   $PresetRoot = Join-Path $dshHome ('.agent-presets\' + $PresetId)
 }
 
-$src = Join-Path $BundleRoot $SourceDir
+$bundle = (Resolve-Path -LiteralPath $BundleRoot).Path
+$src = Join-Path $bundle $SourceDir
 if (-not (Test-Path $src)) {
   Write-Error "Preset source does not exist: $src"
+}
+
+# The default preset owns one known directory pointer. Other source presets have
+# none; explicit caller declarations are validated strictly below.
+if (-not $PSBoundParameters.ContainsKey('DirectoryPointers')) {
+  $comparison = if ([IO.Path]::DirectorySeparatorChar -eq '\') {
+    [StringComparison]::OrdinalIgnoreCase
+  } else {
+    [StringComparison]::Ordinal
+  }
+  $defaultPointerSource = [IO.Path]::GetFullPath((Join-Path $bundle 'dsh/preset'))
+  if ([string]::Equals([IO.Path]::GetFullPath($src), $defaultPointerSource, $comparison)) {
+    $DirectoryPointers = @('dsh/preset/skills')
+  }
 }
 
 if (-not (Test-Path $PresetRoot)) {
@@ -47,14 +63,92 @@ function Get-FileHashSafe([string]$Path) {
   try { return (Get-FileHash -Path $Path -Algorithm SHA256).Hash } catch { return '' }
 }
 
-$srcFiles = Get-ChildItem -Path $src -Recurse -File
+# Git checkouts with core.symlinks=false represent directory symlinks as one-line
+# text files (for example dsh/preset/skills -> ../preset-classic/skills). Expand
+# only explicitly declared repository pointers; ordinary one-line files must keep
+# their file semantics even when their content happens to name a directory.
+function Get-SourceEntries([string]$SourceRoot, [string]$Root, [string[]]$PointerPaths) {
+  $entries = @()
+  $pointerRoots = @()
+  $comparison = if ([IO.Path]::DirectorySeparatorChar -eq '\') {
+    [StringComparison]::OrdinalIgnoreCase
+  } else {
+    [StringComparison]::Ordinal
+  }
+  $rootPrefix = $Root.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+  $sourcePrefix = $SourceRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+
+  foreach ($declaredPath in $PointerPaths) {
+    if (-not $declaredPath -or [IO.Path]::IsPathRooted($declaredPath)) {
+      throw "Directory pointer paths must be non-empty and bundle-relative: $declaredPath"
+    }
+    $pointerPath = [IO.Path]::GetFullPath((Join-Path $Root $declaredPath))
+    $insideRoot = [string]::Equals($pointerPath, $Root, $comparison) -or $pointerPath.StartsWith($rootPrefix, $comparison)
+    $insideSource = [string]::Equals($pointerPath, $SourceRoot, $comparison) -or $pointerPath.StartsWith($sourcePrefix, $comparison)
+    if (-not $insideRoot) { throw "Directory pointer escapes bundle root: $declaredPath" }
+    if (-not $insideSource) { throw "Directory pointer is outside the selected source: $declaredPath" }
+    if (-not (Test-Path -LiteralPath $pointerPath)) { throw "Directory pointer does not exist: $declaredPath" }
+
+    $item = Get-Item -LiteralPath $pointerPath -Force
+    if ($item.PSIsContainer) {
+      $linkTarget = @($item.Target)[0]
+      $target = if ($item.LinkType -and $linkTarget) {
+        $candidate = if ([IO.Path]::IsPathRooted($linkTarget)) { $linkTarget } else { Join-Path $item.Parent.FullName $linkTarget }
+        (Resolve-Path -LiteralPath $candidate).Path
+      } else {
+        $item.FullName
+      }
+    } else {
+      $linkTarget = (Get-Content -LiteralPath $item.FullName -Raw -ErrorAction Stop).Trim()
+      if (-not $linkTarget -or $linkTarget.IndexOf("`n") -ge 0 -or $linkTarget.IndexOf("`r") -ge 0 -or [IO.Path]::IsPathRooted($linkTarget)) {
+        throw "Configured directory pointer is not a relative one-line path: $declaredPath"
+      }
+      $target = (Resolve-Path -LiteralPath (Join-Path $item.DirectoryName $linkTarget)).Path
+    }
+
+    $insideTarget = [string]::Equals($target, $Root, $comparison) -or $target.StartsWith($rootPrefix, $comparison)
+    if (-not $insideTarget -or -not (Test-Path -LiteralPath $target -PathType Container)) {
+      throw "Configured directory pointer target is outside the bundle or not a directory: $declaredPath"
+    }
+
+    $relative = $pointerPath.Substring($SourceRoot.Length).TrimStart('\', '/')
+    foreach ($linkedFile in (Get-ChildItem -Path $target -Recurse -File)) {
+      $linkedRelative = $linkedFile.FullName.Substring($target.Length).TrimStart('\', '/')
+      $entries += [PSCustomObject]@{
+        File = $linkedFile
+        Relative = Join-Path $relative $linkedRelative
+      }
+    }
+    $pointerRoots += $pointerPath
+  }
+
+  foreach ($file in (Get-ChildItem -Path $SourceRoot -Recurse -File)) {
+    $isPointerEntry = $false
+    foreach ($pointerRoot in $pointerRoots) {
+      $pointerPrefix = $pointerRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+      if ([string]::Equals($file.FullName, $pointerRoot, $comparison) -or $file.FullName.StartsWith($pointerPrefix, $comparison)) {
+        $isPointerEntry = $true
+        break
+      }
+    }
+    if ($isPointerEntry) { continue }
+    $relative = $file.FullName.Substring($SourceRoot.Length).TrimStart('\', '/')
+    $entries += [PSCustomObject]@{ File = $file; Relative = $relative }
+  }
+  return @($entries)
+}
+
+$srcEntries = Get-SourceEntries $src $bundle $DirectoryPointers
+$sourceRelatives = @{}
 $added = @()
 $updated = @()
 $same = @()
 $targetOnly = @()
 
-foreach ($file in $srcFiles) {
-  $relative = $file.FullName.Substring($src.Length).TrimStart('\', '/')
+foreach ($entry in $srcEntries) {
+  $file = $entry.File
+  $relative = $entry.Relative
+  $sourceRelatives[$relative] = $true
   $destination = Join-Path $PresetRoot $relative
   if (-not (Test-Path $destination)) {
     $added += $relative
@@ -81,7 +175,7 @@ foreach ($file in $srcFiles) {
 if (Test-Path $PresetRoot) {
   foreach ($file in (Get-ChildItem -Path $PresetRoot -Recurse -File)) {
     $relative = $file.FullName.Substring($PresetRoot.Length).TrimStart('\', '/')
-    if (-not (Test-Path (Join-Path $src $relative))) { $targetOnly += $relative }
+    if (-not $sourceRelatives.ContainsKey($relative)) { $targetOnly += $relative }
   }
 }
 

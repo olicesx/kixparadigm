@@ -12,9 +12,11 @@ const path = require('node:path')
 const assert = require('node:assert')
 const os = require('node:os')
 const fs = require('node:fs')
+const { execFileSync } = require('node:child_process')
 
 // ── mock ctx ───────────────────────────────────────────────────────────────
 const listeners = {}
+const runtimeAgents = new Map()
 let userQuestionsMock = null
 const configMock = { intensity: 'remind' }
 const ctx = {
@@ -23,6 +25,7 @@ const ctx = {
   get(name) {
     if (name === 'userQuestions') return userQuestionsMock
     if (name === 'sandboxPolicy') return { workspaceRoot: os.tmpdir() }
+    if (name === 'agents') return { get: (id) => runtimeAgents.get(String(id)) }
     return undefined
   },
   on(event, cb) {
@@ -60,6 +63,7 @@ const ctxBlock = {
   get(name) {
     if (name === 'userQuestions') return userQuestionsMock
     if (name === 'sandboxPolicy') return { workspaceRoot: os.tmpdir() }
+    if (name === 'agents') return { get: (id) => runtimeAgents.get(String(id)) }
     return undefined
   },
   on(event, cb) {
@@ -95,6 +99,39 @@ function makeWorkspace({ blocked = false, completed, total, withMarker = true, m
   fm.push('---', '', '# progress')
   fs.writeFileSync(path.join(sprintDir, 'progress.md'), fm.join('\n'), 'utf8')
   return root
+}
+
+function makeGitWorkspace() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kix-orch-review-'))
+  createdWorkspaces.push(root)
+  execFileSync('git', ['init', '-q', root])
+  execFileSync('git', ['-C', root, 'config', 'user.email', 'kix-test@example.invalid'])
+  execFileSync('git', ['-C', root, 'config', 'user.name', 'kix-test'])
+  fs.writeFileSync(path.join(root, 'source.js'), 'module.exports = 1\n', 'utf8')
+  execFileSync('git', ['-C', root, 'add', 'source.js'])
+  execFileSync('git', ['-C', root, 'commit', '-qm', 'fixture'])
+  return root
+}
+
+function emitSubagentStart(parent, child, runId = 'run-' + child.id) {
+  if (!parent.session.id) parent.session.id = 'session-' + parent.id
+  child.session.header.parentSession = parent.session.id
+  runtimeAgents.set(parent.session.id, parent)
+  runtimeAgents.set(child.id, child)
+  const event = { runId, provider: 'spawn', id: child.id, local: true }
+  listeners['subagent/start'][0](event)
+  return event
+}
+
+async function emitSubagentEnd(child, startEvent, end = {}) {
+  runtimeAgents.delete(child.id)
+  await listeners['subagent/end'][0]({ ...startEvent, stopReason: 'completed', ...end })
+}
+
+function emitCompletedChild(parent, info) {
+  const child = { id: info.id, session: { id: info.id, header: { cwd: parent.session.header.cwd } } }
+  const startEvent = emitSubagentStart(parent, child, info.runId || info.id)
+  return emitSubagentEnd(child, startEvent, info)
 }
 
 let passed = 0
@@ -133,7 +170,51 @@ await ok('无元数据 → sprint=0', (() => {
   return m.sprint === 0 && m.mode === null
 })())
 
-// ── 2. 纯逻辑：parseProgressState ─────────────────────────────────────────
+// ── 2. 纯逻辑：review epoch 元数据与 Git 只读边界 ─────────────────────────
+section('review epoch 纯逻辑')
+await ok('kix_capability_call 首次激活包装仍识别 subagent prompt', (() => {
+  const invocation = I.subagentInvocation({
+    name: 'kix_capability_call',
+    arguments: { tool: 'subagent_reviewer', arguments: { prompt: 'review', description: 'wrapped' } },
+  })
+  return invocation.tool === 'subagent_reviewer' && invocation.args.prompt === 'review'
+})())
+await ok('完整 review metadata → 解析并规范化 roots', (() => {
+  const m = I.extractReviewEpochMeta([
+    'review_stage: final',
+    'review_policy: read-only',
+    'artifact_root: /tmp/repo-a',
+    'artifact_root: /tmp/repo-b',
+    'artifact_revision: abc123',
+  ].join('\n'))
+  return m && m.stage === 'final' && m.policy === 'read-only' && m.roots.length === 2 && m.revision === 'abc123'
+})())
+await ok('缺 stage/policy/root 任一项 → 不开启 epoch', (() => {
+  return I.extractReviewEpochMeta('review_policy: read-only\nartifact_root: /tmp/x') === undefined &&
+    I.extractReviewEpochMeta('review_stage: final\nartifact_root: /tmp/x') === undefined &&
+    I.extractReviewEpochMeta('review_stage: final\nreview_policy: read-only') === undefined &&
+    I.extractReviewEpochMeta('review_stage: final\nreview_policy: read-only\nartifact_root: relative/repo') === undefined
+})())
+await ok('Git 只读子命令放行，checkout/switch/reset/fetch 拒绝', (() => {
+  const safe = ['git status', 'git diff HEAD', 'git -C /tmp/x log -1', 'git show HEAD:file']
+  const mutating = ['git checkout abc', 'git switch main', 'git reset --hard', 'git fetch origin']
+  return safe.every((cmd) => I.reviewGitMutation(cmd) === false) && mutating.every((cmd) => I.reviewGitMutation(cmd) === true)
+})())
+await ok('常见 shell 写入拒绝；测试/只读脚本放行', (() => {
+  const safe = ['go test ./...', "node -e \"console.log([1].map(x => x + 1))\"", 'git diff --stat']
+  const mutating = [
+    'sed -i s/a/b/ source.js', 'rm source.js', 'gofmt -w x.go', 'echo x > source.js',
+    'python -c "open(\'source.js\', \'w\').write(\'x\')"',
+    'node -e "require(\'fs\').writeFileSync(\'source.js\', \'x\')"',
+    'printf x | dd of=source.js', 'Set-Content source.js x',
+  ]
+  return safe.every((cmd) => !I.reviewShellMutation(cmd)) && mutating.every((cmd) => I.reviewShellMutation(cmd))
+})())
+await ok('pathInside 不把相邻前缀目录判进 root', (() => {
+  return I.pathInside('/tmp/repo', '/tmp/repo/a.js') && !I.pathInside('/tmp/repo', '/tmp/repository/a.js')
+})())
+
+// ── 3. 纯逻辑：parseProgressState ─────────────────────────────────────────
 section('parseProgressState')
 await ok('正常状态非 blocked', (() => {
   const s = I.parseProgressState('---\nstatus: in-progress\nblocked_tasks: 0\ncompleted_tasks: 5\ntotal_tasks: 5\n---\n')
@@ -247,7 +328,111 @@ await ok('block：交接未满足 → deny', (async () => {
   return d.kind === 'deny'
 })())
 
-// ── 5. post-execute：remind 注入 ──────────────────────────────────────────
+// ── 5. review epoch：递归树冻结、只读边界与结算解锁 ───────────────────────
+section('review epoch 生命周期')
+await ok('递归观察树共享 epoch；父结束不提前解锁，末级结束才解锁', (async () => {
+  const root = makeGitWorkspace()
+  const steered = []
+  const owner = { id: 'review-owner', session: { id: 's-review-owner', header: { cwd: root } }, steer(msg) { steered.push(msg) } }
+  const lead = { id: 'review-lead', session: { id: 's-review-lead', header: { cwd: root } } }
+  const probe = { id: 'review-probe', session: { id: 's-review-probe', header: { cwd: root } } }
+  const prompt = [
+    'review_stage: final',
+    'review_policy: read-only',
+    'artifact_root: ' + root,
+    'artifact_revision: fixture',
+  ].join('\n')
+  const startDecision = await preExecute[0]({
+    name: 'subagent', arguments: { prompt, description: 'Final fixture review' }, callId: 'review-call', agent: owner,
+  }, () => Promise.resolve({ kind: 'allow' }))
+  if (startDecision.kind !== 'allow') return false
+  const leadStart = emitSubagentStart(owner, lead)
+
+  const childEdit = await preExecute[0]({
+    name: 'edit', arguments: { file_path: path.join(root, 'source.js') }, callId: 'child-edit', agent: lead,
+  }, () => Promise.resolve({ kind: 'allow' }))
+  const childCheckout = await preExecute[0]({
+    name: 'bash', arguments: { command: 'git checkout HEAD~1', workdir: root }, callId: 'child-git', agent: lead,
+  }, () => Promise.resolve({ kind: 'allow' }))
+  const childShellWrite = await preExecute[0]({
+    name: 'bash', arguments: { command: 'sed -i s/1/2/ source.js', workdir: root }, callId: 'child-shell-write', agent: lead,
+  }, () => Promise.resolve({ kind: 'allow' }))
+  const tempWrite = await preExecute[0]({
+    name: 'write', arguments: { file_path: path.join(os.tmpdir(), 'kix-review-repro.txt') }, callId: 'child-temp', agent: lead,
+  }, () => Promise.resolve({ kind: 'allow' }))
+  if (childEdit.kind !== 'deny' || childCheckout.kind !== 'deny' || childShellWrite.kind !== 'deny' || tempWrite.kind !== 'allow') return false
+
+  const nested = await preExecute[0]({
+    name: 'subagent_lite', arguments: { prompt: prompt + '\nTASK: narrow evidence probe', description: 'Probe fixture' }, callId: 'nested-call', agent: lead,
+  }, () => Promise.resolve({ kind: 'allow' }))
+  if (nested.kind !== 'allow') return false
+  const probeStart = emitSubagentStart(lead, probe)
+
+  await emitSubagentEnd(lead, leadStart, { lastAssistantMessage: [{ type: 'text', text: 'lead done' }] })
+  const lockedAfterLead = await preExecute[0]({
+    name: 'edit', arguments: { file_path: path.join(root, 'source.js') }, callId: 'owner-edit-1', agent: owner,
+  }, () => Promise.resolve({ kind: 'allow' }))
+  await emitSubagentEnd(probe, probeStart, { lastAssistantMessage: [{ type: 'text', text: 'probe done' }] })
+  const unlockedAfterProbe = await preExecute[0]({
+    name: 'edit', arguments: { file_path: path.join(root, 'source.js') }, callId: 'owner-edit-2', agent: owner,
+  }, () => Promise.resolve({ kind: 'allow' }))
+  const noNestedEpochLeak = await preExecute[0]({
+    name: 'edit', arguments: { file_path: path.join(root, 'source.js') }, callId: 'lead-edit-after', agent: lead,
+  }, () => Promise.resolve({ kind: 'allow' }))
+  return lockedAfterLead.kind === 'deny' && unlockedAfterProbe.kind === 'allow' && noNestedEpochLeak.kind === 'allow' && steered.length === 0
+})())
+await ok('并发同标签 review 乱序 start → post subagentId 纠正各自 epoch', (async () => {
+  const rootA = makeGitWorkspace()
+  const rootB = makeGitWorkspace()
+  const owner = { id: 'review-owner-concurrent', session: { id: 's-review-owner-concurrent', header: { cwd: rootA } }, steer() {} }
+  const childA = { id: 'review-concurrent-a', session: { id: 's-review-concurrent-a', header: { cwd: rootA } } }
+  const childB = { id: 'review-concurrent-b', session: { id: 's-review-concurrent-b', header: { cwd: rootB } } }
+  const execA = {
+    name: 'subagent', callId: 'concurrent-call-a', agent: owner,
+    arguments: { description: 'Same review', prompt: `review_stage: final\nreview_policy: read-only\nartifact_root: ${rootA}` },
+  }
+  const execB = {
+    name: 'subagent', callId: 'concurrent-call-b', agent: owner,
+    arguments: { description: 'Same review', prompt: `review_stage: final\nreview_policy: read-only\nartifact_root: ${rootB}` },
+  }
+  await preExecute[0](execA, () => Promise.resolve({ kind: 'allow' }))
+  await preExecute[0](execB, () => Promise.resolve({ kind: 'allow' }))
+  // Runtime start events race: B arrives first and is tentatively bound to A's FIFO epoch.
+  const childBStart = emitSubagentStart(owner, childB)
+  const childAStart = emitSubagentStart(owner, childA)
+  await postExecute[0](execA, { isError: false, value: { kind: 'continuable', subagentId: childA.id } }, () => Promise.resolve({ kind: 'accept' }))
+  await postExecute[0](execB, { isError: false, value: { kind: 'continuable', subagentId: childB.id } }, () => Promise.resolve({ kind: 'accept' }))
+
+  const aOwn = await preExecute[0]({ name: 'edit', arguments: { file_path: path.join(rootA, 'source.js') }, callId: 'a-own', agent: childA }, () => Promise.resolve({ kind: 'allow' }))
+  const aOther = await preExecute[0]({ name: 'edit', arguments: { file_path: path.join(rootB, 'source.js') }, callId: 'a-other', agent: childA }, () => Promise.resolve({ kind: 'allow' }))
+  if (aOwn.kind !== 'deny' || aOther.kind !== 'allow') return false
+
+  await emitSubagentEnd(childA, childAStart, { lastAssistantMessage: [{ type: 'text', text: 'A done' }] })
+  const ownerA = await preExecute[0]({ name: 'edit', arguments: { file_path: path.join(rootA, 'source.js') }, callId: 'owner-a', agent: owner }, () => Promise.resolve({ kind: 'allow' }))
+  const ownerBLocked = await preExecute[0]({ name: 'edit', arguments: { file_path: path.join(rootB, 'source.js') }, callId: 'owner-b-locked', agent: owner }, () => Promise.resolve({ kind: 'allow' }))
+  await emitSubagentEnd(childB, childBStart, { lastAssistantMessage: [{ type: 'text', text: 'B done' }] })
+  const ownerB = await preExecute[0]({ name: 'edit', arguments: { file_path: path.join(rootB, 'source.js') }, callId: 'owner-b', agent: owner }, () => Promise.resolve({ kind: 'allow' }))
+  return ownerA.kind === 'allow' && ownerBLocked.kind === 'deny' && ownerB.kind === 'allow'
+})())
+await ok('review tree 修改 artifact 后结算 → 旧 review 失效提醒', (async () => {
+  const root = makeGitWorkspace()
+  fs.writeFileSync(path.join(root, 'untracked.txt'), 'before\n', 'utf8')
+  const steered = []
+  const owner = { id: 'review-owner-dirty', session: { id: 's-review-owner-dirty', header: { cwd: root } }, steer(msg) { steered.push(msg) } }
+  const lead = { id: 'review-lead-dirty', session: { id: 's-review-lead-dirty', header: { cwd: root } } }
+  const prompt = `review_stage: verification\nreview_policy: read-only\nartifact_root: ${root}`
+  await preExecute[0]({
+    name: 'kix_capability_call',
+    arguments: { tool: 'subagent_reviewer', arguments: { prompt, description: 'Dirty review' } },
+    callId: 'dirty-call', agent: owner,
+  }, () => Promise.resolve({ kind: 'allow' }))
+  const dirtyStart = emitSubagentStart(owner, lead)
+  fs.writeFileSync(path.join(root, 'untracked.txt'), 'after!\n', 'utf8')
+  await emitSubagentEnd(lead, dirtyStart, { lastAssistantMessage: [{ type: 'text', text: 'done' }] })
+  return steered.length === 1 && steered[0].content[0].text.includes('已失效')
+})())
+
+// ── 6. post-execute：remind 注入 ──────────────────────────────────────────
 section('post-execute')
 await ok('pendingRemind → additionalContexts 注入', (async () => {
   await dispatchPre('subagent', { prompt: 'current_sprint: 5' }, 'orch-c')
@@ -345,7 +530,7 @@ await ok('QA 文本空 → 不提醒', (() => {
 section('subagent/end 返回侧监听器')
 const subagentEndListeners = listeners['subagent/end']
 assert.ok(Array.isArray(subagentEndListeners) && subagentEndListeners.length === 1, 'subagent/end 监听器已注册')
-await ok('QA 返回完成声明 + 进度未同步 → steer 注入提醒', (() => {
+await ok('QA 返回完成声明 + 进度未同步 → steer 注入提醒', (async () => {
   // 构造一个带 progress.md 未同步的 workspace
   const root = makeWorkspace({ completed: 2, total: 3, markerValue: 1 })
   const steered = []
@@ -354,14 +539,13 @@ await ok('QA 返回完成声明 + 进度未同步 → steer 注入提醒', (() =
     session: { header: { cwd: root } },
     steer(msg) { steered.push(msg) },
   }
-  subagentEndListeners[0](
+  await emitCompletedChild(fakeAgent,
     { runId: 'r1', provider: 'kix-subagent', id: 'child-1', local: true, stopReason: 'end_turn',
       lastAssistantMessage: [{ type: 'text', text: '✅ QA 全部通过，可以交付' }] },
-    fakeAgent,
   )
   return steered.length === 1 && steered[0].content.some((c) => c.text.includes('QA 子代理返回了完成声明'))
 })())
-await ok('QA 返回完成声明 + 进度已同步 → 不注入', (() => {
+await ok('QA 返回完成声明 + 进度已同步 → 不注入', (async () => {
   const root = makeWorkspace({ completed: 3, total: 3, markerValue: 1 })
   const steered = []
   const fakeAgent = {
@@ -369,24 +553,23 @@ await ok('QA 返回完成声明 + 进度已同步 → 不注入', (() => {
     session: { header: { cwd: root } },
     steer(msg) { steered.push(msg) },
   }
-  subagentEndListeners[0](
+  await emitCompletedChild(fakeAgent,
     { runId: 'r2', provider: 'kix-subagent', id: 'child-2', local: true, stopReason: 'end_turn',
       lastAssistantMessage: [{ type: 'text', text: 'QA passed, all done' }] },
-    fakeAgent,
   )
   return steered.length === 0
 })())
-await ok('无 lastAssistantMessage → 不注入', (() => {
+await ok('无 lastAssistantMessage → 不注入', (async () => {
   const steered = []
   const fakeAgent = {
     id: 'orch-return-c',
     session: { header: { cwd: os.tmpdir() } },
     steer(msg) { steered.push(msg) },
   }
-  subagentEndListeners[0]({ runId: 'r3', provider: 'kix-subagent', id: 'child-3', local: true, stopReason: 'error' }, fakeAgent)
+  await emitCompletedChild(fakeAgent, { runId: 'r3', provider: 'kix-subagent', id: 'child-3', local: true, stopReason: 'error' })
   return steered.length === 0
 })())
-await ok('returnReminded 每会话一次（remindOnce）', (() => {
+await ok('returnReminded 每会话一次（remindOnce）', (async () => {
   const root = makeWorkspace({ completed: 2, total: 3, markerValue: 1 })
   const steered = []
   const fakeAgent = {
@@ -398,8 +581,8 @@ await ok('returnReminded 每会话一次（remindOnce）', (() => {
     runId: 'r4', provider: 'kix-subagent', id: 'child-4', local: true, stopReason: 'end_turn',
     lastAssistantMessage: [{ type: 'text', text: '✅ done' }],
   }
-  subagentEndListeners[0](ev, fakeAgent)
-  subagentEndListeners[0](ev, fakeAgent)
+  await emitCompletedChild(fakeAgent, ev)
+  await emitCompletedChild(fakeAgent, { ...ev, runId: 'r4-second' })
   return steered.length === 1
 })())
 
