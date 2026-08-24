@@ -580,6 +580,84 @@ function activationNote(name) {
   return `kix-focus: ${name} 已激活，将在下一轮请求中可见并可直呼。用 kix_tool_deactivate 卸载。`
 }
 
+// 某些 native 桥接会把全部顶层属性强制为必填。升级字段在这种丢失
+// optional 的情况下不能伪造：站立权限不是升级目标，空 justification 也非法。
+// 当前会话没有可批准的更宽权限时，从模型可见 schema 删除这对字段；
+// 较窄 + ask 会话保留宿主原始 schema 与一次性升级能力。
+const ESCALATION_TOOL_NAMES = new Set(['bash', 'pwsh', 'write', 'edit'])
+const ESCALATION_ARGUMENTS = new Set(['sandbox_permissions', 'justification'])
+
+function sessionFromAssembleContext(context) {
+  return context && ((context.agent && context.agent.session) || (context.scope && context.scope.session))
+}
+
+function effectiveSandboxMode(ctx, context) {
+  const policy = ctx.get && ctx.get('sandboxPolicy')
+  if (!policy || typeof policy.resolve !== 'function') return undefined
+  const session = sessionFromAssembleContext(context)
+  try {
+    const resolved = policy.resolve(session ? { session } : {})
+    return resolved && resolved.mode
+  } catch {
+    return undefined
+  }
+}
+
+function effectiveApprovalPolicy(ctx, context) {
+  const approval = ctx.get && ctx.get('approval')
+  if (!approval) return undefined
+  const session = sessionFromAssembleContext(context)
+  try {
+    if (session && typeof approval.effectivePolicy === 'function') {
+      return approval.effectivePolicy(session)
+    }
+    const override = session && typeof approval.overrideOf === 'function'
+      ? approval.overrideOf(session)
+      : undefined
+    return override || (approval.config && approval.config.policy)
+  } catch {
+    return approval.config && approval.config.policy
+  }
+}
+
+function withoutEscalationArguments(tool) {
+  if (!tool || !ESCALATION_TOOL_NAMES.has(tool.name)) return tool
+  const parameters = tool.parameters
+  if (!parameters || !parameters.properties) return tool
+  const properties = { ...parameters.properties }
+  let changed = false
+  for (const name of ESCALATION_ARGUMENTS) {
+    if (Object.prototype.hasOwnProperty.call(properties, name)) {
+      delete properties[name]
+      changed = true
+    }
+  }
+  if (!changed) return tool
+  const required = Array.isArray(parameters.required)
+    ? parameters.required.filter((name) => !ESCALATION_ARGUMENTS.has(name))
+    : undefined
+  return {
+    ...tool,
+    parameters: {
+      ...parameters,
+      properties,
+      ...(required ? { required } : {}),
+    },
+  }
+}
+
+function projectSandboxToolContracts(tools, facts) {
+  if (!Array.isArray(tools)) return tools
+  if (facts.mode !== 'danger-full-access' && facts.approval !== 'never') return tools
+  let changed = false
+  const projected = tools.map((tool) => {
+    const next = withoutEscalationArguments(tool)
+    changed ||= next !== tool
+    return next
+  })
+  return changed ? projected : tools
+}
+
 module.exports = {
   name: 'kix-focus',
   inject: ['tools'],
@@ -591,6 +669,18 @@ module.exports = {
     // 额外常驻工具（部署可追加）
     const extraResident = Array.isArray(cfg.extraResidentTools) ? cfg.extraResidentTools : []
     const resident = new Set([...RESIDENT_TOOLS, ...extraResident])
+
+    // native 工具 schema 必须与当前会话的有效权限一致。先让其余 waterfall
+    // 完成，再只投影工具参数；不修改执行定义，也不影响 run_code SDK。
+    ctx.on('system-prompt/assemble', async (assembly, context, next) => {
+      const resolved = await next()
+      const facts = {
+        mode: effectiveSandboxMode(ctx, context),
+        approval: effectiveApprovalPolicy(ctx, context),
+      }
+      const projected = projectSandboxToolContracts(resolved.tools, facts)
+      return projected === resolved.tools ? resolved : { ...resolved, tools: projected }
+    })
 
     // 当前 agent scope 视图（restrict 后 = 常驻集；用于 restrict 校验）
     function scopeSchemas() {
@@ -993,6 +1083,11 @@ module.exports.__internals = {
   searchCapabilities,
   guidanceText,
   activationNote,
+  sessionFromAssembleContext,
+  effectiveSandboxMode,
+  effectiveApprovalPolicy,
+  withoutEscalationArguments,
+  projectSandboxToolContracts,
   makeUserMessage,
   resolveEntryCandidates,
   defaultResolvePkg,

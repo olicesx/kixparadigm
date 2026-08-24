@@ -63,11 +63,12 @@
 'use strict'
 
 const { readFileSync, statSync, readdirSync } = require('node:fs')
-const { join } = require('node:path')
-const { randomUUID } = require('node:crypto')
+const { join, resolve, relative, isAbsolute } = require('node:path')
+const { randomUUID, createHash } = require('node:crypto')
 const { execFile } = require('node:child_process')
 const { promisify } = require('node:util')
 const lib = require('./consistency-lib.cjs')
+const guardInternals = require('./kix-guards.js').__internals
 
 const execFileP = promisify(execFile)
 
@@ -81,8 +82,118 @@ const SUBAGENT_TOOLS = new Set([
   'subagent_codex', 'subagent_claude_code',
 ])
 const SPRINT_MARKER = '.kixpower-current-sprint'
+const REVIEW_STAGES = new Set(['design', 'final', 'verification'])
+const REVIEW_POLICY = 'read-only'
+const READ_ONLY_GIT_SUBCOMMANDS = new Set([
+  'status', 'diff', 'show', 'log', 'rev-parse', 'ls-files', 'ls-tree',
+  'ls-remote', 'cat-file', 'blame', 'grep', 'describe', 'name-rev',
+  'merge-base', 'for-each-ref', 'shortlog', 'diff-tree', 'diff-index',
+])
+const REVIEW_SHELL_MUTATION_RE = /(?:^|[;&|]\s*)(?:apply_patch|rm|mv|cp|touch|mkdir|install|truncate|tee|chmod|chown|ln)(?:\s|$)|\bsed\b[^;&|]*\s-i(?:\s|$)|\bperl\b[^;&|]*\s-pi(?:\s|$)|\b(?:gofmt\s+-w|go\s+fmt|cargo\s+fmt)(?:\s|$)|\b(?:eslint|biome\s+check)\b[^;&|]*\s--(?:fix|write)(?:\s|$)|\bpython(?:3)?\b[^;&|]*(?:\bopen\s*\([^)]*['"][wax+]|\.(?:write_text|write_bytes|unlink)\s*\(|\bos\.(?:remove|unlink|rename|replace)\s*\()|\bnode\b[^;&|]*(?:writeFileSync|appendFileSync|createWriteStream|rmSync|unlinkSync|renameSync)|\bdd\b[^;&|]*\bof=|\b(?:Set-Content|Add-Content|Out-File|Remove-Item|Move-Item|Copy-Item|Rename-Item|New-Item)\b|(?:^|\s)>{1,2}(?=\s*\S)/i
 
 // ── 纯判定函数（模块级：单元测试经 __internals 直接验证）─────────────────
+
+// review epoch 是信息边界，不是观察预算。一个 review lead 可以继续递归分派，
+// 但整棵观察树共享相同 artifact root，直到全部 child 结算前协调线程不能改它。
+function subagentInvocation(exec) {
+  const tool = String(exec && exec.name || '').toLowerCase()
+  const args = exec && (exec.arguments ?? exec.args) || {}
+  if (tool === 'kix_capability_call') {
+    const nestedTool = String(args.tool || '').toLowerCase()
+    if (SUBAGENT_TOOLS.has(nestedTool)) return { tool: nestedTool, args: args.arguments || {} }
+  }
+  return { tool, args }
+}
+
+function extractReviewEpochMeta(prompt) {
+  const p = String(prompt || '')
+  const field = (name) => {
+    const m = new RegExp(`^[ \\t]*${name}:[ \\t]*(.+?)[ \\t]*$`, 'im').exec(p)
+    return m && m[1] ? m[1].trim() : undefined
+  }
+  const stage = String(field('review_stage') || '').toLowerCase()
+  const policy = String(field('review_policy') || '').toLowerCase().replace(/_/g, '-')
+  const roots = [...p.matchAll(/^[ \t]*artifact_root:[ \t]*(.+?)[ \t]*$/gim)]
+    .map((m) => m[1].trim())
+    .filter(Boolean)
+  if (!REVIEW_STAGES.has(stage) || policy !== REVIEW_POLICY || roots.length === 0 || roots.some((root) => !isAbsolute(root))) return undefined
+  return {
+    stage,
+    policy,
+    roots: [...new Set(roots.map((root) => resolve(root)))],
+    revision: field('artifact_revision'),
+  }
+}
+
+function pathInside(root, candidate) {
+  if (!root || !candidate) return false
+  const rel = relative(resolve(root), resolve(candidate))
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
+function agentCwd(agent) {
+  return agent && agent.session && agent.session.header && agent.session.header.cwd
+}
+
+function resolveAgentPath(agent, value) {
+  if (typeof value !== 'string' || value.trim() === '') return undefined
+  const p = value.trim()
+  return isAbsolute(p) ? resolve(p) : resolve(agentCwd(agent) || process.cwd(), p)
+}
+
+function commandWorkdir(agent, args) {
+  return resolveAgentPath(agent, args && args.workdir) || resolve(agentCwd(agent) || process.cwd())
+}
+
+function reviewGitMutation(command) {
+  const subs = guardInternals.gitSubcommands(String(command || ''))
+  for (const sub of subs) if (!READ_ONLY_GIT_SUBCOMMANDS.has(String(sub).toLowerCase())) return true
+  return false
+}
+
+function reviewShellMutation(command) {
+  return REVIEW_SHELL_MUTATION_RE.test(String(command || ''))
+}
+
+function reviewCommandRoot(agent, args) {
+  const workdir = commandWorkdir(agent, args)
+  const hinted = guardInternals.repoRootFromText(String(args && args.command || ''))
+  return hinted ? resolveAgentPath({ session: { header: { cwd: workdir } } }, hinted) : workdir
+}
+
+function toolResultValue(result) {
+  let value = result && Object.prototype.hasOwnProperty.call(result, 'value') ? result.value : result
+  if (value && value.ok === true && Object.prototype.hasOwnProperty.call(value, 'result')) value = value.result
+  if (value && value.isError === false && Object.prototype.hasOwnProperty.call(value, 'value')) value = value.value
+  return value
+}
+
+async function gitArtifactFingerprint(root) {
+  try {
+    const opts = { maxBuffer: 64 * 1024 * 1024 }
+    const [head, status, diff, untracked] = await Promise.all([
+      execFileP('git', ['-C', root, 'rev-parse', 'HEAD'], opts),
+      execFileP('git', ['-C', root, 'status', '--porcelain=v1', '-z', '--untracked-files=all'], opts),
+      execFileP('git', ['-C', root, 'diff', '--binary', '--no-ext-diff', 'HEAD', '--'], opts),
+      execFileP('git', ['-C', root, 'ls-files', '--others', '--exclude-standard', '-z'], opts),
+    ])
+    const digest = createHash('sha256')
+      .update(String(status.stdout || ''))
+      .update('\0')
+      .update(String(diff.stdout || ''))
+    for (const file of String(untracked.stdout || '').split('\0').filter(Boolean)) {
+      const full = join(root, file)
+      const stat = statSync(full)
+      digest.update('\0' + file + '\0' + stat.size + '\0')
+      if (stat.isFile() && stat.size <= 16 * 1024 * 1024) digest.update(readFileSync(full))
+      else digest.update(String(stat.mtimeMs))
+    }
+    const hash = digest.digest('hex')
+    return `${String(head.stdout || '').trim()}:${hash}`
+  } catch {
+    return undefined
+  }
+}
 
 // 从分派 prompt 提取交接元数据（Copilot hook 同款容错字段名）
 function extractHandoffMeta(prompt) {
@@ -406,6 +517,18 @@ function makeUserMessage(text) {
   }
 }
 
+function lifecycleRunKey(info) {
+  return info && (info.runId || info.id) ? String(info.runId || info.id) : undefined
+}
+
+function lifecycleParentAgent(ctx, info) {
+  const agents = ctx.get && ctx.get('agents')
+  if (!agents || typeof agents.get !== 'function' || !info || !info.id) return undefined
+  const child = agents.get(String(info.id))
+  const parentId = child && child.session && child.session.header && child.session.header.parentSession
+  return parentId ? agents.get(parentId) : undefined
+}
+
 module.exports = {
   name: 'kix-orchestration',
   inject: ['tools', 'commands'],
@@ -417,15 +540,143 @@ module.exports = {
     const sandboxPolicy = ctx.get('sandboxPolicy')
 
     const states = new Map()
+    const reviewEpochs = new Map()
+    const reviewEpochByAgent = new Map()
+    const lifecycleParents = new Map()
+
     function stateFor(agent) {
       const key = agent && agent.id ? String(agent.id) : 'anonymous'
       let st = states.get(key)
       if (!st) {
         const workspaceRoot = lib.resolveWorkspaceRoot(agent, sandboxPolicy) || undefined
-        st = { enabled: true, reminded: false, returnReminded: false, sleepReminded: false, planReminded: false, pendingPlanRemind: null, workspaceRoot }
+        st = {
+          enabled: true,
+          reminded: false,
+          returnReminded: false,
+          sleepReminded: false,
+          planReminded: false,
+          pendingPlanRemind: null,
+          workspaceRoot,
+          reviewEpochIds: new Set(),
+          pendingReviewEpochs: [],
+        }
         states.set(key, st)
       }
       return st
+    }
+
+    function epochForAgent(agent) {
+      const id = agent && agent.id ? String(agent.id) : undefined
+      return id ? reviewEpochByAgent.get(id) : undefined
+    }
+
+    function activeEpochsOwnedBy(agent) {
+      const st = stateFor(agent)
+      return [...st.reviewEpochIds].map((id) => reviewEpochs.get(id)).filter((epoch) => epoch && !epoch.finalized)
+    }
+
+    function mutationPath(exec) {
+      const tool = String(exec && exec.name || '').toLowerCase()
+      if (tool !== 'edit' && tool !== 'write') return undefined
+      const args = exec && (exec.arguments ?? exec.args)
+      return resolveAgentPath(exec && exec.agent, args && (args.file_path || args.path))
+    }
+
+    function commandTouchesEpoch(exec, epoch) {
+      const args = exec && (exec.arguments ?? exec.args)
+      if (!args || typeof args.command !== 'string') return false
+      const gitMutation = reviewGitMutation(args.command)
+      const shellMutation = reviewShellMutation(args.command)
+      if (!gitMutation && !shellMutation) return false
+      const commandRoot = reviewCommandRoot(exec && exec.agent, args)
+      return epoch.roots.some((root) =>
+        pathInside(root, commandRoot) || pathInside(commandRoot, root) ||
+        (shellMutation && String(args.command).includes(root)))
+    }
+
+    function epochBlocksMutation(exec, epoch) {
+      const target = mutationPath(exec)
+      if (target && epoch.roots.some((root) => pathInside(root, target))) return true
+      return commandTouchesEpoch(exec, epoch)
+    }
+
+    async function beginReviewEpoch(exec) {
+      if (epochForAgent(exec && exec.agent)) return undefined // descendants inherit; never nest/leak epochs
+      const args = subagentInvocation(exec).args
+      const meta = extractReviewEpochMeta(args && args.prompt)
+      if (!meta || !exec || !exec.agent) return undefined
+      const ownerId = String(exec.agent.id || 'anonymous')
+      const epoch = {
+        id: `${ownerId}:${String(exec.callId || randomUUID())}`,
+        owner: exec.agent,
+        ownerId,
+        callId: exec.callId,
+        label: String(args && args.description || ''),
+        stage: meta.stage,
+        policy: meta.policy,
+        roots: meta.roots,
+        revision: meta.revision,
+        fingerprints: new Map(),
+        activeAgents: new Set(),
+        rootAgentId: undefined,
+        finalized: false,
+      }
+      for (const root of epoch.roots) epoch.fingerprints.set(root, await gitArtifactFingerprint(root))
+      reviewEpochs.set(epoch.id, epoch)
+      const st = stateFor(exec.agent)
+      st.reviewEpochIds.add(epoch.id)
+      st.pendingReviewEpochs.push(epoch.id)
+      return epoch
+    }
+
+    function bindReviewAgent(epoch, childId) {
+      if (!epoch || !childId || epoch.finalized) return
+      const id = String(childId)
+      epoch.activeAgents.add(id)
+      if (!epoch.rootAgentId) epoch.rootAgentId = id
+      reviewEpochByAgent.set(id, epoch)
+    }
+
+    // subagent/start 没有 initiating callId；并发同标签调用只能先暂绑。工具返回的
+    // continuable.subagentId 与 callId 同时可见，用它把 root child 纠正到真实 epoch。
+    function bindRootReviewAgent(epoch, childId) {
+      if (!epoch || !childId || epoch.finalized) return
+      const id = String(childId)
+      const priorEpoch = reviewEpochByAgent.get(id)
+      if (priorEpoch && priorEpoch !== epoch) {
+        priorEpoch.activeAgents.delete(id)
+        if (priorEpoch.rootAgentId === id) priorEpoch.rootAgentId = undefined
+      }
+      if (epoch.rootAgentId && epoch.rootAgentId !== id) {
+        const priorRoot = epoch.rootAgentId
+        epoch.activeAgents.delete(priorRoot)
+        if (reviewEpochByAgent.get(priorRoot) === epoch) reviewEpochByAgent.delete(priorRoot)
+      }
+      epoch.rootAgentId = id
+      epoch.activeAgents.add(id)
+      reviewEpochByAgent.set(id, epoch)
+    }
+
+    async function finalizeReviewEpoch(epoch, reason) {
+      if (!epoch || epoch.finalized) return
+      epoch.finalized = true
+      reviewEpochs.delete(epoch.id)
+      const ownerState = stateFor(epoch.owner)
+      ownerState.reviewEpochIds.delete(epoch.id)
+      ownerState.pendingReviewEpochs = ownerState.pendingReviewEpochs.filter((id) => id !== epoch.id)
+      for (const id of epoch.activeAgents) reviewEpochByAgent.delete(id)
+      if (reason === 'cancelled') return
+
+      const changed = []
+      for (const root of epoch.roots) {
+        const before = epoch.fingerprints.get(root)
+        const after = await gitArtifactFingerprint(root)
+        if (before !== undefined && after !== undefined && before !== after) changed.push(root)
+      }
+      if (changed.length > 0 && epoch.owner && typeof epoch.owner.steer === 'function') {
+        const text = `kix-orchestration: review epoch 的 artifact 在观察树结算前发生变化：${changed.join(', ')}。本轮 review/APPROVE 已失效；先检查共享工作区副作用，再以新 revision 开启 review epoch。`
+        try { epoch.owner.steer(makeUserMessage(text)) } catch { /* advisory only */ }
+      }
     }
 
     async function askUser(exec, reason) {
@@ -452,10 +703,64 @@ module.exports = {
       }
     }
 
-    // ── pre-execute：subagent 交接门禁 + v4.1 sleep 等待检测 ──────────────
+    // review epoch 覆盖整棵递归观察树：lead 可以继续派 probe，但所有后代共享
+    // 同一 artifact 冻结边界。宿主生命周期只传 info；start 期间从已注册 child
+    // 的 durable lineage 恢复 parent，并按 runId 保留到 end。
+    ctx.on('subagent/start', (info) => {
+      const parent = lifecycleParentAgent(ctx, info)
+      const runKey = lifecycleRunKey(info)
+      if (!info || !info.id || !parent) return
+      if (runKey) lifecycleParents.set(runKey, parent)
+      const inherited = epochForAgent(parent)
+      if (inherited) {
+        bindReviewAgent(inherited, info.id)
+        return
+      }
+      const st = stateFor(parent)
+      const label = String(info.label || '')
+      let epoch
+      for (const id of st.pendingReviewEpochs) {
+        const candidate = reviewEpochs.get(id)
+        if (!candidate || candidate.rootAgentId) continue
+        if (!epoch) epoch = candidate
+        if (candidate.label && candidate.label === label) { epoch = candidate; break }
+      }
+      if (epoch) bindReviewAgent(epoch, info.id)
+    })
+
+    // ── pre-execute：review epoch 锁 + subagent 交接门禁 + sleep 检测 ────
     ctx.on('tools/pre-execute', async (exec, next) => {
       const name = exec && exec.name
-      const tool = (name || '').toLowerCase()
+      const invocation = subagentInvocation(exec)
+      const tool = invocation.tool
+
+      // 只读观察树仍可运行测试、写 /tmp reproducer、继续递归分派；只禁止修改
+      // 绑定 artifact 的源文件或 Git 状态。协调线程同样受 epoch 写锁约束。
+      const inheritedEpoch = epochForAgent(exec && exec.agent)
+      if (inheritedEpoch && epochBlocksMutation(exec, inheritedEpoch)) {
+        return { kind: 'deny', reason: `kix-orchestration: ${inheritedEpoch.stage} review epoch 正在只读观察 ${inheritedEpoch.roots.join(', ')}；该工具会改变被审 artifact。可继续验证/递归观察；要修复时先让当前观察树结算或中止，再开启新 revision。` }
+      }
+      for (const epoch of activeEpochsOwnedBy(exec && exec.agent)) {
+        if (epochBlocksMutation(exec, epoch)) {
+          return { kind: 'deny', reason: `kix-orchestration: ${epoch.stage} review epoch 尚未结算，不能修改 ${epoch.roots.join(', ')}。主线程可做不相关工作；要编辑请先等待或中止该观察树，编辑后以新 revision 重开。` }
+        }
+      }
+
+      let startedReviewEpoch
+      const reviewAwareNext = async () => {
+        if (startedReviewEpoch === undefined) startedReviewEpoch = await beginReviewEpoch(exec)
+        try {
+          const decision = await next()
+          if (startedReviewEpoch && decision && decision.kind === 'deny') {
+            await finalizeReviewEpoch(startedReviewEpoch, 'cancelled')
+          }
+          return decision
+        } catch (error) {
+          if (startedReviewEpoch) await finalizeReviewEpoch(startedReviewEpoch, 'cancelled')
+          throw error
+        }
+      }
+
       if (!SUBAGENT_TOOLS.has(tool)) {
         // v4.1：sleep 空转等待子代理（一次性提醒）。刻意不参与 intensity
         // block/ask——sleep 是编排卫生问题不是危险操作，remind 恰当。
@@ -503,14 +808,14 @@ module.exports = {
         return next()
       }
 
-      const args = exec && (exec.arguments ?? exec.args)
+      const args = invocation.args
       const agent = exec && exec.agent
       const st = stateFor(agent)
-      if (!st.enabled) return next()
+      if (!st.enabled) return reviewAwareNext()
 
       // DSH subagent 工具的 prompt 在 args.prompt（SubagentStartRequest 契约）
       const prompt = args && (args.prompt || args.content)
-      if (typeof prompt !== 'string' || prompt.length === 0) return next()
+      if (typeof prompt !== 'string' || prompt.length === 0) return reviewAwareNext()
 
       const workspaceRoot = lib.resolveWorkspaceRoot(agent, sandboxPolicy) || st.workspaceRoot
       const result = checkHandoff({ prompt, workspaceRoot })
@@ -524,16 +829,16 @@ module.exports = {
           const ok = await askUser(exec, reason)
           if (ok === false) return { kind: 'deny', reason: 'kix-orchestration: 用户拒绝，请先完成交接前置条件。' }
           if (ok === void 0) return { kind: 'deny', reason: 'kix-orchestration: 无法向用户提问（无提问通道），已自动拒绝。' }
-          return next()
+          return reviewAwareNext()
         }
         // remind：放行 + 注入提醒（每会话一次）
         // 2026-08-16（审查修复，状态机泄漏）：reminded 移到投递成功后置位
         // （旧实现在投递前置位——dispatch 抛错不经 post-execute 时标志滞留，
         // 一次性提醒被烧掉）；pendingRemind 绑定发起 callId（旧实现无绑定，
         // 下一次任意工具调用都会错位消费注入）。
-        if (st.reminded) return next()
+        if (st.reminded) return reviewAwareNext()
         st.pendingRemind = { callId: exec.callId, reason }
-        return next()
+        return reviewAwareNext()
       }
 
       // v3：producer_closeout 收尾 gate（QA 证据链，DSH 原生；见 checkCloseout 注释）
@@ -569,21 +874,37 @@ module.exports = {
             const ok = await askUser(exec, reason)
             if (ok === false) return { kind: 'deny', reason: 'kix-orchestration: 用户拒绝，请先补齐收尾证据链。' }
             if (ok === void 0) return { kind: 'deny', reason: 'kix-orchestration: 无法向用户提问（无提问通道），已自动拒绝。' }
-            return next()
+            return reviewAwareNext()
           }
-          if (st.reminded) return next()
+          if (st.reminded) return reviewAwareNext()
           st.pendingRemind = { callId: exec.callId, reason }
-          return next()
+          return reviewAwareNext()
         }
       }
 
-      return next()
+      return reviewAwareNext()
     })
 
     // ── post-execute：注入 remind（handoff 槽 + v4 sleep 槽各自独立）──────
     ctx.on('tools/post-execute', async (exec, result, next) => {
       const agent = exec && exec.agent
       const st = agent ? stateFor(agent) : undefined
+      if (st) {
+        const pendingEpoch = st.pendingReviewEpochs
+          .map((id) => reviewEpochs.get(id))
+          .find((epoch) => epoch && epoch.callId === (exec && exec.callId))
+        if (pendingEpoch) {
+          const value = toolResultValue(result)
+          if (value && typeof value.subagentId === 'string') {
+            bindRootReviewAgent(pendingEpoch, value.subagentId)
+          }
+          const failed = Boolean(result && result.isError) || Boolean(value && value.isError === true)
+          if (failed && pendingEpoch.activeAgents.size === 0) await finalizeReviewEpoch(pendingEpoch, 'cancelled')
+          else if (!failed && value && value.kind === 'foreground' && pendingEpoch.activeAgents.size === 0) {
+            await finalizeReviewEpoch(pendingEpoch, 'settled')
+          }
+        }
+      }
       if (!st || !st.enabled) return next()
       // v4：sleep 等待提醒（独立槽位 + 独立一次性标志，不烧 handoff 的
       // pendingRemind/reminded）。callId 不匹配时落回 handoff 槽继续判，
@@ -615,7 +936,21 @@ module.exports = {
     // 返回完成声明但 progress.md 未同步 → steer 注入提醒（remindOnce）。
     // emit 模式不能 block（那是 pre-execute/post-execute 的事），提醒层符合
     // kix「补足非限制」；0% 误报：无完成声明/进度已同步/无法读进度都不提醒。
-    ctx.on('subagent/end', (info, parent) => {
+    ctx.on('subagent/end', async (info) => {
+      const runKey = lifecycleRunKey(info)
+      const parent = (runKey && lifecycleParents.get(runKey)) || lifecycleParentAgent(ctx, info)
+      if (runKey) lifecycleParents.delete(runKey)
+      if (info && info.id) {
+        const id = String(info.id)
+        const epoch = reviewEpochByAgent.get(id)
+        if (epoch) {
+          // DSH keeps a continuable parent resident while descendants it created run,
+          // so parent end cannot precede an accepted descendant's start/settlement edge.
+          reviewEpochByAgent.delete(id)
+          epoch.activeAgents.delete(id)
+          if (epoch.activeAgents.size === 0) await finalizeReviewEpoch(epoch, 'settled')
+        }
+      }
       try {
         const agent = parent || (info && info.agent) || undefined
         if (!agent) return
@@ -681,11 +1016,22 @@ module.exports = {
       },
     })
 
-    ctx.logger?.info?.('[kix-orchestration] 编排交接门禁已挂载（subagent pre-execute：sprint marker/plan/progress/blocker 校验 + producer_closeout 收尾证据链 v3；subagent/end：QA 返回侧一致性校验 v2；bash sleep 等待子代理一次性提醒 v4）')
+    ctx.logger?.info?.('[kix-orchestration] 编排交接门禁已挂载（review epoch：递归观察树 artifact 冻结/只读 Git 边界；handoff/closeout/QA 返回校验；sleep 空等待提醒）')
   },
 }
 
 module.exports.__internals = {
+  subagentInvocation,
+  extractReviewEpochMeta,
+  pathInside,
+  reviewGitMutation,
+  reviewShellMutation,
+  reviewCommandRoot,
+  gitArtifactFingerprint,
+  toolResultValue,
+  READ_ONLY_GIT_SUBCOMMANDS,
+  REVIEW_STAGES,
+  REVIEW_POLICY,
   extractHandoffMeta,
   hasQaCompletion,
   QA_NEGATIVE_MARKERS,

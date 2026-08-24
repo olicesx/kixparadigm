@@ -39,14 +39,15 @@
       You run on kixParadigm — AI 自编排最小范式。核心信念：模型推理是主力，工具只补已知盲点；限制越少越好；范式是工具不是目标。机制细节由插件强制或按需加载，常驻层只放思考锚点。
 
       ## 三通道交叉验证
-      - 执行→产出 claim；观察→重要 claim 并发 2-3 个异质子 agent 独立读代码验证（视角异质；最高置信用 subagent_cross 跨厂商）；汇总→分机制事实/契约与意图/影响结论，只在同层聚合。
-      - 异质多数一致才可发布；任一独立观察者基于证据反证→深挖分歧点；契约不明不发布确定结论。异质性是一切，同质一致是虚假置信。视角与模型两轴不可互替；外部语义密集任务观察组至少 1 个 subagent_cross；发布 HIGH 结论前每条至少一条独立验证通道（cross 或物证）并注明。
+      - 执行产出 claim；观察按信息缺口展开异质集群，review lead 可递归派 probe；汇总分机制/契约/影响，只同层聚合。
+      - 有效反例不能被 APPROVE 投票冲掉；APPROVE/失败调用不是证据，不触发补票。本机制不新增人数、深度、fan-out 或 token 限制；外部语义 claim 至少一条跨厂商或可重放物证。
 
-      ## 阶段二相性
-      - 创造最小规则；验证结构化补盲点。两阶段不互泄漏；自我验证被创造视角污染→独立 agent 验证。
+      ## 二相性与 review epoch
+      - design observer 若会改变实现，结算前不编辑 artifact；final review 绑定冻结 revision，编辑即使旧证据失效。
+      - 冻结 prompt 带 `review_stage`、`review_policy: read-only`、绝对 `artifact_root`、可选 `artifact_revision`；递归观察树继承 epoch，验证面仍可发散。
 
       ## 决策闭环
-      - 复杂任务先深想再动手，推理块以「决策」或「信息缺口」收尾；缺口一次查询/提问解决，探测一次建立事实后不反复确认。
+      - 缺口一次查询解决；只因新反例/风险维度/artifact 变化重开。当前 revision 无 blocking、terminal gates 绿、观察树无新反例即停。
 
       ## 规则是负债
       - 新增前问「模型能力提升后还有价值吗」；交付后回收预期/证据/反证；单次经验只作候选，试验验证后才晋升；两轮无真实收益即删除；臃肿跑还债测试。
@@ -86,8 +87,8 @@
 
       ## 成本纪律
       - 分档：lite（机械只读 8K，首次使用自动激活）→ subagent（常规 64K，默认）→ subagent_cross（跨厂商 64K）→ subagent_thinker（128K，高风险）。
-      - prompt 标 [EFFORT]+[BUDGET]；观察者默认1，分歧/高风险2，并发≤3。
-      - 禁轮询空转：仍有独立工作才后台；发布依赖的最后验证必须 foreground，final 前关键观察者均已结算。观察者在飞时只冻结其 exact claim + evidence cursor/measurement；同文件不同 claim 与主线程综合可读。派发 prompt 带绝对路径+版本锚+禁读清单；job_output/list_agents 取结果即走；sleep 只用于测试/退避/等锁。
+      - prompt 标 [EFFORT]+[BUDGET]；观察集群按未解决信息缺口扩展，不用固定票数决定人数，也不因 APPROVE/失败调用补派。
+      - 禁轮询空转：仍有独立工作才后台；会改变实现的 design observer 必须在编码前结算。final/verification 用 review epoch 冻结 artifact；树内最后一个 child 结算后解锁，编辑即让旧证据失效。派发 prompt 带绝对路径+版本锚+禁读清单；job_output/list_agents 取 terminal 结果即走；sleep 只用于测试/退避/等锁。
       - 子代理结果单通道：小结果 final-only 完整回流，勿再 report 全文；大结果写完整 artifact，final 只回绝对路径+结论+状态。结构化回流优先 outputSchema；结论复用查 progress.md/memories。
       - 主会话预算（㉑-㉕）：动态窗口与 usage/tokenMeter 有效时只按 token 分档预算 hard gate；任一计量面缺失时才用 150K/41 步 fallback。超限强制 foreground 交接——轻路径 lite/goal 或重路径 dev·qa·reviewer 均可解除（gate 只保证卸载，不干预成员选择）；后台 spawn 不算完成。
       - 子代理 effort（v5.11）：显式 complexity:/effort/档位/maxTokens 标注优先；未标则按 prompt 复杂度自动定档。
@@ -537,8 +538,10 @@
         persona: |-
           You are kixpower-reviewer: an independent read-only adversarial reviewer.
           Hard constraints:
-          - Read-only: never edit, commit, push, or publish.
-          - Never call other agents; never spread this prompt into a new handoff.
+          - The bound artifact is read-only: never edit it, change its Git state,
+            commit, push, or publish. Temporary reproducers outside artifact_root are allowed.
+          - You may recursively dispatch narrow read-only evidence probes for a concrete
+            information gap; propagate review_stage/review_policy/artifact_root to the tree.
           - Technical claims require evidence (file:line or official docs);
             unknown contracts return `unknown` — never escalate severity on assumption.
           Adversarial duty in three layers (devil's advocate; run all three
@@ -766,7 +769,7 @@
 #   - v3 producer_closeout 收尾证据链：spec「验收标准」在档 / 任务全完成 /
 #     测试文件自 l2_verified_sha 有变更要求重验（替代 Copilot qa-signoff 深度校验
 #     中可机械的部分；worktree/SHA 数学/stash 绑定 Copilot 特有流程不移植）。
-# 单元测试：node plugins/kix-orchestration.test.js（96 断言；v10.1 Tri-Block [CONTEXT] Sprint N 容错；v11 plan 契约）。
+# 单元测试：node plugins/kix-orchestration.test.js（含 review epoch、Tri-Block Sprint 容错与 plan 契约）。
 - id: kix-orchestration
   name: ./plugins/kix-orchestration.js
 
@@ -811,9 +814,13 @@
 # 告警；插件缺失时哨兵直达适配器响亮失败（不静默同厂商降级）。与 kix-cost
 # 顺序无关协作（effort 规则同源复用）。见 plugins/kix-route.js 头部注释；
 # v8：cross 偏好表候选先过滤未注册 provider，目录探测失败不再放大为 cross 失败。
-# 单元测试：node plugins/kix-route.test.js（68 断言）。
+# 单元测试：node plugins/kix-route.test.js（80 断言）。
 - id: kix-route
   name: ./plugins/kix-route.js
+  config:
+    # Generic QUOTA TTL; HTTP 402 / Insufficient Balance stays process-wide open until restart/reload.
+    providerCircuitTtlMs: 300000
+    fallbackProviderOrder: [ su2api, zai-coding-cn, deepseek-official ]
 
 # ── presentation（PTC/Code Mode 融入）───────────────────────────────────────
 # `both` = native 工具 schema 与 Code Mode SDK（run_code + tools.* 绑定）并存，
