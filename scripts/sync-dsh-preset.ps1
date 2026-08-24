@@ -31,11 +31,15 @@ if (-not $PresetRoot) {
   $PresetRoot = Join-Path $dshHome ('.agent-presets\' + $PresetId)
 }
 
-$bundle = (Resolve-Path -LiteralPath $BundleRoot).Path
+# Get-Item.FullName expands Windows 8.3 names (for example RUNNER~1), while
+# Resolve-Path preserves them. Keep every source-side path in the same canonical
+# representation as Get-ChildItem.FullName before containment and Substring use.
+$bundle = (Get-Item -LiteralPath $BundleRoot -Force).FullName
 $src = Join-Path $bundle $SourceDir
 if (-not (Test-Path $src)) {
   Write-Error "Preset source does not exist: $src"
 }
+$src = (Get-Item -LiteralPath $src -Force).FullName
 
 # The default preset owns one known directory pointer. Other source presets have
 # none; explicit caller declarations are validated strictly below.
@@ -57,6 +61,8 @@ if (-not (Test-Path $PresetRoot)) {
     $answer = Read-Host 'Create the target? (y/N)'
     if ($answer -notin @('y', 'Y')) { exit 1 }
   }
+} else {
+  $PresetRoot = (Get-Item -LiteralPath $PresetRoot -Force).FullName
 }
 
 function Get-FileHashSafe([string]$Path) {
