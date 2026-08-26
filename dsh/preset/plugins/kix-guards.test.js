@@ -362,6 +362,8 @@ async function softCase(label, name, args) {
   assert.ok(!I.pushTargetsProtectedRef('git fetch origin # then && git push origin main'), '注释里的 && 不是下一条命令')
   assert.ok(!I.isGhDestructive('ls -la # pipes: ls | gh repo delete o/r'), '注释里的管道不是 gh 调用')
   assert.ok(I.isForcePush('git log -1; git push --force once'), '真分号后 force 仍拦')
+  assert.ok(!I.isForcePush('git push origin "docs: never use --force on main"'), 'push 说明文本不是 force')
+  assert.ok(!I.pushTargetsProtectedRef('git push origin "see :main notes"'), '带空格的说明不是目标分支')
   passed += 9
 
   // isLocalDestructiveAsk
