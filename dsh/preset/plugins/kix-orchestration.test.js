@@ -216,6 +216,7 @@ await ok('git branch / config 只读形态不锁 epoch；写形态仍拦', (() =
     'git tag --points-at HEAD',
     'git tag --contains v1.0.0',
     'git tag --merged main',
+    "cat > deploy.sh <<'EOF'\ngit push --force origin main\nEOF",
     'git notes list',
     'git worktree list',
   ]

@@ -322,6 +322,7 @@ async function softCase(label, name, args) {
   assert.ok(!I.isForcePush('git push origin HEAD && tail -f build.log'), '后段 tail -f 不是 force-push')
   assert.ok(!I.isForcePush('git push origin HEAD\necho +x'), '换行后 +x 不是 +refspec')
   assert.ok(!I.isForcePush('git push origin HEAD && wget --mirror https://example'), '后段 --mirror 不是 push --mirror')
+  assert.ok(!I.isForcePush("cat > deploy.sh <<'EOF'\ngit push --force origin main\nEOF"), 'heredoc 正文不是 force-push')
   passed += 16
 
   // gitSubcommands 解析式
@@ -348,6 +349,7 @@ async function softCase(label, name, args) {
   assert.ok(!I.pushTargetsProtectedRef('git push -u origin HEAD\ngh pr create --head release/v1.3.9 --title x --body y'), '同行 gh --base 不得算进 push')
   assert.ok(!I.pushTargetsProtectedRef('git push -u origin HEAD; gh pr create --base main --head release/v1.3.9'), '分号后 --base main 不是 push 目标')
   assert.ok(I.pushTargetsProtectedRef('git push origin main && gh pr create --head x'), '真 push main 仍拦')
+  assert.ok(!I.pushTargetsProtectedRef("cat > deploy.sh <<'EOF'\ngit push origin main\nEOF"), 'heredoc 正文不是 push 目标')
   passed += 9
 
   // isLocalDestructiveAsk
@@ -468,6 +470,7 @@ async function softCase(label, name, args) {
   assert.ok(!I.isGhDestructive('gh pr create --title "cleanup: repo delete flow" --base main'), 'title 数据不是 repo delete')
   assert.ok(!I.isGhDestructive('gh pr list\necho repo delete notes'), '换行后文本不是 gh 调用')
   assert.ok(!I.isGhDestructive("node -e 'console.log(\"gh repo delete\")'"), 'node -e 字符串不是 gh 调用')
+  assert.ok(!I.isGhDestructive("tee fix.sh <<'EOF'\ngh repo delete org/repo --yes\nEOF"), 'heredoc 正文不是 gh 调用')
   assert.ok(!I.isGhMutation('grep -n "gh pr create" README.md'), 'grep 文本不是 gh mutation')
   assert.deepStrictEqual(I.ghEntityAction('gh pr create --title x'), { entity: 'pr', action: 'create' })
   assert.deepStrictEqual(I.ghEntityAction('gh --repo o/r pr merge'), { entity: 'pr', action: 'merge' })
