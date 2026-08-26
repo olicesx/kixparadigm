@@ -438,6 +438,7 @@ function segmentHasUnquotedRedirect(text) {
       continue
     }
     if (ch === "'" || ch === '"') { quote = ch; continue }
+    if (ch === '#' && (i === 0 || /\s/.test(s[i - 1]))) break
     if (ch === '\\' && i + 1 < s.length) { i++; continue }
     if (ch === '>' && (i === 0 || /\s/.test(s[i - 1]))) {
       let j = i + 1

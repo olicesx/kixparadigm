@@ -968,15 +968,36 @@ function runCodeSurface(code, netAllowlist) {
 // ps1 检查 3：force push 完整检测（--force / -f / push +refs 语法 / --mirror）。
 // v17：只扫这一条 git push 的参数。整段文本会把同行 `rm -f` / `tail -f` /
 // `wget --mirror` 当成 force-push，逼模型改命令。
+const GIT_PUSH_VALUE_FLAGS = new Set([
+  '-o', '--push-option', '--repo', '--receive-pack', '--exec', '--recurse-submodules',
+])
+
+function forEachGitPushArg(args, visit) {
+  const list = Array.isArray(args) ? args : []
+  for (let i = 0; i < list.length; i++) {
+    const t = String(list[i])
+    const eq = t.indexOf('=')
+    const base = eq === -1 ? t : t.slice(0, eq)
+    if (GIT_PUSH_VALUE_FLAGS.has(t)) {
+      i++
+      continue
+    }
+    if (eq !== -1 && (GIT_PUSH_VALUE_FLAGS.has(base) || base === '--force-with-lease' || base === '--signed')) continue
+    if (visit(t) === true) return true
+  }
+  return false
+}
+
 function isForcePush(text) {
   for (const inv of gitInvocations(text)) {
     if (String(inv.sub).toLowerCase() !== 'push') continue
-    const args = Array.isArray(inv.args) ? inv.args : []
-    const joined = args.join(' ')
-    if (/(?<![\w-])--force(?:=(?:true|1))?(?![\w-])/.test(joined)) return true
-    if (args.includes('-f') || args.some((a) => /^-[a-zA-Z0-9]*f[a-zA-Z0-9]*$/.test(a))) return true
-    if (/(?<![\w-])--mirror(?![\w-])/.test(joined)) return true
-    if (args.some((a) => a.startsWith('+') && a.length > 1)) return true
+    if (forEachGitPushArg(inv.args, (t) => {
+      if (/(?<![\w-])--force(?:=(?:true|1))?(?![\w-])/.test(t)) return true
+      if (t === '-f' || /^-[a-zA-Z0-9]*f[a-zA-Z0-9]*$/.test(t)) return true
+      if (t === '--mirror') return true
+      if (t.startsWith('+') && t.length > 1) return true
+      return false
+    })) return true
   }
   return false
 }
@@ -987,11 +1008,12 @@ function isForcePush(text) {
 function pushTargetsProtectedRef(text) {
   for (const inv of gitInvocations(text)) {
     if (String(inv.sub).toLowerCase() !== 'push') continue
-    const args = Array.isArray(inv.args) ? inv.args : []
-    const joined = args.join(' ')
-    if (/(?<![\w/-])(?:main|master)(?![\w/-])/.test(joined)) return true
-    if (/refs\/heads\/(?:main|master)/.test(joined)) return true
-    if (args.includes('--all')) return true
+    if (forEachGitPushArg(inv.args, (t) => {
+      if (t === '--all') return true
+      if (/^refs\/heads\/(?:main|master)$/.test(t)) return true
+      if (/(?:^|:)(?:refs\/heads\/)?(?:main|master)$/.test(t) && !t.startsWith('-')) return true
+      return false
+    })) return true
   }
   return false
 }
