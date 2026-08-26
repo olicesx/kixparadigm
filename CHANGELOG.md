@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v1.3.9（2026-08-26）激励面原因句回补 + 写时身份组分簇
+
+- **激励面补回二相性/异质性的「为什么」**：1.3.8 把活锚点换成 review epoch 手续后，默认会话不再每轮看见「两阶段不互泄漏」和「同权重会共享盲点」。手续仍由插件强制；原因句压回既有三通道/二相性两条，不新开章节、不灌经典全文。classic/en persona 与 `kixparadigm-core.instructions.md` 同步；null 消融面不动。写码前补回交付前三问（真实链路 / 证据维度 / 独立验证）——settle 只盯有没有跑，不盯证据对不对；盲点图谱仍只在 classic。
+- **写时身份组不再重复检查变体差异**：`checkPluginPair` 与 `runAllZh` 共用 `PLUGIN_IDENTITY_GROUPS`。语言中立插件仍 4 根比对；`kix-budget` 按 incentive（default+null）与 classic（zh+en）两簇；`kix-probe` / `kix-settle` / `kix-mem` 只比实际存在的 incentive 面副本。写 `kix-settle.js` 不再误报 classic/en missing，写 `kix-budget.js` 不再把设计差异当漂移。CI 去掉硬编码豁免名单。伴侣 `*.test.js` 才归一到源码簇；独立 smoke（如 `kix4.test.js`）按自身名字，不映射成不存在的 `*.js`。语法跳过看原始 basename，已存在测试文件不再误开源码语法检查。
+- **发版卫生**：live 身份组断言从本文件位置找回仓库根，不再绑 `process.cwd()`——`npm test` 会 `cd` 进 plugins 再跑 `node --test`，cwd 耦合会把 4 副本检查误判成 0 copies skipped。
+
 ## v1.3.8（2026-08-24）provider 熔断 + 递归 review epoch + terminal settle
 
 - **subagent lifecycle parent 绑定闭环（发版审查修复）**：宿主 `subagent/start` / `subagent/end` 是 scope-keyed 单参数事件，`parent` 不作为第二实参传入。kix-route、kix-orchestration、kix-settle 改为在 start publication 边界通过 `ctx.agents.get(info.id).session.header.parentSession` 恢复父代理；orchestration/settle 再按 `runId` 缓存到 end，覆盖 end 前 child 已从 registry 移除。真实单参数事件与递归 child 回归关闭了 QUOTA parent steer、递归 review tree、QA return 和 fresh observer 原先的静默失效。

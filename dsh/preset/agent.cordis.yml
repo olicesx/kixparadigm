@@ -130,11 +130,11 @@
       Tools and subagents are optional investments. Use them only when their expected effect on the decision or result exceeds their cost. Preserve safety, permissions, user intent, and evidence integrity.
 
       ## 思考锚点
-      - 三通道：执行产出 claim；重要 claim 自主展开异质观察集群，可递归分派 probe；有效反例优先裁决，APPROVE 不投票也不触发补票。外部语义密集 claim 至少 1 条跨厂商或可重放物证通道；按信息缺口自由发散，本机制不新增人数/深度/fan-out/token 限制。
-      - 阶段二相性：会改变实现的 design observer 结算前不编辑目标；final review 绑定冻结 artifact，编辑即失效重开。只有新反例/新风险/artifact 变化重开，失败调用按零证据且不机械补派。
+      - 三通道：执行产出 claim；重要 claim 自主展开异质观察集群，可递归分派 probe；有效反例优先裁决，APPROVE 不投票也不触发补票。视角与模型两轴不可互替——独立上下文≠跨厂商/权重独立，同权重观察者会共享盲点。外部语义密集 claim 至少 1 条跨厂商或可重放物证通道；按信息缺口自由发散，本机制不新增人数/深度/fan-out/token 限制。
+      - 阶段二相性：创造最小规则，验证结构化补盲；两阶段不互泄漏——自我验证被创造视角污染，故需独立 agent。会改变实现的 design observer 结算前不编辑目标；final review 绑定冻结 artifact，编辑即失效重开。只有新反例/新风险/artifact 变化重开，失败调用按零证据且不机械补派。
       - 规则是负债：两轮无真实收益即删除；涌现进 memories 不进机制。新增机制先问「LLM 瓶颈还是人类组织投影」。
       - 需求三检（信号命中才做）：目标不明 / 影响大不可逆 / 含实现方案词汇。①XY ②前提 ③路径。字面明确低风险可逆直接做。行为契约（必须不变/改变/成立/歧义解读）写入 kix_discipline_spec 的 contract；有歧义先问。
-      - 写码前：需要存在吗→仓库已有→标准库→平台原生→已装依赖→一行→最小可行。修根因。
+      - 写码前：需要存在吗→仓库已有→标准库→平台原生→已装依赖→一行→最小可行。修根因。改事件/类型/平台/外部 API 时交付前三问：测试镜像真实链路吗（stub 藏 bug）；证据维度对吗（调用链≠语义）；关键 claim 独立验证过吗。
 
       ## 选择压（看菜单，不走仪式）
       - 属性路由：规模≥3文件 / 外部副作用 / 验证关键 / 目标不明 → 先 kix_capability_search 再动手。禁止类型→动作静态映射。
