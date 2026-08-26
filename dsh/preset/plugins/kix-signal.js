@@ -36,6 +36,8 @@
 
 'use strict'
 
+const { readFileSync } = require('node:fs')
+const { join } = require('node:path')
 const lib = require('./consistency-lib.cjs')
 const { randomUUID } = require('node:crypto')
 
@@ -55,6 +57,30 @@ function isSourcePath(p) {
   if (!p) return false
   const s = String(p)
   return !NON_SOURCE_PATTERNS.some((re) => re.test(s))
+}
+
+// S3 只该在「没有完整契约」时出草稿。磁盘上已有完整 spec.md 再提醒，
+// 会逼模型再调一遍 kix_discipline_spec（本会话 saved:false 假成功同回路）。
+function specFileLooksComplete(workspaceRoot) {
+  if (!workspaceRoot) return false
+  try {
+    const text = readFileSync(join(workspaceRoot, 'kix-discipline', 'spec.md'), 'utf8')
+    if (!/^# kix-discipline spec/m.test(text)) return false
+    const titles = [
+      'Goal（要解决的根本问题）',
+      'XY 检查（需求三检①：要 X 真需要的是 Y？）',
+      '前提假设（需求三检②：前提可验证吗？）',
+      '更优路径（需求三检③：有更高维度解法吗？）',
+      '验收标准（可验证的完成定义）',
+    ]
+    return titles.every((title) => {
+      const re = new RegExp(`## ${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?\\n([\\s\\S]*?)(?=\\n## |$)`)
+      const hit = re.exec(text)
+      return hit && hit[1].trim().length > 0
+    })
+  } catch {
+    return false
+  }
 }
 
 function makeUserMessage(text) {
@@ -139,7 +165,8 @@ module.exports = {
       if (specDraftOn && (tool === 'edit' || tool === 'write')) {
         const st = agent ? stateFor(agent) : undefined
         const targetPath = args && (args.file_path || args.path)
-        if (st && !st.specDraftReminded && isSourcePath(targetPath)) {
+        const workspaceRoot = lib.resolveWorkspaceRoot(agent, ctx.get && ctx.get('sandboxPolicy'))
+        if (st && !st.specDraftReminded && isSourcePath(targetPath) && !specFileLooksComplete(workspaceRoot)) {
           st.specDraftReminded = true
           st.pendingDraft = String(targetPath || '')
           return next()
@@ -209,6 +236,7 @@ function lastUserTextFrom(surface) {
 
 module.exports.__internals = {
   isSourcePath,
+  specFileLooksComplete,
   stateFor,
   specDraftText,
   lastUserTextFrom,

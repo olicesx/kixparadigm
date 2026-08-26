@@ -145,9 +145,96 @@ function commandWorkdir(agent, args) {
   return resolveAgentPath(agent, args && args.workdir) || resolve(agentCwd(agent) || process.cwd())
 }
 
+// git branch / git config 有只读形态（列举、取值）和写形态（创建、删除、赋值）。
+// 旧实现「不在白名单 = 写」把 `git branch -a` / `git config user.name` 锁进
+// review epoch，逼协调线程改 probe 或杀掉观察者。按本条 invocation 的参数判定。
+const GIT_BRANCH_WRITE_FLAGS = new Set([
+  '-d', '-D', '-m', '-M', '-c', '-C', '-u',
+  '--delete', '--move', '--copy', '--set-upstream-to', '--unset-upstream',
+  '--edit-description', '--create-reflog',
+])
+const GIT_CONFIG_WRITE_FLAGS = new Set([
+  '--add', '--unset', '--unset-all', '--replace-all',
+  '--rename-section', '--remove-section', '--edit', '-e',
+])
+const GIT_CONFIG_GET_FLAGS = new Set([
+  '--get', '--get-all', '--get-regexp', '--get-urlmatch',
+  '--list', '-l', '--name-only', '--show-origin', '--show-scope',
+])
+
+function gitFlagBase(token) {
+  const t = String(token || '')
+  const eq = t.indexOf('=')
+  return eq === -1 ? t : t.slice(0, eq)
+}
+
+function gitBranchIsMutation(args) {
+  const list = Array.isArray(args) ? args : []
+  let positional = 0
+  for (let i = 0; i < list.length; i++) {
+    const t = list[i]
+    const flag = gitFlagBase(t)
+    if (GIT_BRANCH_WRITE_FLAGS.has(t) || GIT_BRANCH_WRITE_FLAGS.has(flag)) return true
+    if (t === '--list' || flag === '--list' || t === '--contains' || t === '--no-contains' ||
+        t === '--merged' || t === '--no-merged' || t === '--points-at' || t === '--sort' ||
+        t === '--format' || t === '--column') {
+      if (!t.includes('=') && i + 1 < list.length && !String(list[i + 1]).startsWith('-')) i++
+      continue
+    }
+    if (t.startsWith('-')) continue
+    positional++
+  }
+  return positional > 0
+}
+
+function gitConfigIsMutation(args) {
+  const list = Array.isArray(args) ? args : []
+  let getMode = false
+  let positional = 0
+  for (let i = 0; i < list.length; i++) {
+    const t = list[i]
+    const flag = gitFlagBase(t)
+    if (GIT_CONFIG_WRITE_FLAGS.has(t) || GIT_CONFIG_WRITE_FLAGS.has(flag)) return true
+    if (GIT_CONFIG_GET_FLAGS.has(t) || GIT_CONFIG_GET_FLAGS.has(flag)) {
+      getMode = true
+      if (!t.includes('=') && (t === '--get' || t === '--get-all' || t === '--get-regexp' || t === '--get-urlmatch') &&
+          i + 1 < list.length && !String(list[i + 1]).startsWith('-')) i++
+      continue
+    }
+    if (t === '--global' || t === '--local' || t === '--system' || t === '--worktree') continue
+    if (t === '--file' || t === '-f' || t === '--blob') {
+      if (i + 1 < list.length && !String(list[i + 1]).startsWith('-')) i++
+      continue
+    }
+    if (flag === '--file' || flag === '--blob') continue
+    if (t.startsWith('-')) continue
+    positional++
+  }
+  if (getMode) return false
+  return positional >= 2
+}
+
 function reviewGitMutation(command) {
-  const subs = guardInternals.gitSubcommands(String(command || ''))
-  for (const sub of subs) if (!READ_ONLY_GIT_SUBCOMMANDS.has(String(sub).toLowerCase())) return true
+  const invocations = typeof guardInternals.gitInvocations === 'function'
+    ? guardInternals.gitInvocations(String(command || ''))
+    : []
+  if (invocations.length === 0) {
+    const subs = guardInternals.gitSubcommands(String(command || ''))
+    for (const sub of subs) if (!READ_ONLY_GIT_SUBCOMMANDS.has(String(sub).toLowerCase())) return true
+    return false
+  }
+  for (const inv of invocations) {
+    const sub = String(inv.sub || '').toLowerCase()
+    if (sub === 'branch') {
+      if (gitBranchIsMutation(inv.args)) return true
+      continue
+    }
+    if (sub === 'config') {
+      if (gitConfigIsMutation(inv.args)) return true
+      continue
+    }
+    if (!READ_ONLY_GIT_SUBCOMMANDS.has(sub)) return true
+  }
   return false
 }
 
@@ -1025,6 +1112,8 @@ module.exports.__internals = {
   extractReviewEpochMeta,
   pathInside,
   reviewGitMutation,
+  gitBranchIsMutation,
+  gitConfigIsMutation,
   reviewShellMutation,
   reviewCommandRoot,
   gitArtifactFingerprint,

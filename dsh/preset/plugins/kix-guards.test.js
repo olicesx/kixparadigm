@@ -144,6 +144,7 @@ async function softCase(label, name, args) {
   await softCase('pwsh: git push origin main-branch', 'pwsh', { command: 'git push origin main-branch' })
   check('pwsh: git push origin refs/heads/main → deny (v3)', await dispatch('pwsh', { command: 'git push origin refs/heads/main' }), true)
   check('pwsh: git commit -am "x" && git push origin main → deny', await dispatch('pwsh', { command: 'git commit -am "x" && git push origin main' }), true)
+  check('pwsh: git push HEAD 后接 gh --base main → allow（v17 按段解析）', await dispatch('pwsh', { command: 'git push -u origin HEAD && gh pr create --base main --head release/v1.3.9' }), false)
   // 只读/常规操作放行
   check('pwsh: git status → allow', await dispatch('pwsh', { command: 'git status' }), false)
   check('pwsh: git log → allow', await dispatch('pwsh', { command: 'git log --oneline' }), false)
@@ -314,7 +315,11 @@ async function softCase(label, name, args) {
   assert.ok(!I.isForcePush('git push origin feature'))
   assert.ok(!I.isForcePush('git push origin abc--force'), 'abc--force 非 force（lookbehind）')
   assert.ok(!I.isForcePush('git commit -m "push --force docs"'), 'commit message 不触发 force')
-  passed += 10
+  assert.ok(!I.isForcePush('git push origin HEAD && rm -f tmp.txt'), '后段 rm -f 不是 force-push')
+  assert.ok(!I.isForcePush('git push origin HEAD && tail -f build.log'), '后段 tail -f 不是 force-push')
+  assert.ok(!I.isForcePush('git push origin HEAD\necho +x'), '换行后 +x 不是 +refspec')
+  assert.ok(!I.isForcePush('git push origin HEAD && wget --mirror https://example'), '后段 --mirror 不是 push --mirror')
+  passed += 14
 
   // gitSubcommands 解析式
   assert.deepStrictEqual([...I.gitSubcommands('git -C C:\\repo push --force origin main')], ['push'])
@@ -337,7 +342,10 @@ async function softCase(label, name, args) {
   assert.ok(!I.pushTargetsProtectedRef('git push origin feature'))
   assert.ok(!I.pushTargetsProtectedRef('git push origin main-branch'))
   assert.ok(!I.pushTargetsProtectedRef('git commit -m "push to main"'), 'commit message 不触发')
-  passed += 6
+  assert.ok(!I.pushTargetsProtectedRef('git push -u origin HEAD\ngh pr create --head release/v1.3.9 --title x --body y'), '同行 gh --base 不得算进 push')
+  assert.ok(!I.pushTargetsProtectedRef('git push -u origin HEAD; gh pr create --base main --head release/v1.3.9'), '分号后 --base main 不是 push 目标')
+  assert.ok(I.pushTargetsProtectedRef('git push origin main && gh pr create --head x'), '真 push main 仍拦')
+  passed += 9
 
   // isLocalDestructiveAsk
   assert.ok(I.isLocalDestructiveAsk('git reset --hard HEAD'))
