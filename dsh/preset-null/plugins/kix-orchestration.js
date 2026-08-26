@@ -96,7 +96,7 @@ const REVIEW_SHELL_MUTATING_COMMANDS = new Set([
   'rename-item', 'new-item',
 ])
 const PYTHON_WRITE_RE = /(?:\bopen\s*\([^)]*['"][wax+]|\.(?:write_text|write_bytes|unlink)\s*\(|\bos\.(?:remove|unlink|rename|replace)\s*\()/
-const NODE_WRITE_RE = /(?:writeFileSync|appendFileSync|createWriteStream|rmSync|unlinkSync|renameSync)/
+const NODE_WRITE_RE = /(?:writeFileSync|appendFileSync|createWriteStream|rmSync|unlinkSync|renameSync)\s*\(/
 
 // ── 纯判定函数（模块级：单元测试经 __internals 直接验证）─────────────────
 
@@ -194,6 +194,94 @@ function gitBranchIsMutation(args) {
   return positional > 0
 }
 
+function gitFirstPositional(args) {
+  const list = Array.isArray(args) ? args : []
+  for (let i = 0; i < list.length; i++) {
+    const t = String(list[i])
+    if (t.startsWith('-')) continue
+    return t.toLowerCase()
+  }
+  return undefined
+}
+
+function gitStashIsMutation(args) {
+  const action = gitFirstPositional(args)
+  if (!action) return true
+  return action !== 'list' && action !== 'show'
+}
+
+function gitRemoteIsMutation(args) {
+  const action = gitFirstPositional(args)
+  if (!action) return false
+  return action !== 'show' && action !== 'get-url'
+}
+
+function gitTagIsMutation(args) {
+  const writeFlags = new Set([
+    '-d', '-D', '--delete', '-a', '--annotate', '-s', '--sign',
+    '-u', '--local-user', '-f', '--force', '-m', '--message', '-F', '--file',
+    '--create-reflog',
+  ])
+  const list = Array.isArray(args) ? args : []
+  let listMode = false
+  let positional = 0
+  for (let i = 0; i < list.length; i++) {
+    const t = String(list[i])
+    const flag = gitFlagBase(t)
+    if (writeFlags.has(t) || writeFlags.has(flag)) return true
+    if (t === '-l' || t === '--list' || flag === '--list' || t === '-n' || flag === '-n') {
+      listMode = true
+      if (!t.includes('=') && i + 1 < list.length && !String(list[i + 1]).startsWith('-') && (t === '-n' || t === '--list' || flag === '--list')) i++
+      continue
+    }
+    if (t.startsWith('-')) continue
+    positional++
+  }
+  if (listMode) return false
+  return positional > 0
+}
+
+function gitNotesIsMutation(args) {
+  const action = gitFirstPositional(args)
+  if (!action) return false
+  return action !== 'list' && action !== 'show' && action !== 'get-ref'
+}
+
+function gitWorktreeIsMutation(args) {
+  const action = gitFirstPositional(args)
+  if (!action || action === 'list') return false
+  return true
+}
+
+function gitReflogIsMutation(args) {
+  const action = gitFirstPositional(args)
+  if (!action || action === 'show' || action === 'exists') return false
+  return true
+}
+
+function nodeEvalSource(args) {
+  const list = Array.isArray(args) ? args : []
+  for (let i = 0; i < list.length; i++) {
+    const t = String(list[i])
+    if (t === '-e' || t === '--eval' || t === '-p' || t === '--print') {
+      return i + 1 < list.length ? String(list[i + 1]) : ''
+    }
+    if (t.startsWith('--eval=')) return t.slice('--eval='.length)
+    if (t.startsWith('--print=')) return t.slice('--print='.length)
+  }
+  return undefined
+}
+
+function pythonEvalSource(args) {
+  const list = Array.isArray(args) ? args : []
+  for (let i = 0; i < list.length; i++) {
+    const t = String(list[i])
+    if (t === '-c') return i + 1 < list.length ? String(list[i + 1]) : ''
+    if (t.startsWith('-c') && t.length > 2 && !t.startsWith('--')) return t.slice(2)
+  }
+  return undefined
+}
+
 function gitConfigIsMutation(args) {
   const list = Array.isArray(args) ? args : []
   let getMode = false
@@ -238,6 +326,30 @@ function reviewGitMutation(command) {
     }
     if (sub === 'config') {
       if (gitConfigIsMutation(inv.args)) return true
+      continue
+    }
+    if (sub === 'stash') {
+      if (gitStashIsMutation(inv.args)) return true
+      continue
+    }
+    if (sub === 'remote') {
+      if (gitRemoteIsMutation(inv.args)) return true
+      continue
+    }
+    if (sub === 'tag') {
+      if (gitTagIsMutation(inv.args)) return true
+      continue
+    }
+    if (sub === 'notes') {
+      if (gitNotesIsMutation(inv.args)) return true
+      continue
+    }
+    if (sub === 'worktree') {
+      if (gitWorktreeIsMutation(inv.args)) return true
+      continue
+    }
+    if (sub === 'reflog') {
+      if (gitReflogIsMutation(inv.args)) return true
       continue
     }
     if (!READ_ONLY_GIT_SUBCOMMANDS.has(sub)) return true
@@ -287,8 +399,21 @@ function reviewShellMutation(command) {
     if (name === 'cargo' && args[0] === 'fmt') return true
     if (name === 'eslint' && args.some((a) => a === '--fix' || a === '--write')) return true
     if (name === 'biome' && args[0] === 'check' && args.some((a) => a === '--fix' || a === '--write')) return true
-    if ((name === 'python' || name === 'python3') && PYTHON_WRITE_RE.test(args.join(' '))) return true
-    if ((name === 'node' || name === 'nodejs') && NODE_WRITE_RE.test(args.join(' '))) return true
+    if (name === 'python' || name === 'python3') {
+      const src = pythonEvalSource(args)
+      if (src != null && PYTHON_WRITE_RE.test(src)) return true
+      continue
+    }
+    if (name === 'node' || name === 'nodejs') {
+      const src = nodeEvalSource(args)
+      if (src != null) {
+        const surface = typeof guardInternals.executableJsSurface === 'function'
+          ? guardInternals.executableJsSurface(src)
+          : src
+        if (NODE_WRITE_RE.test(surface)) return true
+      }
+      continue
+    }
     if (name === 'dd' && args.some((a) => String(a).startsWith('of='))) return true
   }
   return false
