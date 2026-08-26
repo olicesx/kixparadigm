@@ -265,13 +265,21 @@ function gitReflogIsMutation(args) {
 
 function nodeEvalSource(args) {
   const list = Array.isArray(args) ? args : []
+  const valueFlags = new Set(['-e', '--eval', '-p', '--print', '-r', '--require'])
   for (let i = 0; i < list.length; i++) {
     const t = String(list[i])
+    if (t === '--') return undefined
     if (t === '-e' || t === '--eval' || t === '-p' || t === '--print') {
       return i + 1 < list.length ? String(list[i + 1]) : ''
     }
     if (t.startsWith('--eval=')) return t.slice('--eval='.length)
     if (t.startsWith('--print=')) return t.slice('--print='.length)
+    if (valueFlags.has(t)) {
+      if (i + 1 < list.length) i++
+      continue
+    }
+    if (t.startsWith('-')) continue
+    return undefined
   }
   return undefined
 }
@@ -325,10 +333,18 @@ function pythonDataSurface(source) {
 
 function pythonEvalSource(args) {
   const list = Array.isArray(args) ? args : []
+  const valueFlags = new Set(['-c', '-m', '-W', '-X', '--check-hash-based-pycs'])
   for (let i = 0; i < list.length; i++) {
     const t = String(list[i])
+    if (t === '--') return undefined
     if (t === '-c') return i + 1 < list.length ? String(list[i + 1]) : ''
     if (t.startsWith('-c') && t.length > 2 && !t.startsWith('--')) return t.slice(2)
+    if (valueFlags.has(t)) {
+      if (i + 1 < list.length) i++
+      continue
+    }
+    if (t.startsWith('-')) continue
+    return undefined
   }
   return undefined
 }
