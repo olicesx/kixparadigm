@@ -89,7 +89,14 @@ const READ_ONLY_GIT_SUBCOMMANDS = new Set([
   'ls-remote', 'cat-file', 'blame', 'grep', 'describe', 'name-rev',
   'merge-base', 'for-each-ref', 'shortlog', 'diff-tree', 'diff-index',
 ])
-const REVIEW_SHELL_MUTATION_RE = /(?:^|[;&|]\s*)(?:apply_patch|rm|mv|cp|touch|mkdir|install|truncate|tee|chmod|chown|ln)(?:\s|$)|\bsed\b[^;&|]*\s-i(?:\s|$)|\bperl\b[^;&|]*\s-pi(?:\s|$)|\b(?:gofmt\s+-w|go\s+fmt|cargo\s+fmt)(?:\s|$)|\b(?:eslint|biome\s+check)\b[^;&|]*\s--(?:fix|write)(?:\s|$)|\bpython(?:3)?\b[^;&|]*(?:\bopen\s*\([^)]*['"][wax+]|\.(?:write_text|write_bytes|unlink)\s*\(|\bos\.(?:remove|unlink|rename|replace)\s*\()|\bnode\b[^;&|]*(?:writeFileSync|appendFileSync|createWriteStream|rmSync|unlinkSync|renameSync)|\bdd\b[^;&|]*\bof=|\b(?:Set-Content|Add-Content|Out-File|Remove-Item|Move-Item|Copy-Item|Rename-Item|New-Item)\b|(?:^|\s)>{1,2}(?=\s*\S)/i
+const REVIEW_SHELL_MUTATING_COMMANDS = new Set([
+  'apply_patch', 'rm', 'mv', 'cp', 'touch', 'mkdir', 'install', 'truncate', 'tee',
+  'chmod', 'chown', 'ln',
+  'set-content', 'add-content', 'out-file', 'remove-item', 'move-item', 'copy-item',
+  'rename-item', 'new-item',
+])
+const PYTHON_WRITE_RE = /(?:\bopen\s*\(|\.(?:write_text|write_bytes|unlink|write)\s*\(|\bos\.(?:remove|unlink|rename|replace)\s*\()/
+const NODE_WRITE_RE = /(?:writeFileSync|appendFileSync|createWriteStream|rmSync|unlinkSync|renameSync)\s*\(/
 
 // ── 纯判定函数（模块级：单元测试经 __internals 直接验证）─────────────────
 
@@ -145,14 +152,340 @@ function commandWorkdir(agent, args) {
   return resolveAgentPath(agent, args && args.workdir) || resolve(agentCwd(agent) || process.cwd())
 }
 
+// git branch / git config 有只读形态（列举、取值）和写形态（创建、删除、赋值）。
+// 旧实现「不在白名单 = 写」把 `git branch -a` / `git config user.name` 锁进
+// review epoch，逼协调线程改 probe 或杀掉观察者。按本条 invocation 的参数判定。
+const GIT_BRANCH_WRITE_FLAGS = new Set([
+  '-d', '-D', '-m', '-M', '-c', '-C', '-u',
+  '--delete', '--move', '--copy', '--set-upstream-to', '--unset-upstream',
+  '--edit-description', '--create-reflog',
+])
+const GIT_CONFIG_WRITE_FLAGS = new Set([
+  '--add', '--unset', '--unset-all', '--replace-all',
+  '--rename-section', '--remove-section', '--edit', '-e',
+])
+const GIT_CONFIG_GET_FLAGS = new Set([
+  '--get', '--get-all', '--get-regexp', '--get-urlmatch',
+  '--list', '-l', '--name-only', '--show-origin', '--show-scope',
+])
+
+function gitFlagBase(token) {
+  const t = String(token || '')
+  const eq = t.indexOf('=')
+  return eq === -1 ? t : t.slice(0, eq)
+}
+
+function gitBranchIsMutation(args) {
+  const list = Array.isArray(args) ? args : []
+  let positional = 0
+  for (let i = 0; i < list.length; i++) {
+    const t = list[i]
+    const flag = gitFlagBase(t)
+    if (GIT_BRANCH_WRITE_FLAGS.has(t) || GIT_BRANCH_WRITE_FLAGS.has(flag)) return true
+    if (t === '--list' || flag === '--list' || t === '--contains' || t === '--no-contains' ||
+        t === '--merged' || t === '--no-merged' || t === '--points-at' || t === '--sort' ||
+        t === '--format' || t === '--column') {
+      if (!t.includes('=') && i + 1 < list.length && !String(list[i + 1]).startsWith('-')) i++
+      continue
+    }
+    if (t.startsWith('-')) continue
+    positional++
+  }
+  return positional > 0
+}
+
+function gitFirstPositional(args) {
+  const list = Array.isArray(args) ? args : []
+  for (let i = 0; i < list.length; i++) {
+    const t = String(list[i])
+    if (t.startsWith('-')) continue
+    return t.toLowerCase()
+  }
+  return undefined
+}
+
+function gitStashIsMutation(args) {
+  const action = gitFirstPositional(args)
+  if (!action) return true
+  return action !== 'list' && action !== 'show'
+}
+
+function gitRemoteIsMutation(args) {
+  const action = gitFirstPositional(args)
+  if (!action) return false
+  return action !== 'show' && action !== 'get-url'
+}
+
+function gitTagIsMutation(args) {
+  const writeFlags = new Set([
+    '-d', '-D', '--delete', '-a', '--annotate', '-s', '--sign',
+    '-u', '--local-user', '-f', '--force', '-m', '--message', '-F', '--file',
+    '--create-reflog',
+  ])
+  const list = Array.isArray(args) ? args : []
+  let listMode = false
+  let positional = 0
+  for (let i = 0; i < list.length; i++) {
+    const t = String(list[i])
+    const flag = gitFlagBase(t)
+    if (writeFlags.has(t) || writeFlags.has(flag)) return true
+    if (t === '-l' || t === '--list' || flag === '--list' || t === '-n' || flag === '-n' ||
+        t === '--contains' || t === '--no-contains' || t === '--merged' || t === '--no-merged' ||
+        t === '--points-at' || t === '--sort' || t === '--format' || t === '--column' ||
+        flag === '--contains' || flag === '--no-contains' || flag === '--merged' ||
+        flag === '--no-merged' || flag === '--points-at' || flag === '--sort' || flag === '--format') {
+      listMode = true
+      if (!t.includes('=') && i + 1 < list.length && !String(list[i + 1]).startsWith('-')) i++
+      continue
+    }
+    if (t.startsWith('-')) continue
+    positional++
+  }
+  if (listMode) return false
+  return positional > 0
+}
+
+function gitNotesIsMutation(args) {
+  const action = gitFirstPositional(args)
+  if (!action) return false
+  return action !== 'list' && action !== 'show' && action !== 'get-ref'
+}
+
+function gitWorktreeIsMutation(args) {
+  const action = gitFirstPositional(args)
+  if (!action || action === 'list') return false
+  return true
+}
+
+function gitReflogIsMutation(args) {
+  const action = gitFirstPositional(args)
+  if (!action || action === 'show' || action === 'exists') return false
+  return true
+}
+
+function nodeEvalSource(args) {
+  const list = Array.isArray(args) ? args : []
+  const valueFlags = new Set(['-e', '--eval', '-p', '--print', '-r', '--require'])
+  for (let i = 0; i < list.length; i++) {
+    const t = String(list[i])
+    if (t === '--' || t === '-') return undefined
+    if (t === '-e' || t === '--eval' || t === '-p' || t === '--print') {
+      return i + 1 < list.length ? String(list[i + 1]) : ''
+    }
+    if (t.startsWith('--eval=')) return t.slice('--eval='.length)
+    if (t.startsWith('--print=')) return t.slice('--print='.length)
+    if (valueFlags.has(t)) {
+      if (i + 1 < list.length) i++
+      continue
+    }
+    if (t.startsWith('-')) continue
+    return undefined
+  }
+  return undefined
+}
+
+function pythonDataSurface(source) {
+  const s = String(source || '')
+  const out = s.split('')
+  const blankRange = (start, end) => {
+    for (let i = start; i < end && i < out.length; i++) {
+      if (out[i] !== '\n' && out[i] !== '\r') out[i] = ' '
+    }
+  }
+  let i = 0
+  while (i < s.length) {
+    const ch = s[i]
+    if (ch === '#') {
+      let j = i + 1
+      while (j < s.length && s[j] !== '\n' && s[j] !== '\r') j++
+      blankRange(i, j)
+      i = j
+      continue
+    }
+    if (ch === "'" || ch === '"') {
+      const triple = s.slice(i, i + 3)
+      if (triple === "'''" || triple === '"""') {
+        const q = triple
+        let j = i + 3
+        while (j + 2 < s.length && s.slice(j, j + 3) !== q) {
+          if (s[j] === '\\') { j += 2; continue }
+          j++
+        }
+        const end = j + 2 < s.length ? j + 3 : s.length
+        blankRange(i, end)
+        i = end
+        continue
+      }
+      let j = i + 1
+      while (j < s.length && s[j] !== ch) {
+        if (s[j] === '\\') { j += 2; continue }
+        j++
+      }
+      const end = j < s.length ? j + 1 : s.length
+      blankRange(i, end)
+      i = end
+      continue
+    }
+    i++
+  }
+  return out.join('')
+}
+
+function pythonEvalSource(args) {
+  const list = Array.isArray(args) ? args : []
+  const valueFlags = new Set(['-W', '-X', '--check-hash-based-pycs'])
+  for (let i = 0; i < list.length; i++) {
+    const t = String(list[i])
+    if (t === '--' || t === '-') return undefined
+    if (t === '-c') return i + 1 < list.length ? String(list[i + 1]) : ''
+    if (t.startsWith('-c') && t.length > 2 && !t.startsWith('--')) return t.slice(2)
+    if (t === '-m' || (t.startsWith('-m') && t.length > 2 && !t.startsWith('--'))) return undefined
+    if (valueFlags.has(t)) {
+      if (i + 1 < list.length) i++
+      continue
+    }
+    if (t.startsWith('-')) continue
+    return undefined
+  }
+  return undefined
+}
+
+function gitConfigIsMutation(args) {
+  const list = Array.isArray(args) ? args : []
+  let getMode = false
+  let positional = 0
+  for (let i = 0; i < list.length; i++) {
+    const t = list[i]
+    const flag = gitFlagBase(t)
+    if (GIT_CONFIG_WRITE_FLAGS.has(t) || GIT_CONFIG_WRITE_FLAGS.has(flag)) return true
+    if (GIT_CONFIG_GET_FLAGS.has(t) || GIT_CONFIG_GET_FLAGS.has(flag)) {
+      getMode = true
+      if (!t.includes('=') && (t === '--get' || t === '--get-all' || t === '--get-regexp' || t === '--get-urlmatch') &&
+          i + 1 < list.length && !String(list[i + 1]).startsWith('-')) i++
+      continue
+    }
+    if (t === '--global' || t === '--local' || t === '--system' || t === '--worktree') continue
+    if (t === '--file' || t === '-f' || t === '--blob') {
+      if (i + 1 < list.length && !String(list[i + 1]).startsWith('-')) i++
+      continue
+    }
+    if (flag === '--file' || flag === '--blob') continue
+    if (t.startsWith('-')) continue
+    positional++
+  }
+  if (getMode) return false
+  return positional >= 2
+}
+
 function reviewGitMutation(command) {
-  const subs = guardInternals.gitSubcommands(String(command || ''))
-  for (const sub of subs) if (!READ_ONLY_GIT_SUBCOMMANDS.has(String(sub).toLowerCase())) return true
+  const invocations = typeof guardInternals.gitInvocations === 'function'
+    ? guardInternals.gitInvocations(String(command || ''))
+    : []
+  if (invocations.length === 0) {
+    const subs = guardInternals.gitSubcommands(String(command || ''))
+    for (const sub of subs) if (!READ_ONLY_GIT_SUBCOMMANDS.has(String(sub).toLowerCase())) return true
+    return false
+  }
+  for (const inv of invocations) {
+    const sub = String(inv.sub || '').toLowerCase()
+    if (sub === 'branch') {
+      if (gitBranchIsMutation(inv.args)) return true
+      continue
+    }
+    if (sub === 'config') {
+      if (gitConfigIsMutation(inv.args)) return true
+      continue
+    }
+    if (sub === 'stash') {
+      if (gitStashIsMutation(inv.args)) return true
+      continue
+    }
+    if (sub === 'remote') {
+      if (gitRemoteIsMutation(inv.args)) return true
+      continue
+    }
+    if (sub === 'tag') {
+      if (gitTagIsMutation(inv.args)) return true
+      continue
+    }
+    if (sub === 'notes') {
+      if (gitNotesIsMutation(inv.args)) return true
+      continue
+    }
+    if (sub === 'worktree') {
+      if (gitWorktreeIsMutation(inv.args)) return true
+      continue
+    }
+    if (sub === 'reflog') {
+      if (gitReflogIsMutation(inv.args)) return true
+      continue
+    }
+    if (!READ_ONLY_GIT_SUBCOMMANDS.has(sub)) return true
+  }
+  return false
+}
+
+function segmentHasUnquotedRedirect(text) {
+  let quote = null
+  let escaped = false
+  const s = String(text || '')
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (quote) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === quote) quote = null
+      continue
+    }
+    if (ch === "'" || ch === '"') { quote = ch; continue }
+    if (ch === '#' && (i === 0 || /\s/.test(s[i - 1]))) break
+    if (ch === '\\' && i + 1 < s.length) { i++; continue }
+    if (ch === '>' && (i === 0 || /\s/.test(s[i - 1]))) {
+      let j = i + 1
+      if (s[j] === '>') j++
+      while (j < s.length && /\s/.test(s[j])) j++
+      if (j < s.length) return true
+    }
+  }
   return false
 }
 
 function reviewShellMutation(command) {
-  return REVIEW_SHELL_MUTATION_RE.test(String(command || ''))
+  const split = guardInternals.splitShellSegments
+  const tokensOf = guardInternals.shellTokens
+  const leading = guardInternals.leadingCommand
+  for (const part of split(String(command || ''))) {
+    if (segmentHasUnquotedRedirect(part.text)) return true
+    const cmd = leading(tokensOf(part.text))
+    if (!cmd) continue
+    const name = String(cmd.name || '').toLowerCase()
+    const args = Array.isArray(cmd.args) ? cmd.args : []
+    if (REVIEW_SHELL_MUTATING_COMMANDS.has(name)) return true
+    if (name === 'sed' && args.some((a) => a === '-i' || String(a).startsWith('-i'))) return true
+    if (name === 'perl' && args.some((a) => a === '-pi' || String(a).startsWith('-pi'))) return true
+    if (name === 'gofmt' && args.includes('-w')) return true
+    if (name === 'go' && args[0] === 'fmt') return true
+    if (name === 'cargo' && args[0] === 'fmt') return true
+    if (name === 'eslint' && args.some((a) => a === '--fix' || a === '--write')) return true
+    if (name === 'biome' && args[0] === 'check' && args.some((a) => a === '--fix' || a === '--write')) return true
+    if (name === 'python' || name === 'python3') {
+      const src = pythonEvalSource(args)
+      if (src != null && PYTHON_WRITE_RE.test(pythonDataSurface(src))) return true
+      continue
+    }
+    if (name === 'node' || name === 'nodejs') {
+      const src = nodeEvalSource(args)
+      if (src != null) {
+        const surface = typeof guardInternals.executableJsSurface === 'function'
+          ? guardInternals.executableJsSurface(src)
+          : src
+        if (NODE_WRITE_RE.test(surface)) return true
+      }
+      continue
+    }
+    if (name === 'dd' && args.some((a) => String(a).startsWith('of='))) return true
+  }
+  return false
 }
 
 function reviewCommandRoot(agent, args) {
@@ -1025,6 +1358,8 @@ module.exports.__internals = {
   extractReviewEpochMeta,
   pathInside,
   reviewGitMutation,
+  gitBranchIsMutation,
+  gitConfigIsMutation,
   reviewShellMutation,
   reviewCommandRoot,
   gitArtifactFingerprint,

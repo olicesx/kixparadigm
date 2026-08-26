@@ -16,7 +16,8 @@
 //
 // 触发面（限制越少越好，边界自感知）：扫描工作区「DSH preset 根」（同时含
 // agent.cordis.yml + preset.yml 的目录，深度 ≤2）。发现 ≥2 个 preset 根才引导——
-// 该相同的数份必须相同（各根下同名 plugins/*.{js,cjs} 字节一致，语言中立代码）。
+// 该相同的数份必须相同：默认各根同名 plugins 字节一致；变体由
+// consistency-lib PLUGIN_IDENTITY_GROUPS 分簇（budget 两簇，probe/settle/mem 仅 incentive 面）。
 // 单 preset / 普通仓库零开销放行（边界 = preset 根；边界外路径天然不触发，
 // 无需任何逐路径豁免规则）。
 // kix 全量契约（persona 预算 / 版本对 / distribution mirror Interfaces）
@@ -121,13 +122,15 @@ function pickChecks(root, rel, presetRoots, withContract) {
     if (budget) checks.push(() => lib.checkPersonaBudget({ root, rel: p, ...budget }))
   }
   if (category === 'plugins') {
-    const name = path.posix.basename(p)
-    checks.push(() => lib.checkPluginPair({ root, name, presetRoots: roots }))
+    const basename = path.posix.basename(p)
+    // pair 按文件名交给 lib 决定是否归一到伴侣源码；语法跳过必须看原始
+    // basename——归一后再测 /\.test.js$/ 会把已存在的测试文件误开成源码语法检查。
+    checks.push(() => lib.checkPluginPair({ root, name: basename, presetRoots: roots }))
     // 写插件源码时顺带校验自身语法（测试文件不查——node --check 对 test 同样适用，
     // 但测试文件由 npm test 管，写时语法拦截只对源码，减少噪音）；
     // 目标尚不存在（pre-write 新建文件）时跳过——检查不存在的文件只产 missing 噪音
-    if (!/\.test\.js$/.test(name) && fs.existsSync(path.join(root, p))) {
-      checks.push(() => lib.checkFileSyntax({ root, rel: p, label: `plugins/${name}` }))
+    if (!/\.test\.(?:js|cjs)$/.test(basename) && fs.existsSync(path.join(root, p))) {
+      checks.push(() => lib.checkFileSyntax({ root, rel: p, label: `plugins/${basename}` }))
     }
   }
   if (category === 'package') {

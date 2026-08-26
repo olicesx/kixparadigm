@@ -193,17 +193,18 @@ function isDestructiveSql(text) {
 //   3. 无显式 payload 时，仅当前一段通过管道喂给 DB 客户端且含破坏性
 //      关键字才拦（如 `echo DROP TABLE | psql`）。
 //   `cat migration.sql | psql`、`grep psql`、`echo "psql DROP"` 不再误拦。
-const DESTRUCTIVE_SQL_KEYWORD = /\b(?:DELETE|UPDATE|DROP|TRUNCATE|ALTER)\b/i
 const DB_CLIENT_NAMES = new Set(['psql', 'mysql', 'mariadb', 'sqlite3', 'sqlcmd', 'clickhouse-client', 'duckdb'])
 const SQL_PAYLOAD_FLAGS = new Set(['-c', '--command', '-e', '--execute', '-Q', '--query'])
 
-/** quote-aware shell 拆段：返回 [{ text, sepBefore }]；sepBefore 为 ;/&&/||/|/newline 或 null。 */
+/** quote-aware shell 拆段：返回 [{ text, sepBefore }]；sepBefore 为 ;/&&/||/|/newline 或 null。
+ *  heredoc 正文（<<TAG … 结束行）当数据，不拆成后续调用。 */
 function splitShellSegments(text) {
   const parts = []
   let cur = ''
   let pendingSep = null
   let quote = null
   let escaped = false
+  const heredocs = []
   const flush = () => {
     const value = cur.trim()
     if (value) parts.push({ text: value, sepBefore: pendingSep })
@@ -211,6 +212,24 @@ function splitShellSegments(text) {
     pendingSep = null
   }
   const s = String(text || '')
+  const consumeHeredocBody = (from, tag, stripTabs) => {
+    let i = from
+    while (i <= s.length) {
+      const lineStart = i
+      while (i < s.length && s[i] !== '\n' && s[i] !== '\r') i++
+      let line = s.slice(lineStart, i)
+      if (stripTabs) line = line.replace(/^\t+/, '')
+      if (line === tag) {
+        if (s[i] === '\r' && s[i + 1] === '\n') return i + 2
+        if (s[i] === '\n' || s[i] === '\r') return i + 1
+        return i
+      }
+      if (i >= s.length) return i
+      if (s[i] === '\r' && s[i + 1] === '\n') i += 2
+      else i += 1
+    }
+    return i
+  }
   for (let i = 0; i < s.length; i++) {
     const ch = s[i]
     if (quote) {
@@ -221,8 +240,50 @@ function splitShellSegments(text) {
       continue
     }
     if (ch === "'" || ch === '"') { quote = ch; cur += ch; continue }
+    if (ch === '#' && (cur === '' || i === 0 || /\s/.test(s[i - 1]))) {
+      while (i < s.length && s[i] !== '\n' && s[i] !== '\r') i++
+      i--
+      continue
+    }
     if (ch === '\\' && i + 1 < s.length) { cur += ch + s[i + 1]; i++; continue }
-    if (ch === ';' || ch === '\n' || ch === '\r') { flush(); pendingSep = ';'; continue }
+    if (ch === '<' && s[i + 1] === '<' && s[i + 2] !== '<') {
+      cur += '<<'
+      i += 2
+      let stripTabs = false
+      if (s[i] === '-') { stripTabs = true; cur += '-'; i++ }
+      while (s[i] === ' ' || s[i] === '\t') { cur += s[i]; i++ }
+      let tag = ''
+      if (s[i] === "'" || s[i] === '"') {
+        const q = s[i]
+        cur += q
+        i++
+        while (i < s.length && s[i] !== q) { tag += s[i]; cur += s[i]; i++ }
+        if (s[i] === q) { cur += q; i++ }
+      } else {
+        while (i < s.length && !/\s/.test(s[i]) && s[i] !== ';' && s[i] !== '&' && s[i] !== '|') {
+          tag += s[i]
+          cur += s[i]
+          i++
+        }
+      }
+      if (tag) heredocs.push({ tag, stripTabs })
+      i--
+      continue
+    }
+    if (ch === ';' || ch === '\n' || ch === '\r') {
+      flush()
+      pendingSep = ';'
+      if ((ch === '\n' || ch === '\r') && heredocs.length) {
+        if (ch === '\r' && s[i + 1] === '\n') i++
+        let pos = i + 1
+        while (heredocs.length) {
+          const h = heredocs.shift()
+          pos = consumeHeredocBody(pos, h.tag, h.stripTabs)
+        }
+        i = pos - 1
+      }
+      continue
+    }
     if (ch === '&' && s[i + 1] === '&') { flush(); pendingSep = '&&'; i++; continue }
     if (ch === '|' && s[i + 1] === '|') { flush(); pendingSep = '||'; i++; continue }
     if (ch === '|') { flush(); pendingSep = '|'; continue }
@@ -249,7 +310,11 @@ function shellTokens(segment) {
       continue
     }
     if (ch === "'" || ch === '"') { quote = ch; continue }
-    if (ch === '\\' && i + 1 < s.length) { cur += s[i + 1]; i++; continue }
+    if (ch === '#' && (i === 0 || /\s/.test(s[i - 1]))) break
+    if (ch === '\\' && i + 1 < s.length) {
+      const next = s[i + 1]
+      if (/[\s'"\\|&;<>#*?(){}[\]$`!]/.test(next)) { cur += next; i++; continue }
+    }
     if (/\s/.test(ch)) { if (cur) { tokens.push(cur); cur = '' } continue }
     cur += ch
   }
@@ -303,7 +368,10 @@ function isTerminalDestructiveSql(text) {
       if (isDestructiveSql(payload)) return true
       continue
     }
-    if (parts[i].sepBefore === '|' && i > 0 && DESTRUCTIVE_SQL_KEYWORD.test(parts[i - 1].text)) return true
+    if (parts[i].sepBefore === '|' && i > 0) {
+      const prev = leadingCommand(shellTokens(parts[i - 1].text))
+      if (prev && /^(?:echo|printf|cat|head|tail)$/.test(prev.name) && isDestructiveSql(parts[i - 1].text)) return true
+    }
   }
   return false
 }
@@ -315,8 +383,11 @@ const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set([
   '--namespace', '--super-prefix', '--attr-source',
 ])
 
-function gitSubcommands(text) {
-  const subs = new Set()
+// 每段独立一条 git 调用：子命令 + 该子命令自己的参数。
+// push 保护 / epoch 只读边界必须按段解析——旧实现用 push 后 [\s\S]*，
+// 会把同行 `gh pr create --base main` 吃进 push 参数。
+function gitInvocations(text) {
+  const out = []
   for (const part of splitShellSegments(text)) {
     const command = leadingCommand(shellTokens(part.text))
     if (!command || command.name !== 'git') continue
@@ -330,11 +401,14 @@ function gitSubcommands(text) {
       }
       if (/^-(?:C|c).+/.test(t) || t.startsWith('--')) continue
       if (t.startsWith('-')) continue
-      subs.add(t)
+      out.push({ sub: t, args: tokens.slice(i + 1) })
       break
     }
   }
-  return subs
+  return out
+}
+function gitSubcommands(text) {
+  return new Set(gitInvocations(text).map((inv) => inv.sub))
 }
 function hasGitSubcommand(text, sub) {
   return gitSubcommands(text).has(sub)
@@ -356,50 +430,93 @@ const GH_MUTATION_ACTIONS = new Map([
   ['gist', new Set(['create', 'edit', 'delete'])],
   ['workflow', new Set(['run', 'enable', 'disable'])],
 ])
-// gh api 显式写方法（-X/--method POST|PATCH|PUT|DELETE；GET 及无方法放行）
-const GH_API_WRITE_METHOD = /\bgh\b[^;&|]*\bapi\b[^;&|]*\s(?:-X|--method)\s+["']?(?:POST|PATCH|PUT|DELETE)\b/i
-// 破坏性（删除远程数据）：repo delete / release delete / api DELETE
-const GH_DESTRUCTIVE = /(?:\bgh\b[^;&|]*\b(?:repo\s+delete|release\s+delete)\b)|(?:\bgh\b[^;&|]*\bapi\b[^;&|]*\s(?:-X|--method)\s+["']?DELETE\b)/i
 
-// 解析 gh 的（实体, 动作）：跳过旗标及其值（-R o/r、--repo o/r、--repo=v、
-// --title "x" 等；长旗标内联值含 "=" 直接跳过）
-function ghEntityAction(text) {
-  const re = /\bgh\b/g
-  let m
-  while ((m = re.exec(text))) {
-    const rest = text.slice(m.index + m[0].length)
-    const tokens = rest.split(/\s+/).filter(Boolean)
-    for (let i = 0; i < tokens.length; i++) {
-      const t = tokens[i]
-      if (t.startsWith('-')) {
-        if (t.startsWith('--') && t.includes('=')) continue // --flag=value
-        if (i + 1 < tokens.length && !tokens[i + 1].startsWith('-')) i++ // 旗标带值
-        continue
-      }
-      const entity = t.replace(/^["']|["']$/g, '').toLowerCase()
-      let action = undefined
-      if (i + 1 < tokens.length && !tokens[i + 1].startsWith('-')) {
-        action = tokens[i + 1].replace(/^["']|["']$/g, '').toLowerCase()
-      }
-      return { entity, action }
+// 每段独立一条 gh 调用。整段 \bgh\b[^;&|]* 会把 grep/commit 消息/title 里的
+// 「gh repo delete」当成真删除，逼模型改命令。
+function ghInvocations(text) {
+  const out = []
+  for (const part of splitShellSegments(text)) {
+    const command = leadingCommand(shellTokens(part.text))
+    if (!command || command.name !== 'gh') continue
+    out.push(command.args)
+  }
+  return out
+}
+
+function ghSkipFlag(args, i) {
+  const t = args[i]
+  if (t.startsWith('--') && t.includes('=')) return i
+  if (i + 1 < args.length && !String(args[i + 1]).startsWith('-')) return i + 1
+  return i
+}
+
+function ghEntityActionFromArgs(args) {
+  const list = Array.isArray(args) ? args : []
+  for (let i = 0; i < list.length; i++) {
+    const t = list[i]
+    if (t.startsWith('-')) {
+      i = ghSkipFlag(list, i)
+      continue
     }
+    const entity = String(t).toLowerCase()
+    let action
+    if (i + 1 < list.length && !String(list[i + 1]).startsWith('-')) {
+      action = String(list[i + 1]).toLowerCase()
+    }
+    return { entity, action }
+  }
+  return undefined
+}
+
+function ghApiWriteMethod(args) {
+  const hit = ghEntityActionFromArgs(args)
+  if (!hit || hit.entity !== 'api') return undefined
+  const list = Array.isArray(args) ? args : []
+  for (let i = 0; i < list.length; i++) {
+    const t = String(list[i])
+    if (t === '-X' || t === '--method') {
+      if (i + 1 < list.length) return String(list[i + 1]).toUpperCase()
+      continue
+    }
+    const m = t.match(/^--method=(.+)$/i)
+    if (m) return String(m[1]).toUpperCase()
+  }
+  return undefined
+}
+
+function ghInvocationDestructive(args) {
+  const hit = ghEntityActionFromArgs(args)
+  if (hit && hit.action === 'delete' && (hit.entity === 'repo' || hit.entity === 'release')) return true
+  return ghApiWriteMethod(args) === 'DELETE'
+}
+
+// 解析 gh 的（实体, 动作）：只看本条 gh 调用参数，跳过旗标及其值。
+function ghEntityAction(text) {
+  for (const args of ghInvocations(text)) {
+    const hit = ghEntityActionFromArgs(args)
+    if (hit) return hit
   }
   return undefined
 }
 
 function isGhDestructive(text) {
-  return GH_DESTRUCTIVE.test(String(text || ''))
+  for (const args of ghInvocations(text)) {
+    if (ghInvocationDestructive(args)) return true
+  }
+  return false
 }
 
 function isGhMutation(text) {
-  const t = String(text || '')
-  if (!/\bgh\b/.test(t)) return false
-  if (isGhDestructive(t)) return false // 破坏性走 deny 档（调用方先判）
-  if (GH_API_WRITE_METHOD.test(t)) return true
-  const hit = ghEntityAction(t)
-  if (!hit || !hit.action) return false
-  const actions = GH_MUTATION_ACTIONS.get(hit.entity)
-  return actions !== undefined && actions.has(hit.action)
+  for (const args of ghInvocations(text)) {
+    if (ghInvocationDestructive(args)) continue
+    const method = ghApiWriteMethod(args)
+    if (method && method !== 'GET' && method !== 'HEAD') return true
+    const hit = ghEntityActionFromArgs(args)
+    if (!hit || !hit.action) continue
+    const actions = GH_MUTATION_ACTIONS.get(hit.entity)
+    if (actions !== undefined && actions.has(hit.action)) return true
+  }
+  return false
 }
 
 // ── v6：重复尝试记忆（会话内同操作已被拒 → 直接 deny，不再反复提问）──────
@@ -421,6 +538,77 @@ function escapeRegex(text) {
 
 // run_code 的参数常携带待编辑源码；字符串/注释是数据，不应按执行能力拦截。
 // Template raw text 同样剥离，但 ${...} 内表达式递归保留并继续检查。
+function blankJsDataRanges(source) {
+  const s = String(source || '')
+  const out = s.split('')
+  const isLineTerminator = (ch) => ch === '\n' || ch === '\r' || ch === '\u2028' || ch === '\u2029'
+  const blankRange = (start, end) => {
+    for (let i = start; i < end && i < out.length; i++) {
+      if (!isLineTerminator(out[i])) out[i] = ' '
+    }
+  }
+  let i = 0
+  while (i < s.length) {
+    const ch = s[i]
+    if (ch === "'" || ch === '"') {
+      const end = skipStringAt(s, i)
+      blankRange(i, end)
+      i = end
+      continue
+    }
+    if (ch === '`') {
+      let j = i + 1
+      while (j < s.length && s[j] !== '`') {
+        if (s[j] === '\\') { j += 2; continue }
+        j++
+      }
+      const end = Math.min(s.length, j + 1)
+      blankRange(i, end)
+      i = end
+      continue
+    }
+    if (ch === '/' && s[i + 1] === '/') {
+      const end = skipLineCommentAt(s, i)
+      blankRange(i, end)
+      i = end
+      continue
+    }
+    if (ch === '/' && s[i + 1] === '*') {
+      const end = skipBlockCommentAt(s, i)
+      blankRange(i, end)
+      i = end
+      continue
+    }
+    if (ch === '/') {
+      let j = i + 1
+      let closed = false
+      while (j < s.length && !isLineTerminator(s[j])) {
+        if (s[j] === '\\') { j += 2; continue }
+        if (s[j] === '/' && s[j + 1] === '/') break
+        if (s[j] === '/' && s[j + 1] === '*') break
+        if (s[j] === "'" || s[j] === '"' || s[j] === '`') break
+        if (s[j] === '[') {
+          j++
+          while (j < s.length && s[j] !== ']' && !isLineTerminator(s[j])) {
+            if (s[j] === '\\') { j += 2; continue }
+            j++
+          }
+          if (j < s.length && s[j] === ']') j++
+          continue
+        }
+        if (s[j] === '/') { closed = true; break }
+        j++
+      }
+      if (!closed) { i++; continue }
+      blankRange(i, j + 1)
+      i = j + 1
+      continue
+    }
+    i++
+  }
+  return out.join('')
+}
+
 function executableJsSurface(source) {
   const input = String(source || '')
   const output = input.split('')
@@ -537,7 +725,7 @@ function executableJsSurface(source) {
   }
 
   code(0, false)
-  return ambiguous ? input : output.join('')
+  return ambiguous ? blankJsDataRanges(input) : output.join('')
 }
 
 // ── v16：run_code 三块受控放开（白名单 span 等长空白化预处理）─────────────
@@ -793,27 +981,55 @@ function runCodeSurface(code, netAllowlist) {
 
 
 // ps1 检查 3：force push 完整检测（--force / -f / push +refs 语法 / --mirror）。
-// 只在真实 push 子命令上下文判定；带 (?<![\w-]) 前缀断言（abc--force 不算）。
+// v17：只扫这一条 git push 的参数。整段文本会把同行 `rm -f` / `tail -f` /
+// `wget --mirror` 当成 force-push，逼模型改命令。
+const GIT_PUSH_VALUE_FLAGS = new Set([
+  '-o', '--push-option', '--repo', '--receive-pack', '--exec', '--recurse-submodules',
+])
+
+function forEachGitPushArg(args, visit) {
+  const list = Array.isArray(args) ? args : []
+  for (let i = 0; i < list.length; i++) {
+    const t = String(list[i])
+    const eq = t.indexOf('=')
+    const base = eq === -1 ? t : t.slice(0, eq)
+    if (GIT_PUSH_VALUE_FLAGS.has(t)) {
+      i++
+      continue
+    }
+    if (eq !== -1 && (GIT_PUSH_VALUE_FLAGS.has(base) || base === '--force-with-lease' || base === '--signed')) continue
+    if (visit(t) === true) return true
+  }
+  return false
+}
+
 function isForcePush(text) {
-  if (!hasGitSubcommand(text, 'push')) return false
-  return (
-    /(?<![\w-])--force(?:=(?:true|1))?(?![\w-])/.test(text) ||
-    /(?<!\S)-f(?!\S)/.test(text) ||
-    /\bpush\b[^;&|]*\s\+\S+/.test(text) ||
-    /(?<![\w-])--mirror(?![\w-])/.test(text)
-  )
+  for (const inv of gitInvocations(text)) {
+    if (String(inv.sub).toLowerCase() !== 'push') continue
+    if (forEachGitPushArg(inv.args, (t) => {
+      if (t === '--force' || t === '--force=true' || t === '--force=1') return true
+      if (t === '-f' || (/^-[a-zA-Z0-9]+$/.test(t) && t.includes('f') && t !== '--follow-tags')) return true
+      if (t === '--mirror') return true
+      if (t.startsWith('+') && t.length > 1 && !/\s/.test(t)) return true
+      return false
+    })) return true
+  }
+  return false
 }
 
 // v3：push 目标是否含受保护分支（ps1 检查 3 的 explicitProtectedRef + pushAll 简化：
-// 裸 main/master token 或 refs/heads/main|master；只扫真实 push 子命令之后的参数）
+// 裸 main/master token 或 refs/heads/main|master）。
+// v17：只扫「这一条」git push 的参数，不跨 ; / && / 换行吃进 gh --base main。
 function pushTargetsProtectedRef(text) {
-  const re = /\bgit(?:\.exe)?\b(?:\s+-{1,2}[A-Za-z][A-Za-z-]*(?:\s+(?:"[^"]*"|'[^']*'|\S+))?)*\s+push\b([\s\S]*)/gi
-  let m
-  while ((m = re.exec(text))) {
-    const args = m[1] || ''
-    if (/(?<![\w/-])(?:main|master)(?![\w/-])/.test(args)) return true
-    if (/refs\/heads\/(?:main|master)/.test(args)) return true
-    if (/\s--all\b/.test(args)) return true
+  for (const inv of gitInvocations(text)) {
+    if (String(inv.sub).toLowerCase() !== 'push') continue
+    if (forEachGitPushArg(inv.args, (t) => {
+      if (t === '--all') return true
+      if (/\s/.test(t)) return false
+      if (/^refs\/heads\/(?:main|master)$/.test(t)) return true
+      if (/(?:^|:)(?:refs\/heads\/)?(?:main|master)$/.test(t) && !t.startsWith('-')) return true
+      return false
+    })) return true
   }
   return false
 }
@@ -956,15 +1172,27 @@ function isTerminalControlPlaneWrite(text) {
 
 // 仓库根解析：git -C 参数提取（budget/分支检查共用）
 function repoRootFromText(text) {
-  const m = /\bgit\b[^;&|]*?\s-C\s+(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(text)
-  if (m) return m[1] || m[2] || m[3]
-  // v10（2026-08-17，WSL2 E2E 边界修复）：`cd <repo> && git commit`（无 -C）
-  // 且会话 cwd 非仓库根时，旧实现解析不到仓库根 → commit 的 main/预算检查
-  // 静默跳过。提取 `cd <dir>` 作为候选仓库根——cd 必须位于命令位
-  // （行首或 &&/;/|/|| 之后），避免 `echo cd /tmp` 误匹配；调用方 gitRead
-  // 对非仓库目录失败返回 null → 自然 fail-safe 跳过（0% 误伤）。
-  const cdm = /(?:^|[;&|]\s*)cd\s+(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(text)
-  if (cdm) return cdm[1] || cdm[2] || cdm[3]
+  for (const part of splitShellSegments(text)) {
+    const command = leadingCommand(shellTokens(part.text))
+    if (!command) continue
+    if (command.name === 'git') {
+      const tokens = command.args
+      for (let i = 0; i < tokens.length; i++) {
+        const t = tokens[i]
+        if (t === '--') break
+        if (t === '-C' && i + 1 < tokens.length) return tokens[i + 1]
+        if (t.startsWith('-C') && t.length > 2) return t.slice(2)
+        if (GIT_GLOBAL_OPTIONS_WITH_VALUE.has(t)) {
+          if (i + 1 < tokens.length) i++
+          continue
+        }
+        if (t.startsWith('-')) continue
+        break
+      }
+      continue
+    }
+    if (command.name === 'cd' && command.args[0]) return command.args[0]
+  }
   return undefined
 }
 
@@ -1333,7 +1561,7 @@ module.exports = {
           return deny('BLAST RADIUS: run_code 加载了 fs 并调用写 API（writeFile/rm/mkdir/open/…Sync 全系）。fs 只读面（stat/readdir/readFile/…）已放行（v16）；写操作请改用 write/edit 工具经门禁执行。')
         }
         if (/\b(?:require|import)\s*\(|\bchild_process\b|\b(?:fetch|WebSocket)\b|\bprocess\s*(?:\?\.|\.|\[)|\bwriteFileSync\s*\(|\b(?:eval|Function|constructor)\b/.test(surface)) {
-          return deny('BLAST RADIUS: run_code 可执行语法面包含受限能力（module import/require、child_process、network、process、fs 直写或动态代码生成）。v16 放开面：node:path|util|crypto 纯模块、fs 只读 API、白名单域名 fetch 字面量（api.github.com,github.com，cfg.netAllowlist 可配）；其余字符串/注释数据不拦，regex/division/tagged-template 歧义 fail-closed。真实能力请改用 native 工具经门禁执行。')
+          return deny('BLAST RADIUS: run_code 可执行语法面包含受限能力（module import/require、child_process、network、process、fs 直写或动态代码生成）。v16 放开面：node:path|util|crypto 纯模块、fs 只读 API、白名单域名 fetch 字面量（api.github.com,github.com，cfg.netAllowlist 可配）；字符串/注释数据不拦，regex/division 歧义时仍剥离数据面。真实能力请改用 native 工具经门禁执行。')
         }
       }
 
@@ -1437,12 +1665,14 @@ module.exports.__internals = {
   isTerminalDestructiveSql,
   splitShellSegments,
   shellTokens,
+  leadingCommand,
   extractSqlPayload,
   isTerminalControlPlaneWrite,
   redirectTargetsControlPlane,
   isForcePush,
   isLocalDestructiveAsk,
   pushTargetsProtectedRef,
+  gitInvocations,
   gitSubcommands,
   hasGitSubcommand,
   targetsControlPlane,
@@ -1453,6 +1683,7 @@ module.exports.__internals = {
   countReflogCommits,
   activeSprintDir,
   resolveSprintContextPaths,
+  ghInvocations,
   ghEntityAction,
   isGhMutation,
   isGhDestructive,
