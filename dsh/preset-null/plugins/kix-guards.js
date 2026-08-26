@@ -362,50 +362,93 @@ const GH_MUTATION_ACTIONS = new Map([
   ['gist', new Set(['create', 'edit', 'delete'])],
   ['workflow', new Set(['run', 'enable', 'disable'])],
 ])
-// gh api 显式写方法（-X/--method POST|PATCH|PUT|DELETE；GET 及无方法放行）
-const GH_API_WRITE_METHOD = /\bgh\b[^;&|]*\bapi\b[^;&|]*\s(?:-X|--method)\s+["']?(?:POST|PATCH|PUT|DELETE)\b/i
-// 破坏性（删除远程数据）：repo delete / release delete / api DELETE
-const GH_DESTRUCTIVE = /(?:\bgh\b[^;&|]*\b(?:repo\s+delete|release\s+delete)\b)|(?:\bgh\b[^;&|]*\bapi\b[^;&|]*\s(?:-X|--method)\s+["']?DELETE\b)/i
 
-// 解析 gh 的（实体, 动作）：跳过旗标及其值（-R o/r、--repo o/r、--repo=v、
-// --title "x" 等；长旗标内联值含 "=" 直接跳过）
-function ghEntityAction(text) {
-  const re = /\bgh\b/g
-  let m
-  while ((m = re.exec(text))) {
-    const rest = text.slice(m.index + m[0].length)
-    const tokens = rest.split(/\s+/).filter(Boolean)
-    for (let i = 0; i < tokens.length; i++) {
-      const t = tokens[i]
-      if (t.startsWith('-')) {
-        if (t.startsWith('--') && t.includes('=')) continue // --flag=value
-        if (i + 1 < tokens.length && !tokens[i + 1].startsWith('-')) i++ // 旗标带值
-        continue
-      }
-      const entity = t.replace(/^["']|["']$/g, '').toLowerCase()
-      let action = undefined
-      if (i + 1 < tokens.length && !tokens[i + 1].startsWith('-')) {
-        action = tokens[i + 1].replace(/^["']|["']$/g, '').toLowerCase()
-      }
-      return { entity, action }
+// 每段独立一条 gh 调用。整段 \bgh\b[^;&|]* 会把 grep/commit 消息/title 里的
+// 「gh repo delete」当成真删除，逼模型改命令。
+function ghInvocations(text) {
+  const out = []
+  for (const part of splitShellSegments(text)) {
+    const command = leadingCommand(shellTokens(part.text))
+    if (!command || command.name !== 'gh') continue
+    out.push(command.args)
+  }
+  return out
+}
+
+function ghSkipFlag(args, i) {
+  const t = args[i]
+  if (t.startsWith('--') && t.includes('=')) return i
+  if (i + 1 < args.length && !String(args[i + 1]).startsWith('-')) return i + 1
+  return i
+}
+
+function ghEntityActionFromArgs(args) {
+  const list = Array.isArray(args) ? args : []
+  for (let i = 0; i < list.length; i++) {
+    const t = list[i]
+    if (t.startsWith('-')) {
+      i = ghSkipFlag(list, i)
+      continue
     }
+    const entity = String(t).toLowerCase()
+    let action
+    if (i + 1 < list.length && !String(list[i + 1]).startsWith('-')) {
+      action = String(list[i + 1]).toLowerCase()
+    }
+    return { entity, action }
+  }
+  return undefined
+}
+
+function ghApiWriteMethod(args) {
+  const hit = ghEntityActionFromArgs(args)
+  if (!hit || hit.entity !== 'api') return undefined
+  const list = Array.isArray(args) ? args : []
+  for (let i = 0; i < list.length; i++) {
+    const t = String(list[i])
+    if (t === '-X' || t === '--method') {
+      if (i + 1 < list.length) return String(list[i + 1]).toUpperCase()
+      continue
+    }
+    const m = t.match(/^--method=(.+)$/i)
+    if (m) return String(m[1]).toUpperCase()
+  }
+  return undefined
+}
+
+function ghInvocationDestructive(args) {
+  const hit = ghEntityActionFromArgs(args)
+  if (hit && hit.action === 'delete' && (hit.entity === 'repo' || hit.entity === 'release')) return true
+  return ghApiWriteMethod(args) === 'DELETE'
+}
+
+// 解析 gh 的（实体, 动作）：只看本条 gh 调用参数，跳过旗标及其值。
+function ghEntityAction(text) {
+  for (const args of ghInvocations(text)) {
+    const hit = ghEntityActionFromArgs(args)
+    if (hit) return hit
   }
   return undefined
 }
 
 function isGhDestructive(text) {
-  return GH_DESTRUCTIVE.test(String(text || ''))
+  for (const args of ghInvocations(text)) {
+    if (ghInvocationDestructive(args)) return true
+  }
+  return false
 }
 
 function isGhMutation(text) {
-  const t = String(text || '')
-  if (!/\bgh\b/.test(t)) return false
-  if (isGhDestructive(t)) return false // 破坏性走 deny 档（调用方先判）
-  if (GH_API_WRITE_METHOD.test(t)) return true
-  const hit = ghEntityAction(t)
-  if (!hit || !hit.action) return false
-  const actions = GH_MUTATION_ACTIONS.get(hit.entity)
-  return actions !== undefined && actions.has(hit.action)
+  for (const args of ghInvocations(text)) {
+    if (ghInvocationDestructive(args)) continue
+    const method = ghApiWriteMethod(args)
+    if (method && method !== 'GET' && method !== 'HEAD') return true
+    const hit = ghEntityActionFromArgs(args)
+    if (!hit || !hit.action) continue
+    const actions = GH_MUTATION_ACTIONS.get(hit.entity)
+    if (actions !== undefined && actions.has(hit.action)) return true
+  }
+  return false
 }
 
 // ── v6：重复尝试记忆（会话内同操作已被拒 → 直接 deny，不再反复提问）──────
@@ -807,7 +850,7 @@ function isForcePush(text) {
     const args = Array.isArray(inv.args) ? inv.args : []
     const joined = args.join(' ')
     if (/(?<![\w-])--force(?:=(?:true|1))?(?![\w-])/.test(joined)) return true
-    if (args.includes('-f')) return true
+    if (args.includes('-f') || args.some((a) => /^-[a-zA-Z0-9]*f[a-zA-Z0-9]*$/.test(a))) return true
     if (/(?<![\w-])--mirror(?![\w-])/.test(joined)) return true
     if (args.some((a) => a.startsWith('+') && a.length > 1)) return true
   }
@@ -1465,6 +1508,7 @@ module.exports.__internals = {
   countReflogCommits,
   activeSprintDir,
   resolveSprintContextPaths,
+  ghInvocations,
   ghEntityAction,
   isGhMutation,
   isGhDestructive,
