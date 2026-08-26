@@ -255,6 +255,9 @@ await ok('grep/引号数据不是 epoch shell 写', (() => {
     'node -e "const x = 10 / 3; console.log(\'avoid writeFileSync() here\')"',
     'python3 -c "print(\'never call os.remove(x) on prod\')"',
     'python3 -c "# TODO: os.remove(cache) later\\nprint(1)"',
+    'python3 script.py -c "os.remove(x)"',
+    'node script.js -p "rmSync(x)"',
+    "node script.js --eval 'writeFileSync(x)'",
   ]
   const mutating = [
     'node -e "require(\'fs\').writeFileSync(\'source.js\', \'x\')"',
