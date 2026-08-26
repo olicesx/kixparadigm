@@ -7,6 +7,7 @@
 - **激励面补回二相性/异质性的「为什么」**：1.3.8 把活锚点换成 review epoch 手续后，默认会话不再每轮看见「两阶段不互泄漏」和「同权重会共享盲点」。手续仍由插件强制；原因句压回既有三通道/二相性两条，不新开章节、不灌经典全文。classic/en persona 与 `kixparadigm-core.instructions.md` 同步；null 消融面不动。写码前补回交付前三问（真实链路 / 证据维度 / 独立验证）——settle 只盯有没有跑，不盯证据对不对；盲点图谱仍只在 classic。
 - **写时身份组不再重复检查变体差异**：`checkPluginPair` 与 `runAllZh` 共用 `PLUGIN_IDENTITY_GROUPS`。语言中立插件仍 4 根比对；`kix-budget` 按 incentive（default+null）与 classic（zh+en）两簇；`kix-probe` / `kix-settle` / `kix-mem` 只比实际存在的 incentive 面副本。写 `kix-settle.js` 不再误报 classic/en missing，写 `kix-budget.js` 不再把设计差异当漂移。CI 去掉硬编码豁免名单。伴侣 `*.test.js` 才归一到源码簇；独立 smoke（如 `kix4.test.js`）按自身名字，不映射成不存在的 `*.js`。语法跳过看原始 basename，已存在测试文件不再误开源码语法检查。
 - **发版卫生**：live 身份组断言从本文件位置找回仓库根，不再绑 `process.cwd()`——`npm test` 会 `cd` 进 plugins 再跑 `node --test`，cwd 耦合会把 4 副本检查误判成 0 copies skipped。
+- **伤重复操作，不回仪式**：`pushTargetsProtectedRef` 与 `isForcePush` 都按 shell 段只扫本条 `git push` 参数——不再把同行 `gh pr create --base main` 当成 push-to-main，也不再把后段 `rm -f` / `tail -f` / `wget --mirror` 当成 force-push。review epoch 对 `git branch`/`git config` 按参数分读写——`git branch -a` / `git config user.name` 放行，`-D` / `--global …=` 仍拦。`kix_discipline_spec` 落盘失败返回 `ok: false`（ctx.fs 失败回退 node:fs）；`kix-signal` 看见磁盘上完整 `spec.md` 不再催再调一遍。
 
 ## v1.3.8（2026-08-24）provider 熔断 + 递归 review epoch + terminal settle
 

@@ -315,8 +315,11 @@ const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set([
   '--namespace', '--super-prefix', '--attr-source',
 ])
 
-function gitSubcommands(text) {
-  const subs = new Set()
+// 每段独立一条 git 调用：子命令 + 该子命令自己的参数。
+// push 保护 / epoch 只读边界必须按段解析——旧实现用 push 后 [\s\S]*，
+// 会把同行 `gh pr create --base main` 吃进 push 参数。
+function gitInvocations(text) {
+  const out = []
   for (const part of splitShellSegments(text)) {
     const command = leadingCommand(shellTokens(part.text))
     if (!command || command.name !== 'git') continue
@@ -330,11 +333,14 @@ function gitSubcommands(text) {
       }
       if (/^-(?:C|c).+/.test(t) || t.startsWith('--')) continue
       if (t.startsWith('-')) continue
-      subs.add(t)
+      out.push({ sub: t, args: tokens.slice(i + 1) })
       break
     }
   }
-  return subs
+  return out
+}
+function gitSubcommands(text) {
+  return new Set(gitInvocations(text).map((inv) => inv.sub))
 }
 function hasGitSubcommand(text, sub) {
   return gitSubcommands(text).has(sub)
@@ -793,27 +799,32 @@ function runCodeSurface(code, netAllowlist) {
 
 
 // ps1 检查 3：force push 完整检测（--force / -f / push +refs 语法 / --mirror）。
-// 只在真实 push 子命令上下文判定；带 (?<![\w-]) 前缀断言（abc--force 不算）。
+// v17：只扫这一条 git push 的参数。整段文本会把同行 `rm -f` / `tail -f` /
+// `wget --mirror` 当成 force-push，逼模型改命令。
 function isForcePush(text) {
-  if (!hasGitSubcommand(text, 'push')) return false
-  return (
-    /(?<![\w-])--force(?:=(?:true|1))?(?![\w-])/.test(text) ||
-    /(?<!\S)-f(?!\S)/.test(text) ||
-    /\bpush\b[^;&|]*\s\+\S+/.test(text) ||
-    /(?<![\w-])--mirror(?![\w-])/.test(text)
-  )
+  for (const inv of gitInvocations(text)) {
+    if (String(inv.sub).toLowerCase() !== 'push') continue
+    const args = Array.isArray(inv.args) ? inv.args : []
+    const joined = args.join(' ')
+    if (/(?<![\w-])--force(?:=(?:true|1))?(?![\w-])/.test(joined)) return true
+    if (args.includes('-f')) return true
+    if (/(?<![\w-])--mirror(?![\w-])/.test(joined)) return true
+    if (args.some((a) => a.startsWith('+') && a.length > 1)) return true
+  }
+  return false
 }
 
 // v3：push 目标是否含受保护分支（ps1 检查 3 的 explicitProtectedRef + pushAll 简化：
-// 裸 main/master token 或 refs/heads/main|master；只扫真实 push 子命令之后的参数）
+// 裸 main/master token 或 refs/heads/main|master）。
+// v17：只扫「这一条」git push 的参数，不跨 ; / && / 换行吃进 gh --base main。
 function pushTargetsProtectedRef(text) {
-  const re = /\bgit(?:\.exe)?\b(?:\s+-{1,2}[A-Za-z][A-Za-z-]*(?:\s+(?:"[^"]*"|'[^']*'|\S+))?)*\s+push\b([\s\S]*)/gi
-  let m
-  while ((m = re.exec(text))) {
-    const args = m[1] || ''
-    if (/(?<![\w/-])(?:main|master)(?![\w/-])/.test(args)) return true
-    if (/refs\/heads\/(?:main|master)/.test(args)) return true
-    if (/\s--all\b/.test(args)) return true
+  for (const inv of gitInvocations(text)) {
+    if (String(inv.sub).toLowerCase() !== 'push') continue
+    const args = Array.isArray(inv.args) ? inv.args : []
+    const joined = args.join(' ')
+    if (/(?<![\w/-])(?:main|master)(?![\w/-])/.test(joined)) return true
+    if (/refs\/heads\/(?:main|master)/.test(joined)) return true
+    if (args.includes('--all')) return true
   }
   return false
 }
@@ -1443,6 +1454,7 @@ module.exports.__internals = {
   isForcePush,
   isLocalDestructiveAsk,
   pushTargetsProtectedRef,
+  gitInvocations,
   gitSubcommands,
   hasGitSubcommand,
   targetsControlPlane,

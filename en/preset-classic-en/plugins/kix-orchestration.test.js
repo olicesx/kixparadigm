@@ -200,6 +200,24 @@ await ok('Git 只读子命令放行，checkout/switch/reset/fetch 拒绝', (() =
   const mutating = ['git checkout abc', 'git switch main', 'git reset --hard', 'git fetch origin']
   return safe.every((cmd) => I.reviewGitMutation(cmd) === false) && mutating.every((cmd) => I.reviewGitMutation(cmd) === true)
 })())
+await ok('git branch / config 只读形态不锁 epoch；写形态仍拦', (() => {
+  const safe = [
+    'git branch -a',
+    'git branch --list',
+    'git config user.name',
+    'git config --get user.name',
+    'git config --list',
+    'git log -1 && git branch -a && git config user.name',
+  ]
+  const mutating = [
+    'git branch release/v1.3.9',
+    'git branch -D old',
+    'git config user.name kix',
+    'git config --global user.email x@y',
+    'git config --add remote.origin.push refs/heads/main',
+  ]
+  return safe.every((cmd) => I.reviewGitMutation(cmd) === false) && mutating.every((cmd) => I.reviewGitMutation(cmd) === true)
+})())
 await ok('常见 shell 写入拒绝；测试/只读脚本放行', (() => {
   const safe = ['go test ./...', "node -e \"console.log([1].map(x => x + 1))\"", 'git diff --stat']
   const mutating = [
