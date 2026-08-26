@@ -268,7 +268,7 @@ function nodeEvalSource(args) {
   const valueFlags = new Set(['-e', '--eval', '-p', '--print', '-r', '--require'])
   for (let i = 0; i < list.length; i++) {
     const t = String(list[i])
-    if (t === '--') return undefined
+    if (t === '--' || t === '-') return undefined
     if (t === '-e' || t === '--eval' || t === '-p' || t === '--print') {
       return i + 1 < list.length ? String(list[i + 1]) : ''
     }
@@ -333,12 +333,13 @@ function pythonDataSurface(source) {
 
 function pythonEvalSource(args) {
   const list = Array.isArray(args) ? args : []
-  const valueFlags = new Set(['-c', '-m', '-W', '-X', '--check-hash-based-pycs'])
+  const valueFlags = new Set(['-W', '-X', '--check-hash-based-pycs'])
   for (let i = 0; i < list.length; i++) {
     const t = String(list[i])
-    if (t === '--') return undefined
+    if (t === '--' || t === '-') return undefined
     if (t === '-c') return i + 1 < list.length ? String(list[i + 1]) : ''
     if (t.startsWith('-c') && t.length > 2 && !t.startsWith('--')) return t.slice(2)
+    if (t === '-m' || (t.startsWith('-m') && t.length > 2 && !t.startsWith('--'))) return undefined
     if (valueFlags.has(t)) {
       if (i + 1 < list.length) i++
       continue
