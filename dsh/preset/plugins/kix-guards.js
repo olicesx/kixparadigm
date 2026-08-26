@@ -311,7 +311,10 @@ function shellTokens(segment) {
     }
     if (ch === "'" || ch === '"') { quote = ch; continue }
     if (ch === '#' && (i === 0 || /\s/.test(s[i - 1]))) break
-    if (ch === '\\' && i + 1 < s.length) { cur += s[i + 1]; i++; continue }
+    if (ch === '\\' && i + 1 < s.length) {
+      const next = s[i + 1]
+      if (/[\s'"\\|&;<>#*?(){}[\]$`!]/.test(next)) { cur += next; i++; continue }
+    }
     if (/\s/.test(ch)) { if (cur) { tokens.push(cur); cur = '' } continue }
     cur += ch
   }
@@ -1164,15 +1167,27 @@ function isTerminalControlPlaneWrite(text) {
 
 // 仓库根解析：git -C 参数提取（budget/分支检查共用）
 function repoRootFromText(text) {
-  const m = /\bgit\b[^;&|]*?\s-C\s+(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(text)
-  if (m) return m[1] || m[2] || m[3]
-  // v10（2026-08-17，WSL2 E2E 边界修复）：`cd <repo> && git commit`（无 -C）
-  // 且会话 cwd 非仓库根时，旧实现解析不到仓库根 → commit 的 main/预算检查
-  // 静默跳过。提取 `cd <dir>` 作为候选仓库根——cd 必须位于命令位
-  // （行首或 &&/;/|/|| 之后），避免 `echo cd /tmp` 误匹配；调用方 gitRead
-  // 对非仓库目录失败返回 null → 自然 fail-safe 跳过（0% 误伤）。
-  const cdm = /(?:^|[;&|]\s*)cd\s+(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(text)
-  if (cdm) return cdm[1] || cdm[2] || cdm[3]
+  for (const part of splitShellSegments(text)) {
+    const command = leadingCommand(shellTokens(part.text))
+    if (!command) continue
+    if (command.name === 'git') {
+      const tokens = command.args
+      for (let i = 0; i < tokens.length; i++) {
+        const t = tokens[i]
+        if (t === '--') break
+        if (t === '-C' && i + 1 < tokens.length) return tokens[i + 1]
+        if (t.startsWith('-C') && t.length > 2) return t.slice(2)
+        if (GIT_GLOBAL_OPTIONS_WITH_VALUE.has(t)) {
+          if (i + 1 < tokens.length) i++
+          continue
+        }
+        if (t.startsWith('-')) continue
+        break
+      }
+      continue
+    }
+    if (command.name === 'cd' && command.args[0]) return command.args[0]
+  }
   return undefined
 }
 
