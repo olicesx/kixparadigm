@@ -200,16 +200,17 @@ async function softCase(label, name, args) {
   check('run_code: 受限词仅在注释 → allow', await dispatch('run_code', { code: "// child_process process.env\nreturn 1" }), false)
   check('run_code: template raw text → allow', await dispatch('run_code', { code: "const patch = `process.env writeFileSync()`; return patch" }), false)
   check('run_code: template expression 真实访问 → deny', await dispatch('run_code', { code: "return `value ${process.env.HOME}`" }), true)
-  check('run_code: regex quote ambiguity fails closed → deny', await dispatch('run_code', { code: "const re = /[\"']/; require('child_process'); return 1" }), true)
-  check('run_code: regex comment ambiguity fails closed → deny', await dispatch('run_code', { code: "const re = /[/*]/; fetch('http://x.example'); return 1" }), true)
-  check('run_code: regex plus restricted string fails closed → deny', await dispatch('run_code', { code: "const re = /x/; const patch = \"process.env\"; return patch" }), true)
-  check('run_code: division plus restricted string fails closed → deny', await dispatch('run_code', { code: "const n = 4 / 2; const patch = \"process.env\"; return patch" }), true)
+  check('run_code: regex quote ambiguity still denies real require', await dispatch('run_code', { code: "const re = /[\"']/; require('child_process'); return 1" }), true)
+  check('run_code: regex comment ambiguity still denies real fetch', await dispatch('run_code', { code: "const re = /[/*]/; fetch('http://x.example'); return 1" }), true)
+  check('run_code: regex plus restricted string is data → allow', await dispatch('run_code', { code: "const re = /x/; const patch = \"process.env\"; return patch" }), false)
+  check('run_code: division plus restricted string is data → allow', await dispatch('run_code', { code: "const n = 4 / 2; const patch = \"process.env\"; return patch" }), false)
+  check('run_code: division plus writeFileSync docs string → allow', await dispatch('run_code', { code: 'const pct = done / total; return "see writeFileSync() docs"' }), false)
   check('run_code: U+2028 terminates line comment before real call → deny', await dispatch('run_code', { code: "// note require('child_process'); return 1" }), true)
   check('run_code: optional chaining access denied → deny', await dispatch('run_code', { code: "return process?.env.HOME" }), true)
   check('run_code: eval code generation denied → deny', await dispatch('run_code', { code: "return eval(\"process.env.HOME\")" }), true)
   check('run_code: Function code generation denied → deny', await dispatch('run_code', { code: "return Function(\"return process.env.HOME\")()" }), true)
   check('run_code: constructor code generation denied → deny', await dispatch('run_code', { code: "return (async()=>{}).constructor(\"return process.env.HOME\")()" }), true)
-  check('run_code: tagged template ambiguity fails closed → deny', await dispatch('run_code', { code: "return String.raw`process.env`" }), true)
+  check('run_code: tagged template data is not executable process.env → allow', await dispatch('run_code', { code: "return String.raw`process.env`" }), false)
 
   // ══ 4b. run_code v16 三块受控放开 ═════════════════════════════════════
   // ① 纯函数模块白名单（node:path / node:util / node:crypto）
