@@ -208,6 +208,13 @@ await ok('git branch / config 只读形态不锁 epoch；写形态仍拦', (() =
     'git config --get user.name',
     'git config --list',
     'git log -1 && git branch -a && git config user.name',
+    'git stash list',
+    'git stash show -p',
+    'git reflog show HEAD',
+    'git remote -v',
+    'git tag --list',
+    'git notes list',
+    'git worktree list',
   ]
   const mutating = [
     'git branch release/v1.3.9',
@@ -215,6 +222,11 @@ await ok('git branch / config 只读形态不锁 epoch；写形态仍拦', (() =
     'git config user.name kix',
     'git config --global user.email x@y',
     'git config --add remote.origin.push refs/heads/main',
+    'git stash drop',
+    'git stash push -m x',
+    'git remote add origin x',
+    'git tag v1.3.9',
+    'git worktree add ../wt',
   ]
   return safe.every((cmd) => I.reviewGitMutation(cmd) === false) && mutating.every((cmd) => I.reviewGitMutation(cmd) === true)
 })())
@@ -234,6 +246,8 @@ await ok('grep/引号数据不是 epoch shell 写', (() => {
     'grep -rn "Set-Content" ops/',
     'grep "stdout > file" notes.txt',
     'git log --format="%s" | grep " | tee "',
+    'node -e "console.log(\'writeFileSync\')"',
+    'node -e "console.log(\'legacy rmSync removed\')"',
   ]
   const mutating = [
     'node -e "require(\'fs\').writeFileSync(\'source.js\', \'x\')"',
