@@ -999,10 +999,10 @@ function isForcePush(text) {
   for (const inv of gitInvocations(text)) {
     if (String(inv.sub).toLowerCase() !== 'push') continue
     if (forEachGitPushArg(inv.args, (t) => {
-      if (/(?<![\w-])--force(?:=(?:true|1))?(?![\w-])/.test(t)) return true
-      if (t === '-f' || /^-[a-zA-Z0-9]*f[a-zA-Z0-9]*$/.test(t)) return true
+      if (t === '--force' || t === '--force=true' || t === '--force=1') return true
+      if (t === '-f' || (/^-[a-zA-Z0-9]+$/.test(t) && t.includes('f') && t !== '--follow-tags')) return true
       if (t === '--mirror') return true
-      if (t.startsWith('+') && t.length > 1) return true
+      if (t.startsWith('+') && t.length > 1 && !/\s/.test(t)) return true
       return false
     })) return true
   }
@@ -1017,6 +1017,7 @@ function pushTargetsProtectedRef(text) {
     if (String(inv.sub).toLowerCase() !== 'push') continue
     if (forEachGitPushArg(inv.args, (t) => {
       if (t === '--all') return true
+      if (/\s/.test(t)) return false
       if (/^refs\/heads\/(?:main|master)$/.test(t)) return true
       if (/(?:^|:)(?:refs\/heads\/)?(?:main|master)$/.test(t) && !t.startsWith('-')) return true
       return false
