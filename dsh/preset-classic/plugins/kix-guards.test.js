@@ -353,6 +353,8 @@ async function softCase(label, name, args) {
   assert.ok(!I.pushTargetsProtectedRef('git push -o merge_request.title="fix main crash" origin feature'), 'push-option 值不是目标分支')
   assert.ok(I.pushTargetsProtectedRef('git push -o ci.skip origin main'), '真 push main 仍拦')
   assert.ok(!I.isForcePush('git push -o note="use --force later" origin feature'), 'push-option 值不是 force')
+  assert.ok(!I.isForcePush('git push origin feature # do not use --force'), 'hash 注释不是 force')
+  assert.ok(!I.pushTargetsProtectedRef('git push origin feature # later merge to main'), 'hash 注释不是目标分支')
   passed += 9
 
   // isLocalDestructiveAsk
