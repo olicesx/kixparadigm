@@ -6,7 +6,8 @@
 //   - pre-execute 写时拦截：remind（放行+待注入）/ block（deny）/ 非 preset 路径放行 /
 //     非源仓库放行
 //   - post-execute：首写 persona/plugin 重算、失败/ask 短路、异常隔离、非 accept 不空耗、waterfall 保真
-// 运行：node plugins/kix-consistency.test.js
+// 运行：从仓库根 `node dsh/preset/plugins/kix-consistency.test.js`，
+// 或 CI `cd dsh/preset/plugins && node --test`（live 断言用 __dirname 找回仓库根）。
 
 const path = require('node:path')
 const assert = require('node:assert')
@@ -185,7 +186,19 @@ function makePostExec(callId) {
     I.pickChecks(repo, 'dsh/preset/plugins/brand-new.js').length === 1)
   await ok('写根 plugins/（非 preset 根）→ 0 检查（边界外）', I.pickChecks(repo, 'plugins/kix-guards.js').length === 0)
   const testChecks = I.pickChecks(repo, 'dsh/preset/plugins/kix-x.test.js')
-  await ok('写插件测试 → 仅 pair 1 检查', testChecks.length === 1)
+  await ok('写插件测试（文件尚不存在）→ 仅 pair 1 检查', testChecks.length === 1)
+  fs.writeFileSync(path.join(repo, 'dsh/preset/plugins/kix-x.test.js'), 'T', 'utf8')
+  await ok('写已存在插件测试 → 仍仅 pair 1 检查（语法跳过看原始 basename）',
+    I.pickChecks(repo, 'dsh/preset/plugins/kix-x.test.js').length === 1)
+  fs.writeFileSync(path.join(repo, 'dsh/preset/plugins/kix-x.test.js'), 'not even js syntax {{{\n', 'utf8')
+  const brokenTestChecks = I.pickChecks(repo, 'dsh/preset/plugins/kix-x.test.js')
+  const brokenTestFails = []
+  for (const c of brokenTestChecks) {
+    const r = c()
+    if (r && r.failures) brokenTestFails.push(...r.failures)
+  }
+  await ok('已存在测试文件语法坏了也不跑源码语法检查',
+    brokenTestChecks.length === 1 && !brokenTestFails.some((f) => /syntax check failed/.test(f)))
   const personaChecks = I.pickChecks(repo, 'dsh/preset/agent.cordis.yml')
   await ok('写 persona → 1 检查（契约）', personaChecks.length === 1)
   const currentRoots = ['dsh/preset', 'dsh/preset-classic', 'dsh/preset-null', 'en/preset-classic-en']
@@ -269,6 +282,103 @@ function makePostExec(callId) {
   await ok('未传 roots → 空数组（不猜）', lib.pluginIdentityPaths('core.js').length === 0)
   await ok('identityPathsFor 写哪份映射全组', JSON.stringify(lib.identityPathsFor('editions/two/plugins/core.js', THREE)) === JSON.stringify(threePaths))
   await ok('identityPathsFor 边界外 → 空', lib.identityPathsFor('src/main.js', THREE).length === 0)
+
+  section('lib: 变体身份组分簇（写时/CI 单一事实源，不再全根硬绑）')
+  const CURRENT_ROOTS = ['dsh/preset', 'dsh/preset-classic', 'dsh/preset-null', 'en/preset-classic-en']
+  const variantRoot = mkdtemp('kix-cons-test-variant-id-')
+  const writePlugin = (home, name, body) => {
+    const p = path.join(variantRoot, home, 'plugins', name)
+    fs.mkdirSync(path.dirname(p), { recursive: true })
+    fs.writeFileSync(p, body, 'utf8')
+  }
+  await ok('未点名插件仍走全根一组',
+    JSON.stringify(lib.pluginIdentityGroups('kix-guards.js', CURRENT_ROOTS)) === JSON.stringify([CURRENT_ROOTS]))
+  await ok('budget 分成 incentive / classic 两簇',
+    JSON.stringify(lib.pluginIdentityGroups('kix-budget.js', CURRENT_ROOTS)) === JSON.stringify([
+      ['dsh/preset', 'dsh/preset-null'],
+      ['dsh/preset-classic', 'en/preset-classic-en'],
+    ]))
+  await ok('settle 只留 incentive 面一簇',
+    JSON.stringify(lib.pluginIdentityGroups('kix-settle.js', CURRENT_ROOTS)) === JSON.stringify([
+      ['dsh/preset', 'dsh/preset-null'],
+    ]))
+  await ok('外仓根不命中本仓变体簇 → 退回全根一组',
+    JSON.stringify(lib.pluginIdentityGroups('kix-settle.js', ['pkgs/zh', 'pkgs/en'])) === JSON.stringify([['pkgs/zh', 'pkgs/en']]))
+
+  writePlugin('dsh/preset', 'kix-settle.js', 'SETTLE')
+  writePlugin('dsh/preset-null', 'kix-settle.js', 'SETTLE')
+  const settleOk = lib.checkPluginPair({ root: variantRoot, name: 'kix-settle.js', presetRoots: CURRENT_ROOTS })
+  await ok('incentive 面独有插件不因 classic/en 缺失失败',
+    settleOk.failures.length === 0 && settleOk.notes.some((n) => n.includes('2 copies byte-identical')))
+
+  writePlugin('dsh/preset', 'kix-budget.js', 'INCENTIVE')
+  writePlugin('dsh/preset-null', 'kix-budget.js', 'INCENTIVE')
+  writePlugin('dsh/preset-classic', 'kix-budget.js', 'CLASSIC')
+  writePlugin('en/preset-classic-en', 'kix-budget.js', 'CLASSIC')
+  const budgetOk = lib.checkPluginPair({ root: variantRoot, name: 'kix-budget.js', presetRoots: CURRENT_ROOTS })
+  await ok('budget 两簇各自一致 → 不把 default 与 classic 当同一组', budgetOk.failures.length === 0)
+
+  writePlugin('dsh/preset-classic', 'kix-budget.js', 'DRIFT')
+  const budgetDrift = lib.checkPluginPair({ root: variantRoot, name: 'kix-budget.js', presetRoots: CURRENT_ROOTS })
+  await ok('classic 簇漂移仍失败（不是豁免整文件）',
+    budgetDrift.failures.some((f) => f.includes('kix-budget.js') && f.includes('en/preset-classic-en')))
+  writePlugin('dsh/preset-classic', 'kix-budget.js', 'CLASSIC')
+
+  writePlugin('dsh/preset', 'kix-probe.js', 'PROBE')
+  const probeSolo = lib.checkPluginPair({ root: variantRoot, name: 'kix-probe.js', presetRoots: CURRENT_ROOTS })
+  await ok('incentive 面声明成对但缺 null 副本 → 仍报 missing（不是豁免整文件）',
+    probeSolo.failures.some((f) => f.includes('dsh/preset-null/plugins/kix-probe.js missing')))
+  writePlugin('dsh/preset-null', 'kix-probe.js', 'PROBE')
+  const probePair = lib.checkPluginPair({ root: variantRoot, name: 'kix-probe.js', presetRoots: CURRENT_ROOTS })
+  await ok('incentive 面成对齐 → 通过且不点名 classic/en',
+    probePair.failures.length === 0 && !probePair.notes.some((n) => n.includes('classic')))
+  await ok('写测试文件也按源码名分簇', lib.pluginSourceName('kix-settle.test.js') === 'kix-settle.js')
+  await ok('伴侣测试 identity key 归一到源码',
+    lib.pluginIdentityKey('kix-settle.test.js', { presetRoots: CURRENT_ROOTS }) === 'kix-settle.js')
+  writePlugin('dsh/preset', 'kix-settle.test.js', 'T')
+  writePlugin('dsh/preset-null', 'kix-settle.test.js', 'T')
+  const settleTest = lib.checkPluginPair({ root: variantRoot, name: 'kix-settle.test.js', presetRoots: CURRENT_ROOTS })
+  await ok('写 settle 测试不因 classic/en 缺测试失败', settleTest.failures.length === 0)
+
+  await ok('独立测试 identity key 保持自身名字',
+    lib.pluginIdentityKey('kix4.test.js', { root: variantRoot, presetRoots: CURRENT_ROOTS }) === 'kix4.test.js')
+  writePlugin('dsh/preset', 'kix4.test.js', 'SOLO')
+  const independent = lib.checkPluginPair({ root: variantRoot, name: 'kix4.test.js', presetRoots: CURRENT_ROOTS })
+  await ok('独立 *.test.js 不映射成不存在的 *.js',
+    independent.failures.length === 0
+    && independent.notes.some((n) => n.includes('independent test'))
+    && !independent.failures.some((f) => f.includes('kix4.js missing')))
+
+  // npm test 会 cd 进 plugins/ 再跑 node --test；live 路径必须从本文件位置
+  // 找回仓库根，不能绑 process.cwd()（cwd 在 CI 下是 plugins 目录）。
+  let liveRoot = __dirname
+  for (let i = 0; i < 6; i++) {
+    if (
+      fs.existsSync(path.join(liveRoot, 'dsh', 'preset', 'agent.cordis.yml')) &&
+      fs.existsSync(path.join(liveRoot, 'en', 'preset-classic-en', 'agent.cordis.yml'))
+    ) break
+    liveRoot = path.join(liveRoot, '..')
+  }
+  const liveSettle = lib.checkPluginPair({ root: liveRoot, name: 'kix-settle.js' })
+  const liveBudget = lib.checkPluginPair({ root: liveRoot, name: 'kix-budget.js' })
+  const liveGuards = lib.checkPluginPair({ root: liveRoot, name: 'kix-guards.js' })
+  await ok('真实仓库 settle 写时不再报 classic/en missing', liveSettle.failures.length === 0)
+  await ok('真实仓库 budget 按两簇通过', liveBudget.failures.length === 0)
+  await ok('真实仓库语言中立插件仍 4 copies identical',
+    liveGuards.failures.length === 0 && liveGuards.notes.some((n) => n.includes('4 copies byte-identical')))
+  const liveKix4Checks = I.pickChecks(liveRoot, 'dsh/preset/plugins/kix4.test.js')
+  const liveKix4Fails = []
+  for (const c of liveKix4Checks) {
+    const r = c()
+    if (r && r.failures) liveKix4Fails.push(...r.failures)
+  }
+  await ok('写已存在独立 kix4.test.js → 仅 pair，且 0× kix4.js missing',
+    liveKix4Checks.length === 1 && !liveKix4Fails.some((f) => f.includes('kix4.js missing')))
+  const liveSettleTestChecks = I.pickChecks(liveRoot, 'dsh/preset/plugins/kix-settle.test.js')
+  await ok('写已存在伴侣测试 → 仅 pair 1 检查', liveSettleTestChecks.length === 1)
+  const libSrcNow = fs.readFileSync(path.join(__dirname, 'consistency-lib.cjs'), 'utf8')
+  await ok('runAllZh 不再硬编码身分组豁免名单',
+    !/filter\(\(name\) => !\['kix-budget\.js'/.test(libSrcNow) && /PLUGIN_IDENTITY_GROUPS/.test(libSrcNow))
 
   section('pre-execute: remind 触发（写 preset 区域，en 未同步）')
   const repo2 = makeRepoRoot()

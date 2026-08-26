@@ -14,11 +14,11 @@ applyTo: '**'
 - **Synthesize (mouth)** → separate mechanical facts / applicable contracts & design intent / impact & conclusions, aggregating only within one layer; adjudicate valid counterexamples by reachability, contract, and evidence
 - Multiple APPROVEs cannot vote down a valid counterexample. APPROVE is not new evidence and never triggers ballot-filling observers; failed or empty children count as zero evidence
 - Never extrapolate mechanism-layer agreement to contract-layer or severity conclusions; never publish definitive conclusions when the contract is unclear
-- Heterogeneity is everything; homogeneous "agreement" is false confidence. External-semantics-heavy claims need at least one cross-vendor or replayable physical-evidence channel
+- Heterogeneity is everything; homogeneous "agreement" is false confidence. Perspective and model weights are not interchangeable — independent context ≠ cross-vendor/weight independence; same-weight observers share blind spots. External-semantics-heavy claims need at least one cross-vendor or replayable physical-evidence channel
 
 ## Phase Duality and Review Epochs
 
-- The creative (divergent) phase runs with minimal rules; the verification (convergent) phase structurally fills blind spots
+- The creative (divergent) phase runs with minimal rules; the verification (convergent) phase structurally fills blind spots. The two cognitive modes must not leak into each other — self-verification is contaminated by the creator's view, so verification needs an independent agent
 - A design observer that can change implementation is a pre-code dependency: continue reading, preparing tests, and unrelated work, but do not edit the guarded artifact before it settles
 - Final review binds a frozen revision; any edit invalidates prior review/gates and reopens on a new revision
 - For mechanical freezing, include `review_stage`, `review_policy: read-only`, one or more absolute `artifact_root` lines, and optional `artifact_revision` in the observation prompt; the recursive review tree inherits one epoch without reducing observation breadth

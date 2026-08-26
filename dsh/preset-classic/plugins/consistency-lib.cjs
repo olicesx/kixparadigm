@@ -280,27 +280,108 @@ function pluginIdentityPaths(name, presetRoots) {
   return (Array.isArray(presetRoots) ? presetRoots : []).map((r) => r + '/plugins/' + name)
 }
 
-// 插件身份组：每个已发现 preset 根下的同名文件（未传 roots 则现场发现）。
-// test 任一根存在则整组校验；全无 test → note 跳过（如 opt-in kix-stalled）。
+// 变体身份组：不是「所有 preset 根同名文件必须是一份」。
+// 语言中立插件默认仍是发现到的全部根；下列插件按设计分簇——
+//   incentive 面 default+null 一对，classic zh+en 一对。
+// 写时拦截与 CI 全量共用，避免 runAllZh 豁免、checkPluginPair 全根硬绑的双源重复检查。
+const PLUGIN_IDENTITY_GROUPS = {
+  'kix-budget.js': [
+    ['dsh/preset', 'dsh/preset-null'],
+    ['dsh/preset-classic', 'en/preset-classic-en'],
+  ],
+  'kix-probe.js': [['dsh/preset', 'dsh/preset-null']],
+  'kix-settle.js': [['dsh/preset', 'dsh/preset-null']],
+  'kix-mem.js': [['dsh/preset', 'dsh/preset-null']],
+}
+
+function pluginSourceName(name) {
+  return String(name || '').replace(/\.test\.(js|cjs)$/, '.$1')
+}
+
+function isPluginTestFile(name) {
+  return /\.test\.(js|cjs)$/.test(String(name || ''))
+}
+
+// 测试文件只在「有伴侣源码」时才归一到 *.js：
+// 伴侣 = 已在 PLUGIN_IDENTITY_GROUPS，或任一 preset 根下存在对应源码。
+// 独立 smoke（如 kix4.test.js，磁盘上没有 kix4.js）保持自身名字，避免
+// s/.test.js/.js/ 把不存在的源码套进 4 根身份组。
+function pluginHasCompanionSource(name, { root, presetRoots } = {}) {
+  const source = pluginSourceName(name)
+  if (source === String(name || '')) return false
+  if (PLUGIN_IDENTITY_GROUPS[source]) return true
+  const roots = Array.isArray(presetRoots) ? presetRoots : []
+  if (!root || roots.length === 0) return false
+  return roots.some((r) => fs.existsSync(path.join(root, r, 'plugins', source)))
+}
+
+function pluginIdentityKey(name, opts) {
+  const n = String(name || '')
+  if (PLUGIN_IDENTITY_GROUPS[n]) return n
+  const source = pluginSourceName(n)
+  if (source !== n && (PLUGIN_IDENTITY_GROUPS[source] || pluginHasCompanionSource(n, opts))) return source
+  return n
+}
+
+function pluginIdentityGroups(name, presetRoots, root) {
+  const roots = Array.isArray(presetRoots) ? presetRoots : []
+  const key = pluginIdentityKey(name, { root, presetRoots: roots })
+  const spec = PLUGIN_IDENTITY_GROUPS[key]
+  if (!spec) return [roots.slice()]
+  const groups = spec
+    .map((group) => group.filter((r) => roots.includes(r)))
+    .filter((group) => group.length > 0)
+  // 外仓根对不上本仓变体声明 → 退回同名全根比对，不把本仓分簇套到别人身上。
+  return groups.length > 0 ? groups : [roots.slice()]
+}
+
+function checkIdenticalGroup({ root, paths, label }) {
+  const list = Array.isArray(paths) ? paths.filter(Boolean) : []
+  if (list.length < 2) {
+    return {
+      failures: [],
+      notes: [`${label}: ${list.length} cop${list.length === 1 ? 'y' : 'ies'} (variant/opt-in), skipped`],
+    }
+  }
+  return checkIdenticalSet({ root, paths: list, label })
+}
+
+// 插件身份组：未点名的插件 = 每个已发现 preset 根下的同名文件；
+// 点名变体 = PLUGIN_IDENTITY_GROUPS 里的簇。未传 roots 则现场发现。
+// test 在该簇任一根存在则整簇校验；全无 test → note 跳过（如 opt-in kix-stalled）。
 function checkPluginPair({ root, name, presetRoots }) {
   const roots = Array.isArray(presetRoots) && presetRoots.length ? presetRoots : discoverPresetRoots(root)
-  const paths = pluginIdentityPaths(name, roots)
-  const out = checkIdenticalSet({
-    root, paths, label: `plugins/${name}`,
-  })
-  const testName = name.replace(/\.(?:js|cjs)$/, '.test.js')
-  const testPaths = pluginIdentityPaths(testName, roots)
-  const hasTest = testPaths.some((p) => fs.existsSync(path.join(root, p)))
-  if (!hasTest) {
-    out.notes.push(`plugins/${testName}: absent on all copies (opt-in), skipped`)
-    return out
+  const key = pluginIdentityKey(name, { root, presetRoots: roots })
+  if (isPluginTestFile(name) && key === String(name || '')) {
+    return {
+      failures: [],
+      notes: [`plugins/${name}: independent test (no companion source), skipped`],
+    }
   }
-  const t = checkIdenticalSet({
-    root, paths: testPaths, label: `plugins/${testName}`,
-  })
-  out.failures.push(...t.failures)
-  out.notes.push(...t.notes)
-  return out
+  const sourceName = key
+  const groups = pluginIdentityGroups(sourceName, roots, root)
+  const failures = []
+  const notes = []
+  const testName = sourceName.replace(/\.(?:js|cjs)$/, '.test.js')
+  for (const group of groups) {
+    const out = checkIdenticalGroup({
+      root, paths: pluginIdentityPaths(sourceName, group), label: `plugins/${sourceName}`,
+    })
+    failures.push(...out.failures)
+    notes.push(...out.notes)
+    const testPaths = pluginIdentityPaths(testName, group)
+    const hasTest = testPaths.some((p) => fs.existsSync(path.join(root, p)))
+    if (!hasTest) {
+      notes.push(`plugins/${testName}: absent on all copies (opt-in), skipped`)
+      continue
+    }
+    const t = checkIdenticalGroup({
+      root, paths: testPaths, label: `plugins/${testName}`,
+    })
+    failures.push(...t.failures)
+    notes.push(...t.notes)
+  }
+  return { failures, notes }
 }
 
 // zh/en 包版本 + engines 一致（仓库级）
@@ -506,17 +587,9 @@ function runAllZh(root) {
     checkPersonaBudget({ root, rel: 'en/preset-classic-en/agent.cordis.yml', ...PERSONA_BUDGETS.en }),
     ...['dsh/preset/agent.cordis.yml', 'dsh/preset-classic/agent.cordis.yml', 'dsh/preset-null/agent.cordis.yml', 'en/preset-classic-en/agent.cordis.yml']
       .map((rel) => checkCrossRouteBinding({ root, rel })),
-    // v1.3.0 身分组豁免：kix-budget 默认侧含 L3 验证补贴补丁（设计差异）；
-    // probe/settle/mem 三件套仅存在于默认 preset（设计如此）。
-    ...pluginNames(root)
-      .filter((name) => !['kix-budget.js', 'kix-probe.js', 'kix-settle.js', 'kix-mem.js'].includes(name))
-      .map((name) => checkPluginPair({ root, name })),
-    checkFilesEqual({
-      root,
-      a: 'dsh/preset/plugins/kix-budget.js',
-      b: 'dsh/preset-null/plugins/kix-budget.js',
-      label: 'plugins/kix-budget.js (L3 pair: default+null only)',
-    }),
+    // 身份组由 checkPluginPair / PLUGIN_IDENTITY_GROUPS 单一事实源展开：
+    // 语言中立插件 4 根比对；budget 两簇、probe/settle/mem 仅 incentive 面。
+    ...pluginNames(root).map((name) => checkPluginPair({ root, name })),
     checkVersionPair({ root }),
     checkMirrorTree({ root, left: 'dsh/vision-bridge', right: 'en/bridge', label: 'vision-bridge' }),
     checkIdenticalSet({ root, paths: ['scripts/install-lib.js', 'en/scripts/install-lib.js'], label: 'install-lib.js' }),
@@ -558,6 +631,12 @@ module.exports = {
   presetRootOf,
   identityPathsFor,
   pluginIdentityPaths,
+  pluginIdentityGroups,
+  pluginIdentityKey,
+  pluginHasCompanionSource,
+  isPluginTestFile,
+  pluginSourceName,
+  PLUGIN_IDENTITY_GROUPS,
   checkFilesEqual,
   checkPluginPair,
   checkVersionPair,

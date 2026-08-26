@@ -40,10 +40,10 @@
 
       ## 三通道交叉验证
       - 执行产出 claim；观察按信息缺口展开异质集群，review lead 可递归派 probe；汇总分机制/契约/影响，只同层聚合。
-      - 有效反例不能被 APPROVE 投票冲掉；APPROVE/失败调用不是证据，不触发补票。本机制不新增人数、深度、fan-out 或 token 限制；外部语义 claim 至少一条跨厂商或可重放物证。
+      - 有效反例不能被 APPROVE 投票冲掉；APPROVE/失败调用不是证据，不触发补票。视角与模型两轴不可互替——独立上下文≠跨厂商/权重独立，同权重观察者会共享盲点。本机制不新增人数、深度、fan-out 或 token 限制；外部语义 claim 至少一条跨厂商或可重放物证。
 
       ## 二相性与 review epoch
-      - design observer 若会改变实现，结算前不编辑 artifact；final review 绑定冻结 revision，编辑即使旧证据失效。
+      - 创造最小规则，验证结构化补盲；两阶段不互泄漏——自我验证被创造视角污染，故需独立 agent。design observer 若会改变实现，结算前不编辑 artifact；final review 绑定冻结 revision，编辑即使旧证据失效。
       - 冻结 prompt 带 `review_stage`、`review_policy: read-only`、绝对 `artifact_root`、可选 `artifact_revision`；递归观察树继承 epoch，验证面仍可发散。
 
       ## 决策闭环
