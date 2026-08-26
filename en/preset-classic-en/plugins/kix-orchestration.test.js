@@ -228,6 +228,21 @@ await ok('常见 shell 写入拒绝；测试/只读脚本放行', (() => {
   ]
   return safe.every((cmd) => !I.reviewShellMutation(cmd)) && mutating.every((cmd) => I.reviewShellMutation(cmd))
 })())
+await ok('grep/引号数据不是 epoch shell 写', (() => {
+  const safe = [
+    'grep -n "node.*writeFileSync" README.md',
+    'grep -rn "Set-Content" ops/',
+    'grep "stdout > file" notes.txt',
+    'git log --format="%s" | grep " | tee "',
+  ]
+  const mutating = [
+    'node -e "require(\'fs\').writeFileSync(\'source.js\', \'x\')"',
+    'Set-Content source.js x',
+    'echo x > source.js',
+    'printf x | tee source.js',
+  ]
+  return safe.every((cmd) => I.reviewShellMutation(cmd) === false) && mutating.every((cmd) => I.reviewShellMutation(cmd) === true)
+})())
 await ok('pathInside 不把相邻前缀目录判进 root', (() => {
   return I.pathInside('/tmp/repo', '/tmp/repo/a.js') && !I.pathInside('/tmp/repo', '/tmp/repository/a.js')
 })())

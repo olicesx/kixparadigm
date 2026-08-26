@@ -89,7 +89,14 @@ const READ_ONLY_GIT_SUBCOMMANDS = new Set([
   'ls-remote', 'cat-file', 'blame', 'grep', 'describe', 'name-rev',
   'merge-base', 'for-each-ref', 'shortlog', 'diff-tree', 'diff-index',
 ])
-const REVIEW_SHELL_MUTATION_RE = /(?:^|[;&|]\s*)(?:apply_patch|rm|mv|cp|touch|mkdir|install|truncate|tee|chmod|chown|ln)(?:\s|$)|\bsed\b[^;&|]*\s-i(?:\s|$)|\bperl\b[^;&|]*\s-pi(?:\s|$)|\b(?:gofmt\s+-w|go\s+fmt|cargo\s+fmt)(?:\s|$)|\b(?:eslint|biome\s+check)\b[^;&|]*\s--(?:fix|write)(?:\s|$)|\bpython(?:3)?\b[^;&|]*(?:\bopen\s*\([^)]*['"][wax+]|\.(?:write_text|write_bytes|unlink)\s*\(|\bos\.(?:remove|unlink|rename|replace)\s*\()|\bnode\b[^;&|]*(?:writeFileSync|appendFileSync|createWriteStream|rmSync|unlinkSync|renameSync)|\bdd\b[^;&|]*\bof=|\b(?:Set-Content|Add-Content|Out-File|Remove-Item|Move-Item|Copy-Item|Rename-Item|New-Item)\b|(?:^|\s)>{1,2}(?=\s*\S)/i
+const REVIEW_SHELL_MUTATING_COMMANDS = new Set([
+  'apply_patch', 'rm', 'mv', 'cp', 'touch', 'mkdir', 'install', 'truncate', 'tee',
+  'chmod', 'chown', 'ln',
+  'set-content', 'add-content', 'out-file', 'remove-item', 'move-item', 'copy-item',
+  'rename-item', 'new-item',
+])
+const PYTHON_WRITE_RE = /(?:\bopen\s*\([^)]*['"][wax+]|\.(?:write_text|write_bytes|unlink)\s*\(|\bos\.(?:remove|unlink|rename|replace)\s*\()/
+const NODE_WRITE_RE = /(?:writeFileSync|appendFileSync|createWriteStream|rmSync|unlinkSync|renameSync)/
 
 // ── 纯判定函数（模块级：单元测试经 __internals 直接验证）─────────────────
 
@@ -238,8 +245,53 @@ function reviewGitMutation(command) {
   return false
 }
 
+function segmentHasUnquotedRedirect(text) {
+  let quote = null
+  let escaped = false
+  const s = String(text || '')
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (quote) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === quote) quote = null
+      continue
+    }
+    if (ch === "'" || ch === '"') { quote = ch; continue }
+    if (ch === '\\' && i + 1 < s.length) { i++; continue }
+    if (ch === '>' && (i === 0 || /\s/.test(s[i - 1]))) {
+      let j = i + 1
+      if (s[j] === '>') j++
+      while (j < s.length && /\s/.test(s[j])) j++
+      if (j < s.length) return true
+    }
+  }
+  return false
+}
+
 function reviewShellMutation(command) {
-  return REVIEW_SHELL_MUTATION_RE.test(String(command || ''))
+  const split = guardInternals.splitShellSegments
+  const tokensOf = guardInternals.shellTokens
+  const leading = guardInternals.leadingCommand
+  for (const part of split(String(command || ''))) {
+    if (segmentHasUnquotedRedirect(part.text)) return true
+    const cmd = leading(tokensOf(part.text))
+    if (!cmd) continue
+    const name = String(cmd.name || '').toLowerCase()
+    const args = Array.isArray(cmd.args) ? cmd.args : []
+    if (REVIEW_SHELL_MUTATING_COMMANDS.has(name)) return true
+    if (name === 'sed' && args.some((a) => a === '-i' || String(a).startsWith('-i'))) return true
+    if (name === 'perl' && args.some((a) => a === '-pi' || String(a).startsWith('-pi'))) return true
+    if (name === 'gofmt' && args.includes('-w')) return true
+    if (name === 'go' && args[0] === 'fmt') return true
+    if (name === 'cargo' && args[0] === 'fmt') return true
+    if (name === 'eslint' && args.some((a) => a === '--fix' || a === '--write')) return true
+    if (name === 'biome' && args[0] === 'check' && args.some((a) => a === '--fix' || a === '--write')) return true
+    if ((name === 'python' || name === 'python3') && PYTHON_WRITE_RE.test(args.join(' '))) return true
+    if ((name === 'node' || name === 'nodejs') && NODE_WRITE_RE.test(args.join(' '))) return true
+    if (name === 'dd' && args.some((a) => String(a).startsWith('of='))) return true
+  }
+  return false
 }
 
 function reviewCommandRoot(agent, args) {
