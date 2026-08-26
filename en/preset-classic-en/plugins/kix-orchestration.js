@@ -95,7 +95,7 @@ const REVIEW_SHELL_MUTATING_COMMANDS = new Set([
   'set-content', 'add-content', 'out-file', 'remove-item', 'move-item', 'copy-item',
   'rename-item', 'new-item',
 ])
-const PYTHON_WRITE_RE = /(?:\bopen\s*\([^)]*['"][wax+]|\.(?:write_text|write_bytes|unlink)\s*\(|\bos\.(?:remove|unlink|rename|replace)\s*\()/
+const PYTHON_WRITE_RE = /(?:\bopen\s*\(|\.(?:write_text|write_bytes|unlink|write)\s*\(|\bos\.(?:remove|unlink|rename|replace)\s*\()/
 const NODE_WRITE_RE = /(?:writeFileSync|appendFileSync|createWriteStream|rmSync|unlinkSync|renameSync)\s*\(/
 
 // ── 纯判定函数（模块级：单元测试经 __internals 直接验证）─────────────────
@@ -276,6 +276,53 @@ function nodeEvalSource(args) {
   return undefined
 }
 
+function pythonDataSurface(source) {
+  const s = String(source || '')
+  const out = s.split('')
+  const blankRange = (start, end) => {
+    for (let i = start; i < end && i < out.length; i++) {
+      if (out[i] !== '\n' && out[i] !== '\r') out[i] = ' '
+    }
+  }
+  let i = 0
+  while (i < s.length) {
+    const ch = s[i]
+    if (ch === '#') {
+      let j = i + 1
+      while (j < s.length && s[j] !== '\n' && s[j] !== '\r') j++
+      blankRange(i, j)
+      i = j
+      continue
+    }
+    if (ch === "'" || ch === '"') {
+      const triple = s.slice(i, i + 3)
+      if (triple === "'''" || triple === '"""') {
+        const q = triple
+        let j = i + 3
+        while (j + 2 < s.length && s.slice(j, j + 3) !== q) {
+          if (s[j] === '\\') { j += 2; continue }
+          j++
+        }
+        const end = j + 2 < s.length ? j + 3 : s.length
+        blankRange(i, end)
+        i = end
+        continue
+      }
+      let j = i + 1
+      while (j < s.length && s[j] !== ch) {
+        if (s[j] === '\\') { j += 2; continue }
+        j++
+      }
+      const end = j < s.length ? j + 1 : s.length
+      blankRange(i, end)
+      i = end
+      continue
+    }
+    i++
+  }
+  return out.join('')
+}
+
 function pythonEvalSource(args) {
   const list = Array.isArray(args) ? args : []
   for (let i = 0; i < list.length; i++) {
@@ -405,7 +452,7 @@ function reviewShellMutation(command) {
     if (name === 'biome' && args[0] === 'check' && args.some((a) => a === '--fix' || a === '--write')) return true
     if (name === 'python' || name === 'python3') {
       const src = pythonEvalSource(args)
-      if (src != null && PYTHON_WRITE_RE.test(src)) return true
+      if (src != null && PYTHON_WRITE_RE.test(pythonDataSurface(src))) return true
       continue
     }
     if (name === 'node' || name === 'nodejs') {
