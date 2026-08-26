@@ -113,6 +113,9 @@ async function softCase(label, name, args) {
   check('pwsh: cat notes.md | grep psql && echo DELETE → allow (v8 命令位判定)', await dispatch('pwsh', { command: 'cat notes.md | grep psql && echo DELETE' }), false)
   check('pwsh: psql -c "SELECT \'DROP TABLE\'" → allow (v8 SQL 字符串剥离)', await dispatch('pwsh', { command: "psql -c \"SELECT 'DROP TABLE'\"" }), false)
   check('pwsh: echo DROP TABLE users | psql → deny (v8 管道喂 SQL)', await dispatch('pwsh', { command: 'echo DROP TABLE users | psql' }), true)
+  check('pwsh: quoted DROP in pipe to mysql is data → allow', await dispatch('pwsh', { command: 'echo "never DROP tables in prod" | mysql -u root' }), false)
+  check('pwsh: SQL comment DROP piped to psql is data → allow', await dispatch('pwsh', { command: 'echo "-- TODO: DROP TABLE legacy (do not run)" | psql -f -' }), false)
+  check('pwsh: grep TRUNCATE piped to psql is a pattern not SQL → allow', await dispatch('pwsh', { command: 'grep -v TRUNCATE dump.sql | psql -f -' }), false)
 
   // ── SQL 工具门禁（v3：SQL_TOOLS 已入白名单，门禁 4 可达）────────────────
   check('sql: DELETE FROM users → deny (v3)', await dispatch('sql', { sql: 'DELETE FROM users' }), true)
@@ -144,6 +147,7 @@ async function softCase(label, name, args) {
   await softCase('pwsh: git push origin main-branch', 'pwsh', { command: 'git push origin main-branch' })
   check('pwsh: git push origin refs/heads/main → deny (v3)', await dispatch('pwsh', { command: 'git push origin refs/heads/main' }), true)
   check('pwsh: git commit -am "x" && git push origin main → deny', await dispatch('pwsh', { command: 'git commit -am "x" && git push origin main' }), true)
+  check('pwsh: git push HEAD 后接 gh --base main → allow（v17 按段解析）', await dispatch('pwsh', { command: 'git push -u origin HEAD && gh pr create --base main --head release/v1.3.9' }), false)
   // 只读/常规操作放行
   check('pwsh: git status → allow', await dispatch('pwsh', { command: 'git status' }), false)
   check('pwsh: git log → allow', await dispatch('pwsh', { command: 'git log --oneline' }), false)
@@ -199,16 +203,20 @@ async function softCase(label, name, args) {
   check('run_code: 受限词仅在注释 → allow', await dispatch('run_code', { code: "// child_process process.env\nreturn 1" }), false)
   check('run_code: template raw text → allow', await dispatch('run_code', { code: "const patch = `process.env writeFileSync()`; return patch" }), false)
   check('run_code: template expression 真实访问 → deny', await dispatch('run_code', { code: "return `value ${process.env.HOME}`" }), true)
-  check('run_code: regex quote ambiguity fails closed → deny', await dispatch('run_code', { code: "const re = /[\"']/; require('child_process'); return 1" }), true)
-  check('run_code: regex comment ambiguity fails closed → deny', await dispatch('run_code', { code: "const re = /[/*]/; fetch('http://x.example'); return 1" }), true)
-  check('run_code: regex plus restricted string fails closed → deny', await dispatch('run_code', { code: "const re = /x/; const patch = \"process.env\"; return patch" }), true)
-  check('run_code: division plus restricted string fails closed → deny', await dispatch('run_code', { code: "const n = 4 / 2; const patch = \"process.env\"; return patch" }), true)
+  check('run_code: regex quote ambiguity still denies real require', await dispatch('run_code', { code: "const re = /[\"']/; require('child_process'); return 1" }), true)
+  check('run_code: regex comment ambiguity still denies real fetch', await dispatch('run_code', { code: "const re = /[/*]/; fetch('http://x.example'); return 1" }), true)
+  check('run_code: regex plus restricted string is data → allow', await dispatch('run_code', { code: "const re = /x/; const patch = \"process.env\"; return patch" }), false)
+  check('run_code: division plus restricted string is data → allow', await dispatch('run_code', { code: "const n = 4 / 2; const patch = \"process.env\"; return patch" }), false)
+  check('run_code: division plus writeFileSync docs string → allow', await dispatch('run_code', { code: 'const pct = done / total; return "see writeFileSync() docs"' }), false)
+  check('run_code: division then string slash plus writeFileSync is data → allow', await dispatch('run_code', { code: 'const r=a/b; const s="x/y writeFileSync(z)"; console.log(s)' }), false)
+  check('run_code: division then line comment writeFileSync is data → allow', await dispatch('run_code', { code: 'const r=a/b; // writeFileSync(z)\nconsole.log(r)' }), false)
+  check('run_code: division then block comment process.env is data → allow', await dispatch('run_code', { code: 'const r = a/b; /* process.env */ return r' }), false)
   check('run_code: U+2028 terminates line comment before real call → deny', await dispatch('run_code', { code: "// note require('child_process'); return 1" }), true)
   check('run_code: optional chaining access denied → deny', await dispatch('run_code', { code: "return process?.env.HOME" }), true)
   check('run_code: eval code generation denied → deny', await dispatch('run_code', { code: "return eval(\"process.env.HOME\")" }), true)
   check('run_code: Function code generation denied → deny', await dispatch('run_code', { code: "return Function(\"return process.env.HOME\")()" }), true)
   check('run_code: constructor code generation denied → deny', await dispatch('run_code', { code: "return (async()=>{}).constructor(\"return process.env.HOME\")()" }), true)
-  check('run_code: tagged template ambiguity fails closed → deny', await dispatch('run_code', { code: "return String.raw`process.env`" }), true)
+  check('run_code: tagged template data is not executable process.env → allow', await dispatch('run_code', { code: "return String.raw`process.env`" }), false)
 
   // ══ 4b. run_code v16 三块受控放开 ═════════════════════════════════════
   // ① 纯函数模块白名单（node:path / node:util / node:crypto）
@@ -307,6 +315,8 @@ async function softCase(label, name, args) {
   assert.ok(I.isForcePush('git push --force origin x'))
   assert.ok(I.isForcePush('git push --force=true origin x'))
   assert.ok(I.isForcePush('git push -f origin x'))
+  assert.ok(I.isForcePush('git push -fu origin HEAD'), '短选项簇 -fu 仍是 force')
+  assert.ok(I.isForcePush('git push -uf origin HEAD'), '短选项簇 -uf 仍是 force')
   assert.ok(I.isForcePush('git push origin +main'))
   assert.ok(I.isForcePush('git push --mirror origin'))
   assert.ok(I.isForcePush('git -C C:\\repo push --force origin main'), '-C 前置不绕过 force')
@@ -314,7 +324,12 @@ async function softCase(label, name, args) {
   assert.ok(!I.isForcePush('git push origin feature'))
   assert.ok(!I.isForcePush('git push origin abc--force'), 'abc--force 非 force（lookbehind）')
   assert.ok(!I.isForcePush('git commit -m "push --force docs"'), 'commit message 不触发 force')
-  passed += 10
+  assert.ok(!I.isForcePush('git push origin HEAD && rm -f tmp.txt'), '后段 rm -f 不是 force-push')
+  assert.ok(!I.isForcePush('git push origin HEAD && tail -f build.log'), '后段 tail -f 不是 force-push')
+  assert.ok(!I.isForcePush('git push origin HEAD\necho +x'), '换行后 +x 不是 +refspec')
+  assert.ok(!I.isForcePush('git push origin HEAD && wget --mirror https://example'), '后段 --mirror 不是 push --mirror')
+  assert.ok(!I.isForcePush("cat > deploy.sh <<'EOF'\ngit push --force origin main\nEOF"), 'heredoc 正文不是 force-push')
+  passed += 16
 
   // gitSubcommands 解析式
   assert.deepStrictEqual([...I.gitSubcommands('git -C C:\\repo push --force origin main')], ['push'])
@@ -337,7 +352,22 @@ async function softCase(label, name, args) {
   assert.ok(!I.pushTargetsProtectedRef('git push origin feature'))
   assert.ok(!I.pushTargetsProtectedRef('git push origin main-branch'))
   assert.ok(!I.pushTargetsProtectedRef('git commit -m "push to main"'), 'commit message 不触发')
-  passed += 6
+  assert.ok(!I.pushTargetsProtectedRef('git push -u origin HEAD\ngh pr create --head release/v1.3.9 --title x --body y'), '同行 gh --base 不得算进 push')
+  assert.ok(!I.pushTargetsProtectedRef('git push -u origin HEAD; gh pr create --base main --head release/v1.3.9'), '分号后 --base main 不是 push 目标')
+  assert.ok(I.pushTargetsProtectedRef('git push origin main && gh pr create --head x'), '真 push main 仍拦')
+  assert.ok(!I.pushTargetsProtectedRef("cat > deploy.sh <<'EOF'\ngit push origin main\nEOF"), 'heredoc 正文不是 push 目标')
+  assert.ok(!I.pushTargetsProtectedRef('git push -o merge_request.title="fix main crash" origin feature'), 'push-option 值不是目标分支')
+  assert.ok(I.pushTargetsProtectedRef('git push -o ci.skip origin main'), '真 push main 仍拦')
+  assert.ok(!I.isForcePush('git push -o note="use --force later" origin feature'), 'push-option 值不是 force')
+  assert.ok(!I.isForcePush('git push origin feature # do not use --force'), 'hash 注释不是 force')
+  assert.ok(!I.pushTargetsProtectedRef('git push origin feature # later merge to main'), 'hash 注释不是目标分支')
+  assert.ok(!I.isForcePush('git log -1 # history: x; git push --force once'), '注释里的分号不是下一条命令')
+  assert.ok(!I.pushTargetsProtectedRef('git fetch origin # then && git push origin main'), '注释里的 && 不是下一条命令')
+  assert.ok(!I.isGhDestructive('ls -la # pipes: ls | gh repo delete o/r'), '注释里的管道不是 gh 调用')
+  assert.ok(I.isForcePush('git log -1; git push --force once'), '真分号后 force 仍拦')
+  assert.ok(!I.isForcePush('git push origin "docs: never use --force on main"'), 'push 说明文本不是 force')
+  assert.ok(!I.pushTargetsProtectedRef('git push origin "see :main notes"'), '带空格的说明不是目标分支')
+  passed += 9
 
   // isLocalDestructiveAsk
   assert.ok(I.isLocalDestructiveAsk('git reset --hard HEAD'))
@@ -357,6 +387,8 @@ async function softCase(label, name, args) {
   assert.strictEqual(I.repoRootFromText('cd /root/kix-guards-e2e && git add a.txt && git commit -m x'), '/root/kix-guards-e2e')
   assert.strictEqual(I.repoRootFromText('cd "C:/work/repo" && git commit -m x'), 'C:/work/repo')
   assert.strictEqual(I.repoRootFromText('echo cd /tmp && git status'), undefined, 'git 前的 echo cd 不是目录切换')
+  assert.strictEqual(I.repoRootFromText('git commit -m "note: use git -C /tmp/probe-main workaround"'), undefined, '提交说明里的 -C 不是仓库根')
+  assert.strictEqual(I.repoRootFromText('git -C C:\\work\\repo status'), 'C:\\work\\repo')
   passed += 6
 
   // isDestructiveSql 语句级
@@ -450,10 +482,18 @@ async function softCase(label, name, args) {
   assert.ok(!I.isGhMutation('git push origin feature'), '非 gh 不判')
   assert.ok(I.isGhDestructive('gh repo delete o/r'), 'gh repo delete → 破坏性')
   assert.ok(I.isGhDestructive('gh api -X DELETE repos/o/r'), 'gh api DELETE → 破坏性')
+  assert.ok(I.isGhDestructive('gh release delete v1.0.0'), 'gh release delete → 破坏性')
   assert.ok(!I.isGhDestructive('gh pr create --title x'), 'gh pr create 非破坏性')
+  assert.ok(!I.isGhDestructive('grep -n "gh repo delete" README.md'), 'grep 文本不是 gh 调用')
+  assert.ok(!I.isGhDestructive('git commit -m "docs: remove gh repo delete section"'), 'commit 消息不是 gh 调用')
+  assert.ok(!I.isGhDestructive('gh pr create --title "cleanup: repo delete flow" --base main'), 'title 数据不是 repo delete')
+  assert.ok(!I.isGhDestructive('gh pr list\necho repo delete notes'), '换行后文本不是 gh 调用')
+  assert.ok(!I.isGhDestructive("node -e 'console.log(\"gh repo delete\")'"), 'node -e 字符串不是 gh 调用')
+  assert.ok(!I.isGhDestructive("tee fix.sh <<'EOF'\ngh repo delete org/repo --yes\nEOF"), 'heredoc 正文不是 gh 调用')
+  assert.ok(!I.isGhMutation('grep -n "gh pr create" README.md'), 'grep 文本不是 gh mutation')
   assert.deepStrictEqual(I.ghEntityAction('gh pr create --title x'), { entity: 'pr', action: 'create' })
   assert.deepStrictEqual(I.ghEntityAction('gh --repo o/r pr merge'), { entity: 'pr', action: 'merge' })
-  passed += 15
+  passed += 22
 
   // 8b. gh 门禁派发（v6：写操作 ask 聊天提问 / 破坏性 deny / 只读放行）
   await softCase('pwsh: gh pr create --title v6-gh', 'pwsh', { command: 'gh pr create --title v6-gh' })
@@ -462,6 +502,8 @@ async function softCase(label, name, args) {
   check('pwsh: gh repo delete o/r → deny', await dispatch('pwsh', { command: 'gh repo delete o/r' }), true)
   check('pwsh: gh api -X DELETE repos/o/r → deny', await dispatch('pwsh', { command: 'gh api -X DELETE repos/o/r' }), true)
   check('pwsh: gh pr view 3 → allow', await dispatch('pwsh', { command: 'gh pr view 3' }), false)
+  check('pwsh: grep 文本含 gh repo delete → allow', await dispatch('pwsh', { command: 'grep -n "gh repo delete" README.md' }), false)
+  check('pwsh: gh pr create title 含 repo delete → allow', await dispatch('pwsh', { command: 'gh pr create --title "cleanup: repo delete flow" --base main' }), false)
   check('pwsh: gh issue list → allow', await dispatch('pwsh', { command: 'gh issue list' }), false)
   check('pwsh: gh api repos/o/r → allow', await dispatch('pwsh', { command: 'gh api repos/o/r' }), false)
 

@@ -268,7 +268,7 @@ function makeState({ sessionKey, workspaceRoot, io }) {
   let cached = undefined
   let specLoaded = false
   let loadPromise = undefined
-  return {
+  const state = {
     specFile,
     enabled: true,
     remindOnce: true,
@@ -278,6 +278,7 @@ function makeState({ sessionKey, workspaceRoot, io }) {
     turnEdits: 0,
     turnTests: 0,
     spec: undefined,
+    lastSaveError: undefined,
     async loadSpec() {
       // 2026-08-16（审查修复，spec 加载竞态）：eager 调用（fire-and-forget）
       // 与门禁调用共享同一个 in-flight promise——旧实现 specLoaded latch
@@ -304,20 +305,33 @@ function makeState({ sessionKey, workspaceRoot, io }) {
         try { await loadPromise } catch {}
       }
       cached = spec
+      state.spec = spec
+      state.lastSaveError = undefined
       if (!specFile) return false
+      const persistWithNode = () => {
+        mkdirSync(join(workspaceRoot, SPEC_DIRNAME), { recursive: true })
+        writeFileSync(specFile, renderSpec(spec), 'utf8')
+      }
       try {
         if (io && io.writeText) {
-          await io.writeText(specFile, renderSpec(spec))
+          try {
+            await io.writeText(specFile, renderSpec(spec))
+          } catch {
+            // ctx.fs 失败时回退 node:fs：契约文件在 workspaceRoot 内，
+            // 假成功（ok:true saved:false）会逼模型再调一遍同一工具。
+            persistWithNode()
+          }
         } else {
-          mkdirSync(join(workspaceRoot, SPEC_DIRNAME), { recursive: true })
-          writeFileSync(specFile, renderSpec(spec), 'utf8')
+          persistWithNode()
         }
         return true
-      } catch {
+      } catch (e) {
+        state.lastSaveError = e && e.message ? e.message : String(e)
         return false
       }
     },
   }
+  return state
 }
 
 function makeUserMessage(text) {
@@ -447,7 +461,20 @@ module.exports = {
         const agent = exec && exec.agent
         const st = stateFor(agent)
         const saved = await st.saveSpec(spec)
-        return { ok: true, saved, specFile: st.specFile || null, contract: spec }
+        if (!saved) {
+          const where = st.specFile || 'kix-discipline/spec.md'
+          const detail = st.lastSaveError ? `（${st.lastSaveError}）` : ''
+          return {
+            ok: false,
+            saved: false,
+            specFile: st.specFile || null,
+            error: st.specFile
+              ? `kix-discipline: 契约未落盘 ${where}${detail}。会话内存已暂存，但磁盘契约与 kix-signal 仍视为未记录——修写入权限后再调本工具。`
+              : 'kix-discipline: 无工作区根，契约无法落盘到 kix-discipline/spec.md。',
+            contract: spec,
+          }
+        }
+        return { ok: true, saved: true, specFile: st.specFile, contract: spec }
       },
     })
     ctx.effect(() => disposeSpecTool)

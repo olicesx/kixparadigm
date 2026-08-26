@@ -208,6 +208,33 @@ await ok('saveSpec 返回 false（无工作区根）', (async () => {
   const st = I.makeState({ sessionKey: 's2' })
   return (await st.saveSpec(fullSpec)) === false
 })())
+await ok('spec 工具落盘失败不得 ok:true', (async () => {
+  const blocked = fs.mkdtempSync(path.join(os.tmpdir(), 'kix-disc-nosave-'))
+  const notDir = path.join(blocked, 'not-a-dir')
+  fs.writeFileSync(notDir, 'x')
+  const specTool = registeredTools.find((t) => t.name === 'kix_discipline_spec')
+  const r = await specTool.execute(fullSpec, {
+    name: 'kix_discipline_spec',
+    arguments: fullSpec,
+    token: 't',
+    callId: 'nosave',
+    agent: { id: 'g-nosave', session: { header: { cwd: notDir } } },
+  })
+  fs.rmSync(blocked, { recursive: true, force: true })
+  return r && r.ok === false && r.saved === false && typeof r.error === 'string'
+})())
+await ok('ctx.fs 写失败回退 node:fs 仍落盘', (async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kix-disc-fs-fallback-'))
+  const mockIo = {
+    async readText() { return undefined },
+    async writeText() { throw new Error('sandbox deny') },
+  }
+  const st = I.makeState({ sessionKey: 's-fallback', workspaceRoot: root, io: mockIo })
+  const saved = await st.saveSpec(fullSpec)
+  const onDisk = fs.existsSync(path.join(root, I.SPEC_DIRNAME, I.SPEC_FILENAME))
+  fs.rmSync(root, { recursive: true, force: true })
+  return saved === true && onDisk
+})())
 await ok('ctx.fs io 注入路径（mock 读写器）', (async () => {
   const written = []
   const mockIo = {

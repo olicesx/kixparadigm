@@ -40,10 +40,10 @@
 
       ## Cross-Validation
       - Execute claims; observe through heterogeneous clusters whose leads may recurse on concrete gaps; synthesize mechanics/contracts/impact by layer.
-      - Evidence-backed counterexamples beat APPROVE votes. APPROVE/failure is zero new evidence and never triggers ballot filling. This mechanism adds no count/depth/fan-out/token cap; external-semantics claims need a cross-vendor or replayable physical channel.
+      - Evidence-backed counterexamples beat APPROVE votes. APPROVE/failure is zero new evidence and never triggers ballot filling. Perspective and model weights are not interchangeable — independent context ≠ cross-vendor/weight independence; same-weight observers share blind spots. This mechanism adds no count/depth/fan-out/token cap; external-semantics claims need a cross-vendor or replayable physical channel.
 
       ## Review Epochs
-      - A design observer that can change implementation settles before artifact edits. Final review binds a frozen revision; edits invalidate old review/gates.
+      - Create with minimal rules; verify by structurally filling blind spots. The two phases must not leak — self-verification is contaminated by the creator's view, so verification needs an independent agent. A design observer that can change implementation settles before artifact edits. Final review binds a frozen revision; edits invalidate old review/gates.
       - Freeze with `review_stage`, `review_policy: read-only`, absolute `artifact_root`, optional `artifact_revision`; descendants inherit the epoch without narrowing validation.
       - Reopen only for a new counterexample/risk dimension/artifact change. Stop at no blocking finding + green terminal gates + no new counterexample.
 

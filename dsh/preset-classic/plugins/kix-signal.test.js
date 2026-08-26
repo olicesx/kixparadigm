@@ -8,8 +8,11 @@
 // 运行：node kix-signal.test.js
 
 const assert = require('node:assert')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
 const plugin = require('./kix-signal.js')
-const { isSourcePath, specDraftText } = plugin.__internals
+const { isSourcePath, specDraftText, specFileLooksComplete } = plugin.__internals
 
 // ── mock ctx：事件注册表 + next 链 ────────────────────────────────────────
 function makeCtx() {
@@ -143,6 +146,36 @@ console.log('# pure helpers')
   ok(isSourcePath('C:/x/docs/adr/001.md') === false, 'isSourcePath 文档=false')
   ok(specDraftText('/tmp/a.go', 'do the thing').includes('do the thing'), 'specDraftText 含任务上下文')
   ok(specDraftText('/tmp/a.go', undefined).includes('（从当前任务上下文补全）'), 'specDraftText 无上下文时占位')
+  const specRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kix-signal-spec-'))
+  fs.mkdirSync(path.join(specRoot, 'kix-discipline'))
+  fs.writeFileSync(path.join(specRoot, 'kix-discipline', 'spec.md'), [
+    '# kix-discipline spec（需求三检契约）',
+    '',
+    '## Goal（要解决的根本问题）',
+    'g',
+    '',
+    '## XY 检查（需求三检①：要 X 真需要的是 Y？）',
+    'x',
+    '',
+    '## 前提假设（需求三检②：前提可验证吗？）',
+    'a',
+    '',
+    '## 更优路径（需求三检③：有更高维度解法吗？）',
+    'p',
+    '',
+    '## 验收标准（可验证的完成定义）',
+    'acc',
+    '',
+  ].join('\n'))
+  ok(specFileLooksComplete(specRoot) === true, '完整 spec.md 不算无契约')
+  const ctxSpec = makeCtx()
+  ctxSpec.get = (key) => undefined
+  const agentWithCwd = { session: { id: 'spec-sess', header: { cwd: specRoot } } }
+  plugin.apply(ctxSpec, { specDraft: true })
+  await runPre(ctxSpec, agentWithCwd, 'edit', { file_path: path.join(specRoot, 'src', 'app.go') })
+  const dSpec = await runPost(ctxSpec, agentWithCwd, 'edit', { file_path: path.join(specRoot, 'src', 'app.go') }, { ok: true })
+  ok(contextsOf(dSpec).length === 0, '磁盘已有完整 spec 不再注入草稿')
+  fs.rmSync(specRoot, { recursive: true, force: true })
 }
 
 console.log(`\nALL PASS (${passed} assertions)`)

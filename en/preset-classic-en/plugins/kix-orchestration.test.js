@@ -200,6 +200,40 @@ await ok('Git 只读子命令放行，checkout/switch/reset/fetch 拒绝', (() =
   const mutating = ['git checkout abc', 'git switch main', 'git reset --hard', 'git fetch origin']
   return safe.every((cmd) => I.reviewGitMutation(cmd) === false) && mutating.every((cmd) => I.reviewGitMutation(cmd) === true)
 })())
+await ok('git branch / config 只读形态不锁 epoch；写形态仍拦', (() => {
+  const safe = [
+    'git branch -a',
+    'git branch --list',
+    'git config user.name',
+    'git config --get user.name',
+    'git config --list',
+    'git log -1 && git branch -a && git config user.name',
+    'git stash list',
+    'git stash show -p',
+    'git reflog show HEAD',
+    'git remote -v',
+    'git tag --list',
+    'git tag --points-at HEAD',
+    'git tag --contains v1.0.0',
+    'git tag --merged main',
+    "cat > deploy.sh <<'EOF'\ngit push --force origin main\nEOF",
+    'git notes list',
+    'git worktree list',
+  ]
+  const mutating = [
+    'git branch release/v1.3.9',
+    'git branch -D old',
+    'git config user.name kix',
+    'git config --global user.email x@y',
+    'git config --add remote.origin.push refs/heads/main',
+    'git stash drop',
+    'git stash push -m x',
+    'git remote add origin x',
+    'git tag v1.3.9',
+    'git worktree add ../wt',
+  ]
+  return safe.every((cmd) => I.reviewGitMutation(cmd) === false) && mutating.every((cmd) => I.reviewGitMutation(cmd) === true)
+})())
 await ok('常见 shell 写入拒绝；测试/只读脚本放行', (() => {
   const safe = ['go test ./...', "node -e \"console.log([1].map(x => x + 1))\"", 'git diff --stat']
   const mutating = [
@@ -209,6 +243,38 @@ await ok('常见 shell 写入拒绝；测试/只读脚本放行', (() => {
     'printf x | dd of=source.js', 'Set-Content source.js x',
   ]
   return safe.every((cmd) => !I.reviewShellMutation(cmd)) && mutating.every((cmd) => I.reviewShellMutation(cmd))
+})())
+await ok('grep/引号数据不是 epoch shell 写', (() => {
+  const safe = [
+    'grep -n "node.*writeFileSync" README.md',
+    'grep -rn "Set-Content" ops/',
+    'grep "stdout > file" notes.txt',
+    'git log --format="%s" | grep " | tee "',
+    'node -e "console.log(\'writeFileSync\')"',
+    'node -e "console.log(\'legacy rmSync removed\')"',
+    'node -e "const x = 10 / 3; console.log(\'avoid writeFileSync() here\')"',
+    'python3 -c "print(\'never call os.remove(x) on prod\')"',
+    'python3 -c "# TODO: os.remove(cache) later\\nprint(1)"',
+    'python3 script.py -c "os.remove(x)"',
+    'node script.js -p "rmSync(x)"',
+    "node script.js --eval 'writeFileSync(x)'",
+    'python3 -m pytest -c os.remove(x)',
+    'git log --oneline -3 # diff > before fix',
+    'grep foo file # cleanup; rm -rf build',
+    'echo hi # log it; tee /tmp/x',
+    'node -e \'const r=a/b; const s="x/y writeFileSync(z)"; console.log(s)\'',
+    'node -e "const r=a/b; // writeFileSync(z)\\nconsole.log(r)"',
+    'node -e "const r=a/b; /* writeFileSync(z) */ console.log(r)"',
+    'python3 - -c os.remove(x)',
+    'node - --eval writeFileSync(x)',
+  ]
+  const mutating = [
+    'node -e "require(\'fs\').writeFileSync(\'source.js\', \'x\')"',
+    'Set-Content source.js x',
+    'echo x > source.js',
+    'printf x | tee source.js',
+  ]
+  return safe.every((cmd) => I.reviewShellMutation(cmd) === false) && mutating.every((cmd) => I.reviewShellMutation(cmd) === true)
 })())
 await ok('pathInside 不把相邻前缀目录判进 root', (() => {
   return I.pathInside('/tmp/repo', '/tmp/repo/a.js') && !I.pathInside('/tmp/repo', '/tmp/repository/a.js')
