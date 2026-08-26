@@ -368,7 +368,10 @@ function isTerminalDestructiveSql(text) {
       if (isDestructiveSql(payload)) return true
       continue
     }
-    if (parts[i].sepBefore === '|' && i > 0 && isDestructiveSql(parts[i - 1].text)) return true
+    if (parts[i].sepBefore === '|' && i > 0) {
+      const prev = leadingCommand(shellTokens(parts[i - 1].text))
+      if (prev && /^(?:echo|printf|cat|head|tail)$/.test(prev.name) && isDestructiveSql(parts[i - 1].text)) return true
+    }
   }
   return false
 }
@@ -581,6 +584,7 @@ function blankJsDataRanges(source) {
       let closed = false
       while (j < s.length && !isLineTerminator(s[j])) {
         if (s[j] === '\\') { j += 2; continue }
+        if (s[j] === '/' && s[j + 1] === '/') break
         if (s[j] === "'" || s[j] === '"' || s[j] === '`') break
         if (s[j] === '[') {
           j++
