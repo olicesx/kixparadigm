@@ -259,6 +259,7 @@ await ok('grep/引号数据不是 epoch shell 写', (() => {
     'node script.js -p "rmSync(x)"',
     "node script.js --eval 'writeFileSync(x)'",
     'python3 -m pytest -c os.remove(x)',
+    'git log --oneline -3 # diff > before fix',
     'python3 - -c os.remove(x)',
     'node - --eval writeFileSync(x)',
   ]
