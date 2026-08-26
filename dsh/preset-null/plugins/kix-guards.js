@@ -306,6 +306,7 @@ function shellTokens(segment) {
       continue
     }
     if (ch === "'" || ch === '"') { quote = ch; continue }
+    if (ch === '#' && (i === 0 || /\s/.test(s[i - 1]))) break
     if (ch === '\\' && i + 1 < s.length) { cur += s[i + 1]; i++; continue }
     if (/\s/.test(ch)) { if (cur) { tokens.push(cur); cur = '' } continue }
     cur += ch
