@@ -308,6 +308,8 @@ async function softCase(label, name, args) {
   assert.ok(I.isForcePush('git push --force origin x'))
   assert.ok(I.isForcePush('git push --force=true origin x'))
   assert.ok(I.isForcePush('git push -f origin x'))
+  assert.ok(I.isForcePush('git push -fu origin HEAD'), '短选项簇 -fu 仍是 force')
+  assert.ok(I.isForcePush('git push -uf origin HEAD'), '短选项簇 -uf 仍是 force')
   assert.ok(I.isForcePush('git push origin +main'))
   assert.ok(I.isForcePush('git push --mirror origin'))
   assert.ok(I.isForcePush('git -C C:\\repo push --force origin main'), '-C 前置不绕过 force')
@@ -319,7 +321,7 @@ async function softCase(label, name, args) {
   assert.ok(!I.isForcePush('git push origin HEAD && tail -f build.log'), '后段 tail -f 不是 force-push')
   assert.ok(!I.isForcePush('git push origin HEAD\necho +x'), '换行后 +x 不是 +refspec')
   assert.ok(!I.isForcePush('git push origin HEAD && wget --mirror https://example'), '后段 --mirror 不是 push --mirror')
-  passed += 14
+  passed += 16
 
   // gitSubcommands 解析式
   assert.deepStrictEqual([...I.gitSubcommands('git -C C:\\repo push --force origin main')], ['push'])
@@ -458,10 +460,17 @@ async function softCase(label, name, args) {
   assert.ok(!I.isGhMutation('git push origin feature'), '非 gh 不判')
   assert.ok(I.isGhDestructive('gh repo delete o/r'), 'gh repo delete → 破坏性')
   assert.ok(I.isGhDestructive('gh api -X DELETE repos/o/r'), 'gh api DELETE → 破坏性')
+  assert.ok(I.isGhDestructive('gh release delete v1.0.0'), 'gh release delete → 破坏性')
   assert.ok(!I.isGhDestructive('gh pr create --title x'), 'gh pr create 非破坏性')
+  assert.ok(!I.isGhDestructive('grep -n "gh repo delete" README.md'), 'grep 文本不是 gh 调用')
+  assert.ok(!I.isGhDestructive('git commit -m "docs: remove gh repo delete section"'), 'commit 消息不是 gh 调用')
+  assert.ok(!I.isGhDestructive('gh pr create --title "cleanup: repo delete flow" --base main'), 'title 数据不是 repo delete')
+  assert.ok(!I.isGhDestructive('gh pr list\necho repo delete notes'), '换行后文本不是 gh 调用')
+  assert.ok(!I.isGhDestructive("node -e 'console.log(\"gh repo delete\")'"), 'node -e 字符串不是 gh 调用')
+  assert.ok(!I.isGhMutation('grep -n "gh pr create" README.md'), 'grep 文本不是 gh mutation')
   assert.deepStrictEqual(I.ghEntityAction('gh pr create --title x'), { entity: 'pr', action: 'create' })
   assert.deepStrictEqual(I.ghEntityAction('gh --repo o/r pr merge'), { entity: 'pr', action: 'merge' })
-  passed += 15
+  passed += 22
 
   // 8b. gh 门禁派发（v6：写操作 ask 聊天提问 / 破坏性 deny / 只读放行）
   await softCase('pwsh: gh pr create --title v6-gh', 'pwsh', { command: 'gh pr create --title v6-gh' })
@@ -470,6 +479,8 @@ async function softCase(label, name, args) {
   check('pwsh: gh repo delete o/r → deny', await dispatch('pwsh', { command: 'gh repo delete o/r' }), true)
   check('pwsh: gh api -X DELETE repos/o/r → deny', await dispatch('pwsh', { command: 'gh api -X DELETE repos/o/r' }), true)
   check('pwsh: gh pr view 3 → allow', await dispatch('pwsh', { command: 'gh pr view 3' }), false)
+  check('pwsh: grep 文本含 gh repo delete → allow', await dispatch('pwsh', { command: 'grep -n "gh repo delete" README.md' }), false)
+  check('pwsh: gh pr create title 含 repo delete → allow', await dispatch('pwsh', { command: 'gh pr create --title "cleanup: repo delete flow" --base main' }), false)
   check('pwsh: gh issue list → allow', await dispatch('pwsh', { command: 'gh issue list' }), false)
   check('pwsh: gh api repos/o/r → allow', await dispatch('pwsh', { command: 'gh api repos/o/r' }), false)
 
