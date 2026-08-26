@@ -1491,6 +1491,7 @@ module.exports.__internals = {
   isTerminalDestructiveSql,
   splitShellSegments,
   shellTokens,
+  leadingCommand,
   extractSqlPayload,
   isTerminalControlPlaneWrite,
   redirectTargetsControlPlane,
