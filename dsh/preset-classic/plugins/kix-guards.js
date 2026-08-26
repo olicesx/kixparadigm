@@ -197,13 +197,15 @@ const DESTRUCTIVE_SQL_KEYWORD = /\b(?:DELETE|UPDATE|DROP|TRUNCATE|ALTER)\b/i
 const DB_CLIENT_NAMES = new Set(['psql', 'mysql', 'mariadb', 'sqlite3', 'sqlcmd', 'clickhouse-client', 'duckdb'])
 const SQL_PAYLOAD_FLAGS = new Set(['-c', '--command', '-e', '--execute', '-Q', '--query'])
 
-/** quote-aware shell 拆段：返回 [{ text, sepBefore }]；sepBefore 为 ;/&&/||/|/newline 或 null。 */
+/** quote-aware shell 拆段：返回 [{ text, sepBefore }]；sepBefore 为 ;/&&/||/|/newline 或 null。
+ *  heredoc 正文（<<TAG … 结束行）当数据，不拆成后续调用。 */
 function splitShellSegments(text) {
   const parts = []
   let cur = ''
   let pendingSep = null
   let quote = null
   let escaped = false
+  const heredocs = []
   const flush = () => {
     const value = cur.trim()
     if (value) parts.push({ text: value, sepBefore: pendingSep })
@@ -211,6 +213,24 @@ function splitShellSegments(text) {
     pendingSep = null
   }
   const s = String(text || '')
+  const consumeHeredocBody = (from, tag, stripTabs) => {
+    let i = from
+    while (i <= s.length) {
+      const lineStart = i
+      while (i < s.length && s[i] !== '\n' && s[i] !== '\r') i++
+      let line = s.slice(lineStart, i)
+      if (stripTabs) line = line.replace(/^\t+/, '')
+      if (line === tag) {
+        if (s[i] === '\r' && s[i + 1] === '\n') return i + 2
+        if (s[i] === '\n' || s[i] === '\r') return i + 1
+        return i
+      }
+      if (i >= s.length) return i
+      if (s[i] === '\r' && s[i + 1] === '\n') i += 2
+      else i += 1
+    }
+    return i
+  }
   for (let i = 0; i < s.length; i++) {
     const ch = s[i]
     if (quote) {
@@ -222,7 +242,44 @@ function splitShellSegments(text) {
     }
     if (ch === "'" || ch === '"') { quote = ch; cur += ch; continue }
     if (ch === '\\' && i + 1 < s.length) { cur += ch + s[i + 1]; i++; continue }
-    if (ch === ';' || ch === '\n' || ch === '\r') { flush(); pendingSep = ';'; continue }
+    if (ch === '<' && s[i + 1] === '<' && s[i + 2] !== '<') {
+      cur += '<<'
+      i += 2
+      let stripTabs = false
+      if (s[i] === '-') { stripTabs = true; cur += '-'; i++ }
+      while (s[i] === ' ' || s[i] === '\t') { cur += s[i]; i++ }
+      let tag = ''
+      if (s[i] === "'" || s[i] === '"') {
+        const q = s[i]
+        cur += q
+        i++
+        while (i < s.length && s[i] !== q) { tag += s[i]; cur += s[i]; i++ }
+        if (s[i] === q) { cur += q; i++ }
+      } else {
+        while (i < s.length && !/\s/.test(s[i]) && s[i] !== ';' && s[i] !== '&' && s[i] !== '|') {
+          tag += s[i]
+          cur += s[i]
+          i++
+        }
+      }
+      if (tag) heredocs.push({ tag, stripTabs })
+      i--
+      continue
+    }
+    if (ch === ';' || ch === '\n' || ch === '\r') {
+      flush()
+      pendingSep = ';'
+      if ((ch === '\n' || ch === '\r') && heredocs.length) {
+        if (ch === '\r' && s[i + 1] === '\n') i++
+        let pos = i + 1
+        while (heredocs.length) {
+          const h = heredocs.shift()
+          pos = consumeHeredocBody(pos, h.tag, h.stripTabs)
+        }
+        i = pos - 1
+      }
+      continue
+    }
     if (ch === '&' && s[i + 1] === '&') { flush(); pendingSep = '&&'; i++; continue }
     if (ch === '|' && s[i + 1] === '|') { flush(); pendingSep = '||'; i++; continue }
     if (ch === '|') { flush(); pendingSep = '|'; continue }
