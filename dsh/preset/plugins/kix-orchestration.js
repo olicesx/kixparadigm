@@ -229,9 +229,13 @@ function gitTagIsMutation(args) {
     const t = String(list[i])
     const flag = gitFlagBase(t)
     if (writeFlags.has(t) || writeFlags.has(flag)) return true
-    if (t === '-l' || t === '--list' || flag === '--list' || t === '-n' || flag === '-n') {
+    if (t === '-l' || t === '--list' || flag === '--list' || t === '-n' || flag === '-n' ||
+        t === '--contains' || t === '--no-contains' || t === '--merged' || t === '--no-merged' ||
+        t === '--points-at' || t === '--sort' || t === '--format' || t === '--column' ||
+        flag === '--contains' || flag === '--no-contains' || flag === '--merged' ||
+        flag === '--no-merged' || flag === '--points-at' || flag === '--sort' || flag === '--format') {
       listMode = true
-      if (!t.includes('=') && i + 1 < list.length && !String(list[i + 1]).startsWith('-') && (t === '-n' || t === '--list' || flag === '--list')) i++
+      if (!t.includes('=') && i + 1 < list.length && !String(list[i + 1]).startsWith('-')) i++
       continue
     }
     if (t.startsWith('-')) continue

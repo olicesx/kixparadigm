@@ -213,6 +213,9 @@ await ok('git branch / config 只读形态不锁 epoch；写形态仍拦', (() =
     'git reflog show HEAD',
     'git remote -v',
     'git tag --list',
+    'git tag --points-at HEAD',
+    'git tag --contains v1.0.0',
+    'git tag --merged main',
     'git notes list',
     'git worktree list',
   ]
@@ -248,6 +251,7 @@ await ok('grep/引号数据不是 epoch shell 写', (() => {
     'git log --format="%s" | grep " | tee "',
     'node -e "console.log(\'writeFileSync\')"',
     'node -e "console.log(\'legacy rmSync removed\')"',
+    'node -e "const x = 10 / 3; console.log(\'avoid writeFileSync() here\')"',
   ]
   const mutating = [
     'node -e "require(\'fs\').writeFileSync(\'source.js\', \'x\')"',

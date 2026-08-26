@@ -470,6 +470,73 @@ function escapeRegex(text) {
 
 // run_code 的参数常携带待编辑源码；字符串/注释是数据，不应按执行能力拦截。
 // Template raw text 同样剥离，但 ${...} 内表达式递归保留并继续检查。
+function blankJsDataRanges(source) {
+  const s = String(source || '')
+  const out = s.split('')
+  const isLineTerminator = (ch) => ch === '\n' || ch === '\r' || ch === '\u2028' || ch === '\u2029'
+  const blankRange = (start, end) => {
+    for (let i = start; i < end && i < out.length; i++) {
+      if (!isLineTerminator(out[i])) out[i] = ' '
+    }
+  }
+  let i = 0
+  while (i < s.length) {
+    const ch = s[i]
+    if (ch === "'" || ch === '"') {
+      const end = skipStringAt(s, i)
+      blankRange(i, end)
+      i = end
+      continue
+    }
+    if (ch === '`') {
+      let j = i + 1
+      while (j < s.length && s[j] !== '`') {
+        if (s[j] === '\\') { j += 2; continue }
+        j++
+      }
+      const end = Math.min(s.length, j + 1)
+      blankRange(i, end)
+      i = end
+      continue
+    }
+    if (ch === '/' && s[i + 1] === '/') {
+      const end = skipLineCommentAt(s, i)
+      blankRange(i, end)
+      i = end
+      continue
+    }
+    if (ch === '/' && s[i + 1] === '*') {
+      const end = skipBlockCommentAt(s, i)
+      blankRange(i, end)
+      i = end
+      continue
+    }
+    if (ch === '/') {
+      let j = i + 1
+      while (j < s.length && !isLineTerminator(s[j])) {
+        if (s[j] === '\\') { j += 2; continue }
+        if (s[j] === '[') {
+          j++
+          while (j < s.length && s[j] !== ']' && !isLineTerminator(s[j])) {
+            if (s[j] === '\\') { j += 2; continue }
+            j++
+          }
+          if (j < s.length && s[j] === ']') j++
+          continue
+        }
+        if (s[j] === '/') break
+        j++
+      }
+      const end = (j < s.length && s[j] === '/') ? j + 1 : j
+      blankRange(i, end)
+      i = end
+      continue
+    }
+    i++
+  }
+  return out.join('')
+}
+
 function executableJsSurface(source) {
   const input = String(source || '')
   const output = input.split('')
@@ -586,7 +653,7 @@ function executableJsSurface(source) {
   }
 
   code(0, false)
-  return ambiguous ? input : output.join('')
+  return ambiguous ? blankJsDataRanges(input) : output.join('')
 }
 
 // ── v16：run_code 三块受控放开（白名单 span 等长空白化预处理）─────────────
@@ -1387,7 +1454,7 @@ module.exports = {
           return deny('BLAST RADIUS: run_code 加载了 fs 并调用写 API（writeFile/rm/mkdir/open/…Sync 全系）。fs 只读面（stat/readdir/readFile/…）已放行（v16）；写操作请改用 write/edit 工具经门禁执行。')
         }
         if (/\b(?:require|import)\s*\(|\bchild_process\b|\b(?:fetch|WebSocket)\b|\bprocess\s*(?:\?\.|\.|\[)|\bwriteFileSync\s*\(|\b(?:eval|Function|constructor)\b/.test(surface)) {
-          return deny('BLAST RADIUS: run_code 可执行语法面包含受限能力（module import/require、child_process、network、process、fs 直写或动态代码生成）。v16 放开面：node:path|util|crypto 纯模块、fs 只读 API、白名单域名 fetch 字面量（api.github.com,github.com，cfg.netAllowlist 可配）；其余字符串/注释数据不拦，regex/division/tagged-template 歧义 fail-closed。真实能力请改用 native 工具经门禁执行。')
+          return deny('BLAST RADIUS: run_code 可执行语法面包含受限能力（module import/require、child_process、network、process、fs 直写或动态代码生成）。v16 放开面：node:path|util|crypto 纯模块、fs 只读 API、白名单域名 fetch 字面量（api.github.com,github.com，cfg.netAllowlist 可配）；字符串/注释数据不拦，regex/division 歧义时仍剥离数据面。真实能力请改用 native 工具经门禁执行。')
         }
       }
 
