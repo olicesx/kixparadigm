@@ -193,7 +193,6 @@ function isDestructiveSql(text) {
 //   3. 无显式 payload 时，仅当前一段通过管道喂给 DB 客户端且含破坏性
 //      关键字才拦（如 `echo DROP TABLE | psql`）。
 //   `cat migration.sql | psql`、`grep psql`、`echo "psql DROP"` 不再误拦。
-const DESTRUCTIVE_SQL_KEYWORD = /\b(?:DELETE|UPDATE|DROP|TRUNCATE|ALTER)\b/i
 const DB_CLIENT_NAMES = new Set(['psql', 'mysql', 'mariadb', 'sqlite3', 'sqlcmd', 'clickhouse-client', 'duckdb'])
 const SQL_PAYLOAD_FLAGS = new Set(['-c', '--command', '-e', '--execute', '-Q', '--query'])
 
@@ -241,6 +240,11 @@ function splitShellSegments(text) {
       continue
     }
     if (ch === "'" || ch === '"') { quote = ch; cur += ch; continue }
+    if (ch === '#' && (cur === '' || i === 0 || /\s/.test(s[i - 1]))) {
+      while (i < s.length && s[i] !== '\n' && s[i] !== '\r') i++
+      i--
+      continue
+    }
     if (ch === '\\' && i + 1 < s.length) { cur += ch + s[i + 1]; i++; continue }
     if (ch === '<' && s[i + 1] === '<' && s[i + 2] !== '<') {
       cur += '<<'
@@ -361,7 +365,7 @@ function isTerminalDestructiveSql(text) {
       if (isDestructiveSql(payload)) return true
       continue
     }
-    if (parts[i].sepBefore === '|' && i > 0 && DESTRUCTIVE_SQL_KEYWORD.test(parts[i - 1].text)) return true
+    if (parts[i].sepBefore === '|' && i > 0 && isDestructiveSql(parts[i - 1].text)) return true
   }
   return false
 }
@@ -571,8 +575,10 @@ function blankJsDataRanges(source) {
     }
     if (ch === '/') {
       let j = i + 1
+      let closed = false
       while (j < s.length && !isLineTerminator(s[j])) {
         if (s[j] === '\\') { j += 2; continue }
+        if (s[j] === "'" || s[j] === '"' || s[j] === '`') break
         if (s[j] === '[') {
           j++
           while (j < s.length && s[j] !== ']' && !isLineTerminator(s[j])) {
@@ -582,12 +588,12 @@ function blankJsDataRanges(source) {
           if (j < s.length && s[j] === ']') j++
           continue
         }
-        if (s[j] === '/') break
+        if (s[j] === '/') { closed = true; break }
         j++
       }
-      const end = (j < s.length && s[j] === '/') ? j + 1 : j
-      blankRange(i, end)
-      i = end
+      if (!closed) { i++; continue }
+      blankRange(i, j + 1)
+      i = j + 1
       continue
     }
     i++

@@ -113,6 +113,8 @@ async function softCase(label, name, args) {
   check('pwsh: cat notes.md | grep psql && echo DELETE → allow (v8 命令位判定)', await dispatch('pwsh', { command: 'cat notes.md | grep psql && echo DELETE' }), false)
   check('pwsh: psql -c "SELECT \'DROP TABLE\'" → allow (v8 SQL 字符串剥离)', await dispatch('pwsh', { command: "psql -c \"SELECT 'DROP TABLE'\"" }), false)
   check('pwsh: echo DROP TABLE users | psql → deny (v8 管道喂 SQL)', await dispatch('pwsh', { command: 'echo DROP TABLE users | psql' }), true)
+  check('pwsh: quoted DROP in pipe to mysql is data → allow', await dispatch('pwsh', { command: 'echo "never DROP tables in prod" | mysql -u root' }), false)
+  check('pwsh: SQL comment DROP piped to psql is data → allow', await dispatch('pwsh', { command: 'echo "-- TODO: DROP TABLE legacy (do not run)" | psql -f -' }), false)
 
   // ── SQL 工具门禁（v3：SQL_TOOLS 已入白名单，门禁 4 可达）────────────────
   check('sql: DELETE FROM users → deny (v3)', await dispatch('sql', { sql: 'DELETE FROM users' }), true)
@@ -205,6 +207,7 @@ async function softCase(label, name, args) {
   check('run_code: regex plus restricted string is data → allow', await dispatch('run_code', { code: "const re = /x/; const patch = \"process.env\"; return patch" }), false)
   check('run_code: division plus restricted string is data → allow', await dispatch('run_code', { code: "const n = 4 / 2; const patch = \"process.env\"; return patch" }), false)
   check('run_code: division plus writeFileSync docs string → allow', await dispatch('run_code', { code: 'const pct = done / total; return "see writeFileSync() docs"' }), false)
+  check('run_code: division then string slash plus writeFileSync is data → allow', await dispatch('run_code', { code: 'const r=a/b; const s="x/y writeFileSync(z)"; console.log(s)' }), false)
   check('run_code: U+2028 terminates line comment before real call → deny', await dispatch('run_code', { code: "// note require('child_process'); return 1" }), true)
   check('run_code: optional chaining access denied → deny', await dispatch('run_code', { code: "return process?.env.HOME" }), true)
   check('run_code: eval code generation denied → deny', await dispatch('run_code', { code: "return eval(\"process.env.HOME\")" }), true)
@@ -355,6 +358,10 @@ async function softCase(label, name, args) {
   assert.ok(!I.isForcePush('git push -o note="use --force later" origin feature'), 'push-option 值不是 force')
   assert.ok(!I.isForcePush('git push origin feature # do not use --force'), 'hash 注释不是 force')
   assert.ok(!I.pushTargetsProtectedRef('git push origin feature # later merge to main'), 'hash 注释不是目标分支')
+  assert.ok(!I.isForcePush('git log -1 # history: x; git push --force once'), '注释里的分号不是下一条命令')
+  assert.ok(!I.pushTargetsProtectedRef('git fetch origin # then && git push origin main'), '注释里的 && 不是下一条命令')
+  assert.ok(!I.isGhDestructive('ls -la # pipes: ls | gh repo delete o/r'), '注释里的管道不是 gh 调用')
+  assert.ok(I.isForcePush('git log -1; git push --force once'), '真分号后 force 仍拦')
   passed += 9
 
   // isLocalDestructiveAsk
