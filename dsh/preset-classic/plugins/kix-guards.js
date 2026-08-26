@@ -585,6 +585,7 @@ function blankJsDataRanges(source) {
       while (j < s.length && !isLineTerminator(s[j])) {
         if (s[j] === '\\') { j += 2; continue }
         if (s[j] === '/' && s[j + 1] === '/') break
+        if (s[j] === '/' && s[j + 1] === '*') break
         if (s[j] === "'" || s[j] === '"' || s[j] === '`') break
         if (s[j] === '[') {
           j++

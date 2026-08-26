@@ -210,6 +210,7 @@ async function softCase(label, name, args) {
   check('run_code: division plus writeFileSync docs string → allow', await dispatch('run_code', { code: 'const pct = done / total; return "see writeFileSync() docs"' }), false)
   check('run_code: division then string slash plus writeFileSync is data → allow', await dispatch('run_code', { code: 'const r=a/b; const s="x/y writeFileSync(z)"; console.log(s)' }), false)
   check('run_code: division then line comment writeFileSync is data → allow', await dispatch('run_code', { code: 'const r=a/b; // writeFileSync(z)\nconsole.log(r)' }), false)
+  check('run_code: division then block comment process.env is data → allow', await dispatch('run_code', { code: 'const r = a/b; /* process.env */ return r' }), false)
   check('run_code: U+2028 terminates line comment before real call → deny', await dispatch('run_code', { code: "// note require('child_process'); return 1" }), true)
   check('run_code: optional chaining access denied → deny', await dispatch('run_code', { code: "return process?.env.HOME" }), true)
   check('run_code: eval code generation denied → deny', await dispatch('run_code', { code: "return eval(\"process.env.HOME\")" }), true)

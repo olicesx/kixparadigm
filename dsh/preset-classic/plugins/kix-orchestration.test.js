@@ -264,6 +264,7 @@ await ok('grep/引号数据不是 epoch shell 写', (() => {
     'echo hi # log it; tee /tmp/x',
     'node -e \'const r=a/b; const s="x/y writeFileSync(z)"; console.log(s)\'',
     'node -e "const r=a/b; // writeFileSync(z)\\nconsole.log(r)"',
+    'node -e "const r=a/b; /* writeFileSync(z) */ console.log(r)"',
     'python3 - -c os.remove(x)',
     'node - --eval writeFileSync(x)',
   ]
