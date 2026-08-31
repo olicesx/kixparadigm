@@ -99,7 +99,7 @@
       - 工具面见宿主工具列表；按需档位经 kix_capability_call 首用自动激活；workflow 取消 disabled 需重启。
       - 子代理编排面（v5.12）：depth-1 子代理只可经 kix_capability_call 派 subagent_lite 做机械取证；in-process maxDepth=2，静态/动态 toolFilter 与 guard 共同拒绝 depth≥2、regular/cross/goal/workflow。
       - Sandbox 升级参数：首次调用省略 sandbox_permissions 与 justification；仅真实 sandbox denial 后才对原调用单次成对重试；approval disabled 时永不设置。
-      - 原生优先：机械多步/并发/跨工具变换用 run_code；单步、可回放验证、审批动作直呼 native；复杂编排 workflow；长目标 goal；先规划 plan mode；长任务 run_in_background+job_output；deny 立即中止。
+      - 执行形态：可由代码确定性完成的筛选/聚合/去重/分页/批处理、局部控制流和跨工具变换交给 run_code（JS/可擦除 TS）或更低成本的 bash/probe；语义判断（派谁/信谁/结论）留主线程；单步操作、需可回放证据的验证/观察与审批动作直呼 native。按任务形态与实测成本选择，不钦点默认工具；复杂多阶段用 workflow；长目标用 goal；先规划用 plan mode；长任务用 run_in_background+job_output；deny 立即中止。
 
       ## 资源
       instructions/kixparadigm-core.instructions.md；prompts/kixpower-*；memories/*.md（编排实证教训 ①-⑪+候选在 memories/orchestration-lessons.md，编曲/分派/审计类决策时先查）；技能见会话目录。

@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## v1.3.10（2026-08-31）run_code 信任姿态对齐 + Code Mode 进入活跃选择压
+
+- **退役 `run_code` 1b 静态能力扫描**：用户明确选择让 Code Mode 对齐 DSH 官方的 bash-equivalent trust posture；worker 只提供 containment，不是 security boundary。旧门禁用字符级 API 塑形维护 `path/util/crypto`、fs 只读和 fetch 域名白名单，既误拦 `assert/url/zlib`、`openSync(..., 'r')`、普通 `constructor` 内省，又可被 computed property / `globalThis` / dynamic codegen 绕过；限制真实、保护不可强制。现删除 1b hook、专属 span/fs/fetch 解析链、`netAllowlist` 注释和伪安全断言，保留 orchestration 仍消费的 `executableJsSurface`、所有终端/Git/SQL/控制平面/GitHub 门禁，以及 `tools.*` 子调用的完整 pre-execute。新增真实 worker E2E 覆盖 builtin、`Function`、空环境、临时 fs 写、短生命周期 child process 与 loopback fetch。残余风险如实保留：原生副作用不再逐动作审计，且 worker 终止不保证回收派生 OS 进程。
+
+- **Code Mode 进入活跃选择压但不成为默认**：默认 `persona-incentive` 原先未呈现 `run_code`，能力存在却容易被忽略；现在把 JS/TS 的确定性筛选、聚合、批处理、局部控制流与跨工具变换作为可选执行形态，并同步 classic / EN persona。语义判断仍留主线程，单步操作、需可回放证据的验证/观察与审批动作仍走 native，且明确按实测成本在 run_code、bash/probe 间选择、不钦点默认工具，避免重演 run_code 文本地位过高导致的 ROLE_DROUGHT；null 消融面不动。
 
 ## v1.3.9（2026-08-26）激励面原因句回补 + 写时身份组分簇
 
