@@ -215,7 +215,7 @@ kix 的原始编排假设只有 runSubagent；DSH 提供更结构化的原生能
 ## 7. 已知限制（诚实声明）
 
 1. ~~跨厂商模型不可用~~ → **已启用**：`subagent_cross` 工具行（zai-coding-cn/GLM-5.3）已注册，主模型自主选择；新增厂商 = settings 加 profile + preset 加工具行（见 §3）
-2. **hooks/*.ps1 不自动触发**——但 DSH 有完整等价机制，且 **preset 已内置 `plugins/kix-guards.js`（v16，v1.3.3；确认类门禁降为软约束 + run_code 三块受控放开）**（`tools/pre-execute` 监听器，blast-radius 核心门禁的 JS 移植）：破坏性 SQL（语句级；终端 DB 客户端按命令位 + SQL payload 判定，`SELECT 'DROP'` 字符串不误拦）/ git 写保护（force push 完整检测 -f/+refs/--mirror，修复 v1 静默失效）/ main 分支保护（commit/push）+ commit 时真实分支检查 / **commit budget**（v7：reflog %gs 口径只数 commit 类条目——reset/merge/pull/checkout/rebase 不计、amend 只进 hard cap 口径；hard cap 10 / progress.md → plan.md task_sizing → plan.md max_commits 兜底链 / 冷启动 3 必 warn；marker 指向已完结 sprint 时回退最大编号并在 deny 消息标注）/ **MCP GitHub 远程写保护**（main/master deny、无 branch deny；mutation 为软约束，v9 起直接放行，是否发布/评论由 persona 与 review 流程判断）/ **发布/评论软约束（v9）**：reset --hard/clean -f/branch -D/stash drop/checkout --/restore/普通 push/GitHub mutation 默认不做，用户明确指示即直接执行，不再逐次提问；ask_user_question 只用于真正缺失的决策信息/ 控制平面保护（v8 只拦明确写意图，grep/cat/ls 只读放行）/ 未知执行工具拦截 / run_code 代码体检查（**v16 三块受控放开**：① node:path/util/crypto 纯模块白名单 ② fs 只读元数据——写 API 按调用模式拦截、deny 引导改用 write/edit 工具 ③ fetch 字面量 URL 域名白名单 cfg.netAllowlist，默认 api.github.com,github.com，模板/变量 URL fail-closed；child_process/process/eval/代码生成照旧 deny），单元回归 **286 组断言通过**（v16：三块放开回归；v9/v7/v8 回归保留）。sandbox 栈仍是常驻机械层
+2. **hooks/*.ps1 不自动触发**——但 DSH 有完整等价机制，且 **preset 已内置 `plugins/kix-guards.js`（v18，v1.3.10；确认类门禁保持软约束 + run_code 对齐宿主 bash-equivalent trust posture）**（`tools/pre-execute` 监听器，blast-radius 核心门禁的 JS 移植）：破坏性 SQL（语句级；终端 DB 客户端按命令位 + SQL payload 判定，`SELECT 'DROP'` 字符串不误拦）/ git 写保护（force push 完整检测 -f/+refs/--mirror，修复 v1 静默失效）/ main 分支保护（commit/push）+ commit 时真实分支检查 / **commit budget**（v7：reflog %gs 口径只数 commit 类条目——reset/merge/pull/checkout/rebase 不计、amend 只进 hard cap 口径；hard cap 10 / progress.md → plan.md task_sizing → plan.md max_commits 兜底链 / 冷启动 3 必 warn；marker 指向已完结 sprint 时回退最大编号并在 deny 消息标注）/ **MCP GitHub 远程写保护**（main/master deny、无 branch deny；mutation 为软约束，v9 起直接放行，是否发布/评论由 persona 与 review 流程判断）/ **发布/评论软约束（v9）**：reset --hard/clean -f/branch -D/stash drop/checkout --/restore/普通 push/GitHub mutation 默认不做，用户明确指示即直接执行，不再逐次提问；ask_user_question 只用于真正缺失的决策信息/ 控制平面保护（v8 只拦明确写意图，grep/cat/ls 只读放行）/ 未知执行工具拦截 / **run_code v18**：KIX 不再扫描代码体或裁剪 Node/JS 原生能力；DSH worker 仅提供 containment（不是 security boundary）：每次新 isolate、`env={}`、资源/输出上限与强制终止，`tools.*` 子调用仍逐次过完整 pre-execute。原生 fs/network/child_process 与 bash 同级信任，不再逐动作审计；worker 终止不保证回收其派生 OS 进程。单元回归以当前测试输出为准。sandbox 栈仍是常驻机械层
 3. **slash command（/kixpower-*）已注册为 DSH 原生命令**（P1-8，2026-08-15）：`plugins/kix-commands.js` 注册 5 命令（kixpower-new/import/continue/review/kixpower），敲 `/` 见候选、触发后 handler 读 `prompts/*.prompt.md` 剥离 frontmatter 注入 user 消息（与 /plan 同语义，零 token）。「无 UI 注册」过期文案已于 2026-08-15 全量修复（persona §DSH 适配、kixpower/SKILL.md 适配注记），不再残留
 4. **CodeGraphy / GitHub MCP 无对应**——降级 grep/read + gh CLI
 5. **memory 不自动注入**——按需读取
@@ -256,14 +256,12 @@ Code Mode SDK（`run_code` + 生成式 `tools.*` TypeScript 绑定）并存，�
 **配套改动**：
 - `plugins/kix-guards.js`：`run_code` 加入 `KNOWN_SAFE_TOOLS`（否则被"未知执行工具"
   门禁 deny；程序内每个子分派仍逐个过 pre-execute）。
-- **2026-08-15 P0 修复（实证驱动）**：三通道实测发现 kix-guards 全部文本门禁
-  静默失效——DSH pre-execute 派发的 exec 参数在 `exec.arguments` 字段
-  （dsh-tools `createExecution` 构造 `{...base, arguments}`），原代码读
-  `exec.args` 恒为 undefined。已修复 + 新增 run_code 代码体受限能力检查
-  （deny `import(node:)`/`child_process`/`fetch(`/`WebSocket(`/`process.`）：
-  run_code 是通用 Node 运行时（实测 fetch/process/动态 import 可用），
-  `tools.*` 是自愿通道，代码体可零痕迹绕过子分派门禁，内容检查闭合此洞。
-  回归测试：`plugins/kix-guards.test.js`（210 组断言，node 直接运行）。
+- **2026-08-29 v18 退役 1b**：`exec.arguments` 接线修复保留，但 run_code 代码体
+  受限能力检查删除。实测证明字符级扫描既误伤安全模块、只读 `fs.open(..., 'r')`
+  和普通 constructor 内省，又可被 computed property / `globalThis` / dynamic codegen
+  绕过；它不是安全边界，只制造 bash 与 Code Mode 的不对称摩擦。worker 仅提供
+  containment，不是 security boundary；hook 单测只断言 KIX 不扫描代码体，真实能力由
+  `local-e2e/verify-run-code-native-e2e.mjs` 驱动官方 worker 验证。
 - **已知限制（2026-08-15 声明）**：① kix-guards 按 agent scope 挂载，**不覆盖
   子代理会话**（三通道观察者/团队子代理无此机械层，sandbox 是其唯一边界）；
   ② 程序内子分派命中 approval `ask` 的语义未定义（fail-safe 建议：视为结构化

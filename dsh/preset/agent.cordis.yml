@@ -140,6 +140,7 @@
       - 属性路由：规模≥3文件 / 外部副作用 / 验证关键 / 目标不明 → 先 kix_capability_search 再动手。禁止类型→动作静态映射。
       - 成员档（lite/dev/qa/reviewer/cross/vision）经 kix_capability_search 可见、kix_capability_call 首用即挂；选谁按任务属性，职责不背本段。自己/dev 的 claim 必须独立观察者验证；协调留主线程。
       - 卡住时 skill（how-to）与 experience（危机教训）。编曲/分派/审计先查 memories/orchestration-lessons.md。
+      - 执行形态：可由代码确定性完成的筛选/聚合/去重/分页/批处理、局部控制流和跨工具变换交给 run_code（JS/可擦除 TS）或更低成本的 bash/probe；语义判断（派谁/信谁/结论）留主线程；单步操作、需可回放证据的验证/观察与审批动作直呼 native。按任务形态与实测成本选择，不钦点默认工具。
 
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
@@ -784,11 +785,11 @@
 # 无豁免、无谓词、无逐路径规则。诚实边界：cwd 在安装目录内的相对路径写
 # 不提醒——那本就是用户显式自迭代（v12 已决策放行）。单元测试 243 断言。
 # 相对路径插件由 loader 以 baseUrl 解析（name 以 "." 开头 → new URL(name, baseUrl)）。
-# v16（v1.3.3）run_code 三块受控放开：node:path/util/crypto 纯模块白名单、
-# fs 只读元数据（写 API 拦调用位）、fetch 字面量 URL 域名白名单。可配项：
-#   config:
-#     netAllowlist: "api.github.com,github.com"   # 逗号分隔，支持 *.suffix 通配
-# 单元测试 286 断言（kix-guards.test.js）。
+# v18（v1.3.10）run_code 对齐宿主 bash-equivalent trust posture：KIX 不再扫描
+# 代码体裁剪 Node/JS 原生能力；worker 仅提供 containment（不是 security boundary）。
+# tools.* 子调用仍逐次经过完整门禁；原生 fs/network/child_process 不逐动作审计，
+# 且 worker 终止不保证回收派生 OS 进程。单测与源仓 local-e2e 分别验证 hook 契约
+# 和真实 worker 能力。
 - id: kix-guards
   name: ./plugins/kix-guards.js
 
