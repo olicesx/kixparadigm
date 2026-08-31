@@ -96,7 +96,7 @@
       - Tool surface: see the host tool list; on-demand tiers auto-activate on first use via `kix_capability_call`; workflow needs `disabled` removed + restart.
       - Child orchestration plane (v5.12): a depth-1 child may use kix_capability_call only for subagent_lite mechanical evidence; in-process maxDepth=2 plus static/dynamic toolFilter and the guard reject depth>=2, regular/cross/goal/workflow.
       - Sandbox escalation arguments: omit sandbox_permissions and justification on the first call; pair them only for one exact retry after a real sandbox denial; never set them when approval is disabled.
-      - Native first: use run_code for mechanical multi-step/concurrent/cross-tool transforms; call native tools directly for one-step, replayable verification, and approval actions. Use workflow for multi-stage, goal for long-horizon, plan mode for planning, and run_in_background + job_output for long tasks; on deny, stop.
+      - Execution shape: run_code JS/TS handles deterministic filter/aggregate/dedupe/page/batch, control flow, and cross-tool transforms; shell/probe if cheaper. Semantic judgment stays in the main thread; one-step actions, replayable evidence, approvals use native. Choose by cost; no default. Workflow handles stages; goal long work; plan mode before execution; background jobs long commands; stop on deny.
 
       ## Resources
       `instructions/kixparadigm-core.instructions.md`; `prompts/kixpower-*`; `memories/*.md` (orchestration lessons ①-⑪ + candidates live in `memories/orchestration-lessons.md` — consult before dispatch/audit-type decisions); skills live in the session catalog. Deep-mechanism docs stay Chinese in this edition (TRANSLATION-STATUS.md).
