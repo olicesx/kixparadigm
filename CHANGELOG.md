@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.3.11（2026-09-01）结算职责分离 + 执行载体与选择压校准
+
+- **kix-settle v5 分离终局裁决与证据生产**：commit-blind 只在根 settlement authority 生效，depth/parent lineage 标记的 evidence child 不再递归结算并覆盖自己的原始报告；源码/测试编辑后无终态验证的提醒仍覆盖所有 agent。verdict 检测从全文关键词收窄为终稿前 12 个可见行中的独立结论行，代码块、规范讨论与元引用不再误触发。已有终态执行证据、仅 1–2 个源码/测试文件且无 fresh observer 的根会话按 session id 稳定 1/16 盲抽样：有效反例重估风险分类，零 finding 只算弱证据、不自动降强度。验证记账补齐 `probe` 的真实 `exit_code/timed_out` 字段，失败或超时不再误清账；`run_code` 继续接受无 exit code 的结构化成功结果。默认 persona/经典中英文认知层补一句式 falsifier，pressure registry 与会话审计报告抽样候选；null persona 保持消融不注入新选择压。
+- **执行载体选择前移到步骤拆分之前**：按整段机械工作的上下文字节、调用往返、共享状态/控制流和跨工具变换收益选择 run_code，而不是拆成单步后逐项默认 native；机械取数/计算的临时 JS/TS 直接进入 run_code，不再包装成 `bash node -e`/heredoc；bash/probe/native 保留给已有项目脚本、shell 原生 CLI 或整段一个输出已决策就绪的操作。语义判断、编辑、审批、破坏性/发版等外部副作用和逐步观察验证仍走 native，不设调用配额，null 消融面不动。会话史实证与回收判据进入 orchestration lessons ⑬。
+- **常驻行为承诺去口号化**：默认 persona 将每条承诺显式归入 plugin/audit、激励/选择压、memory 或删除；新增 `audit-selection-pressure-history.cjs` 与 10 条 pressure registry，CI 阻止未登记 bullet，并以会话史候选审计路由、独立观察、inline 程序包装和上下文肥输出。修复 experience 坏指针，删除 skill/core 的“复杂任务自动 CEO/固定角色序列”承诺；审计候选不作为配额或 hard gate。
+
 ## v1.3.10（2026-08-31）run_code 信任姿态对齐 + Code Mode 进入活跃选择压
 
 - **退役 `run_code` 1b 静态能力扫描**：用户明确选择让 Code Mode 对齐 DSH 官方的 bash-equivalent trust posture；worker 只提供 containment，不是 security boundary。旧门禁用字符级 API 塑形维护 `path/util/crypto`、fs 只读和 fetch 域名白名单，既误拦 `assert/url/zlib`、`openSync(..., 'r')`、普通 `constructor` 内省，又可被 computed property / `globalThis` / dynamic codegen 绕过；限制真实、保护不可强制。现删除 1b hook、专属 span/fs/fetch 解析链、`netAllowlist` 注释和伪安全断言，保留 orchestration 仍消费的 `executableJsSurface`、所有终端/Git/SQL/控制平面/GitHub 门禁，以及 `tools.*` 子调用的完整 pre-execute。新增真实 worker E2E 覆盖 builtin、`Function`、空环境、临时 fs 写、短生命周期 child process 与 loopback fetch。残余风险如实保留：原生副作用不再逐动作审计，且 worker 终止不保证回收派生 OS 进程。

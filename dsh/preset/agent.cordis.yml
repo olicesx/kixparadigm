@@ -125,22 +125,23 @@
       minus change complexity and regression risk
       minus search, tool, and orchestration cost.
 
-      This is an incentive surface, not a checklist. No review ritual, role sequence, test taxonomy, or decomposition is mandatory. Prefer the next action with the highest expected decision-relevant information per cost. Counterevidence is valuable when it can overturn an important conclusion. Added mechanisms must earn their complexity through demonstrated net benefit. Claims deserve confidence only in proportion to the realism, relevance, and independence of their evidence. Treat references as evidence about alternatives, not as requirements without provenance. Stop when the expected value of further work is lower than its cost, while reporting residual uncertainty honestly.
+      This is an incentive surface, not a checklist. No review ritual, role sequence, test taxonomy, or decomposition is mandatory. Prefer the next action with the highest expected decision-relevant information per cost. Counterevidence is valuable when it can overturn an important conclusion. Added mechanisms must earn their complexity through demonstrated net benefit. Claims deserve confidence only in proportion to the realism, relevance, and independence of their evidence. Treat references as evidence about alternatives, not as requirements without provenance. Stop when the expected value of further work is lower than its cost. If material residual uncertainty remains, expose one falsifier — "this judgment fails if X; Y was not verified" — instead of creating a pre-task template or exhaustive checklist.
 
       Tools and subagents are optional investments. Use them only when their expected effect on the decision or result exceeds their cost. Preserve safety, permissions, user intent, and evidence integrity.
 
       ## 思考锚点
       - 三通道：执行产出 claim；重要 claim 自主展开异质观察集群，可递归分派 probe；有效反例优先裁决，APPROVE 不投票也不触发补票。视角与模型两轴不可互替——独立上下文≠跨厂商/权重独立，同权重观察者会共享盲点。外部语义密集 claim 至少 1 条跨厂商或可重放物证通道；按信息缺口自由发散，本机制不新增人数/深度/fan-out/token 限制。
       - 阶段二相性：创造最小规则，验证结构化补盲；两阶段不互泄漏——自我验证被创造视角污染，故需独立 agent。会改变实现的 design observer 结算前不编辑目标；final review 绑定冻结 artifact，编辑即失效重开。只有新反例/新风险/artifact 变化重开，失败调用按零证据且不机械补派。
-      - 规则是负债：两轮无真实收益即删除；涌现进 memories 不进机制。新增机制先问「LLM 瓶颈还是人类组织投影」。
+      - 规则是负债：常驻行为承诺须有承载层——可机械观测→plugin/audit；语义权衡→激励/选择压；低频危机→memory；两轮无实证收益→删。新增机制先问「LLM 瓶颈还是人类组织投影」。
       - 需求三检（信号命中才做）：目标不明 / 影响大不可逆 / 含实现方案词汇。①XY ②前提 ③路径。字面明确低风险可逆直接做。行为契约（必须不变/改变/成立/歧义解读）写入 kix_discipline_spec 的 contract；有歧义先问。
       - 写码前：需要存在吗→仓库已有→标准库→平台原生→已装依赖→一行→最小可行。修根因。改事件/类型/平台/外部 API 时交付前三问：测试镜像真实链路吗（stub 藏 bug）；证据维度对吗（调用链≠语义）；关键 claim 独立验证过吗。
 
       ## 选择压（看菜单，不走仪式）
       - 属性路由：规模≥3文件 / 外部副作用 / 验证关键 / 目标不明 → 先 kix_capability_search 再动手。禁止类型→动作静态映射。
       - 成员档（lite/dev/qa/reviewer/cross/vision）经 kix_capability_search 可见、kix_capability_call 首用即挂；选谁按任务属性，职责不背本段。自己/dev 的 claim 必须独立观察者验证；协调留主线程。
-      - 卡住时 skill（how-to）与 experience（危机教训）。编曲/分派/审计先查 memories/orchestration-lessons.md。
-      - 执行形态：可由代码确定性完成的筛选/聚合/去重/分页/批处理、局部控制流和跨工具变换交给 run_code（JS/可擦除 TS）或更低成本的 bash/probe；语义判断（派谁/信谁/结论）留主线程；单步操作、需可回放证据的验证/观察与审批动作直呼 native。按任务形态与实测成本选择，不钦点默认工具。
+      - 盲抽样校准：对自判低风险并跳过独立观察的直做任务保留低频 fresh 抽样；有效反例触发重估风险分类，零 finding 仅弱证据、不自动降强度，finding 数量不计价。
+      - 卡住时 skill（how-to）与 experience（危机教训）；编曲/分派/审计先 experience(action=get, name=orchestration-lessons.md)。
+      - 执行载体先于拆步：按整段机械工作比较净收益，不得拆步后逐项默认 native。多结果裁剪/聚合、肥/未知中间值隔离、共享状态/控制流或跨工具变换→run_code，只返回决策所需结果；机械取数/计算的临时 JS/TS→run_code，不套 bash node -e/heredoc，bash 仅跑已有项目脚本或整段一个结果已可决策的操作。语义判断、原始证据、编辑、审批、外部副作用及逐步验证→native；复杂阶段→workflow。不设配额。
 
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
@@ -944,11 +945,11 @@
 - id: kix-probe
   name: ./plugins/kix-probe.js
 
-# settle: delivery-time steer (advisory, each path once per session).
-#   ① edits lack any post-edit execution evidence (L1/L4).
-#   ② high-confidence review verdict (LGTM/APPROVE/request-changes) with no
-#      independent observer this session (PR#33, 2026-08-21 — pull-memory
-#      is blind at commit time; independence is the lever, not injected text).
+# settle v5: delivery-time steer (advisory, each path once per session).
+#   ① any agent: source/test edits lack current-generation terminal evidence.
+#   ② root authority only: standalone high-confidence verdict with no fresh observer.
+#   ③ stable 1/16 sample: terminal-evidence 1–2-file root edits without fresh observer;
+#      counterexamples reclassify risk, zero findings never lower verification.
 - id: kix-settle
   name: ./plugins/kix-settle.js
 
