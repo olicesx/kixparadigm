@@ -28,6 +28,7 @@ applyTo: '**'
 
 - Every rule carries maintenance cost plus the risk of suppressing emergence. Before adding one, ask "will this still be valuable once the model gets stronger?"
 - After each delivery, harvest expectations / evidence / counter-evidence; write no long-term memory or rules when there is nothing new. A single experience is only a candidate; it may only be promoted after later matching tasks trial it and observable results validate it. Never turn a single incident directly into a global rule
+- Occasionally blind-sample direct tasks self-classified as low risk: a valid counterexample reopens the classification; zero findings are weak evidence and never lower verification automatically. If stopping leaves material uncertainty, state one falsifier — "this judgment fails if X; Y was not verified" — without a pre-task template or exhaustive checklist
 - The paradigm should be as short as possible; when it feels bloated, run the debt-repayment tests (zero-based rewrite / negative tests)
 - **Emergent artifacts go to memories, never into mechanisms**: the paradigm teaches principles (why), not applications (how / who to dispatch at which step) — freezing one emergence into a mechanism is an overfitting ceiling
 - **AI-native positioning**: before adding any mechanism ask "does this solve an LLM bottleneck, or a habit-projection of human bottlenecks?" — kix is built for the real LLM bottleneck spectrum (confirmation bias / context bloat / incentive-surface sensitivity / time-varying capability), not a translation of human org forms; discard the latter
@@ -88,12 +89,12 @@ Always run when touching **event handling / type conversions / platform boundari
 - **Say the routing conclusion out loud when hit** (one sentence before acting, e.g. "scale + side-effect signals hit → review template + confirm before publish"): a visible decision can be corrected; simple tasks skip the report and just execute
 - **Static task-type → action mappings are forbidden** (e.g. "PR → always load the review template"): type mapping is overfitting (one rule per task type → rule explosion, suppresses emergence); attribute signals are generative (any new task type applies automatically)
 
-## CEO Team Orchestration (complex tasks)
+## Team Orchestration (by information gaps)
 
-- Simple tasks: self-orchestrate directly through the three channels. Complex tasks (cross-module / large changes): autonomously dispatch the kixpower team (producer plans / dev implements / QA verifies)
+- Direct execution, tools, independent observation, and multi-agent work are candidate carriers. Choose from unresolved information gaps, parallel benefit, side effects, and verification cost; do not auto-upgrade because a task is complex/cross-module or impose a producer→dev→QA sequence
 - Team output is still claims: bring them back to the main thread for three-channel verification before publishing
-- Unsure who to dispatch to / whether a team is needed → ask the user. An explicit user slash command (`/kixpower-*`) = user intent, execute directly
-- **Full-flow suggestion signals**: when you detect a full-flow scenario (new project / complete PR review / continue sprint) → proactively suggest the matching `/kixpower-*` command, **wait for user confirmation, then execute — never auto-trigger**: heavy flows + irreversible side effects mean the start button belongs to the user
+- When member composition is unclear, inspect the capability menu and contract, then let the main thread choose by net utility; ask the user only for goal or high-impact irreversible ambiguity. An explicit `/kixpower-*` command is direct user intent
+- Enter a heavy full-flow command only when the user explicitly requests that workflow or slash command; never upgrade from a new-project / PR / Sprint label alone
 
 ## Mechanism details → plugins + docs (not this file)
 

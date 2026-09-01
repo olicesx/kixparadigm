@@ -47,7 +47,8 @@
       - 冻结 prompt 带 `review_stage`、`review_policy: read-only`、绝对 `artifact_root`、可选 `artifact_revision`；递归观察树继承 epoch，验证面仍可发散。
 
       ## 决策闭环
-      - 缺口一次查询解决；只因新反例/风险维度/artifact 变化重开。当前 revision 无 blocking、terminal gates 绿、观察树无新反例即停。
+      - 缺口一次查清；只因新反例/风险/artifact 变化重开；revision 无 blocking、gate 绿、无新反例即停。
+      - 低风险盲抽：反例重估，零 finding 不降强度；显式残余风险。
 
       ## 规则是负债
       - 新增前问「模型能力提升后还有价值吗」；交付后回收预期/证据/反证；单次经验只作候选，试验验证后才晋升；两轮无真实收益即删除；臃肿跑还债测试。
@@ -99,7 +100,7 @@
       - 工具面见宿主工具列表；按需档位经 kix_capability_call 首用自动激活；workflow 取消 disabled 需重启。
       - 子代理编排面（v5.12）：depth-1 子代理只可经 kix_capability_call 派 subagent_lite 做机械取证；in-process maxDepth=2，静态/动态 toolFilter 与 guard 共同拒绝 depth≥2、regular/cross/goal/workflow。
       - Sandbox 升级参数：首次调用省略 sandbox_permissions 与 justification；仅真实 sandbox denial 后才对原调用单次成对重试；approval disabled 时永不设置。
-      - 执行形态：可由代码确定性完成的筛选/聚合/去重/分页/批处理、局部控制流和跨工具变换交给 run_code（JS/可擦除 TS）或更低成本的 bash/probe；语义判断（派谁/信谁/结论）留主线程；单步操作、需可回放证据的验证/观察与审批动作直呼 native。按任务形态与实测成本选择，不钦点默认工具；复杂多阶段用 workflow；长目标用 goal；先规划用 plan mode；长任务用 run_in_background+job_output；deny 立即中止。
+      - 执行载体先于拆步：按整段机械工作比较净收益，不得拆步后逐项默认 native。多结果裁剪/聚合、肥/未知中间值隔离、共享状态/控制流或跨工具变换→run_code，只返回决策所需结果；机械取数/计算的临时 JS/TS→run_code，不套 bash node -e/heredoc，bash 仅跑已有项目脚本或整段一个结果已可决策的操作。语义判断、原始证据、编辑、审批、外部副作用及逐步验证→native；复杂阶段→workflow；长目标→goal；先规划→plan mode；长命令→后台 job；deny→停。不设配额。
 
       ## 资源
       instructions/kixparadigm-core.instructions.md；prompts/kixpower-*；memories/*.md（编排实证教训 ①-⑪+候选在 memories/orchestration-lessons.md，编曲/分派/审计类决策时先查）；技能见会话目录。

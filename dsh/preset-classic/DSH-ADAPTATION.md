@@ -69,7 +69,7 @@ autoApprove 全开 → 对应 DSH 权限预设（本部署 `danger-full-access`�
 - **Phase 1 裁剪**：`tools.restrict({ allow })` —— allow 只列**全局工具**（RESTRICT_ALLOW ~11 个：edit/write/pwsh/read/grep/glob/ask_user_question/todo_write/skill/web_search）；subagent 五档与 kix_capability_* 是 **scope 注册工具，自动可见，不列入 allow**（DSH restrict 契约：scope-local 名列入会 fail）。MCP（GitHub/Playwright/Context7/Semgrep）、workflow/goal/ralph/cordis_* 按需（job_* 2026-08-17 起常驻，见下）。`tools/change` 事件重试（MCP 可能晚于插件注册）。restrict 只影响模型可见面，scope 工具与门禁插件不受影响
 - **Phase 2 渐进披露**：`kix_capability_search`（用**全局视图** `schemas(undefined)` 列出被裁剪工具，返回分组元数据不含全 schema）+ `kix_capability_call`（`get(name, undefined)` 全局存在性检查 + 经 `ctx.tools.execute` 代理执行，走完整 pre-execute→guards→execute→post-execute 管线，门禁依然拦截；**传播 `rootCallId`**（嵌套执行树归属），带 agent 调用非 model-direct 不会被 UNKNOWN_TOOL 拒绝）
 - **感知设计（2026-08-16 修订）**：**不挂 pre-execute deny**——restrict 已保证被裁剪工具对模型不可见（直呼=UNKNOWN_TOOL 到不了 pre-execute），且 capability_call 内部子调用必须放行（否则代理永远失败）；引导由 call 返回与 persona 触发句承担
-- **Phase 3 PTC 协同**：保持 `tool-presentation mode: both`；kix 红线「验证/观察用 native 直呼（证据可回放）」不变；capability_call 亦可被 run_code SDK 子分派调用（子分派过门禁）
+- **Phase 3 PTC 协同**：保持 `tool-presentation mode: both`；kix 红线「原始输出即证据或需逐步观察时用 native 直呼（证据可回放）」不变；capability_call 亦可被 run_code SDK 子分派调用（子分派过门禁）
 - 配置：`enableRestrict: false` 关闭裁剪（仅保留 search/call）；`extraResidentTools` 追加常驻
 - 与 kix-guards 交互：capability_call/search 已入 KNOWN_SAFE_TOOLS 白名单（防未来正则误伤）；被代理工具的每次子调用仍过 kix-guards 门禁
 - **2026-08-17（决策 A+B，用户原则：简单机械不影响思考的工具常驻，有认知负担的工具机制化自动激活）**：job_*（job_output/job_list/job_kill）**常驻化**——后台任务随时可用（修 tool-jobs 曾 disabled 时 run_in_background 报 "background jobs unavailable: no job controller serves this agent" 的组成矛盾）；subagent 细分档位与 goal **首次使用自动激活**——capability_call 代理未挂载的可激活工具时自动 `ctx.plugin` 挂载并继续执行（激活由**机制**兜底，模型无需记住先 kix_tool_activate；下一轮起可直呼；kix_tool_activate 保留为显式预激活，kix_tool_deactivate 卸载）
@@ -242,16 +242,15 @@ Code Mode SDK（`run_code` + 生成式 `tools.*` TypeScript 绑定）并存，�
 | 维度 | `code`（纯 PTC） | `both`（已采用） |
 |---|---|---|
 | 工具直呼 | 只有 `run_code` 可直呼，其余在 pre-execute 前解析为 `UNKNOWN_TOOL` | native schema 照常可执行 |
-| 三通道"观察" | 中间值不可重建、仅 print/return 回流 → 验证证据链退化 | 验证/单步用 native，证据可回放、门禁逐条可见 |
+| 三通道"观察" | 中间值不可重建、仅 print/return 回流 → 验证证据链退化 | 原始输出即证据或需逐步观察时用 native，证据可回放、门禁逐条可见 |
 | 门禁 | SDK 子分派走完整管线（拦截有效），但模型直呼路径提前塌缩 | 两条路径都走完整管线 |
-| 适用面 | 只适合机械化执行器 | 模型自主：简单/验证→native，批量/多步→run_code |
+| 适用面 | 只适合机械化执行器 | 模型先按整段净收益选载体：派生结论/肥中间值→run_code，原始证据/副作用→native |
 
-**形态选择规则（persona 已内置，最小规则）**：
-- 用 `run_code`：机械多步序列（读→查→汇总）、批处理式改动（改 N 个文件）、
-  并发只读探测（`Promise.all`）、需 try/catch 容错的流程——一次程序省 N 轮往返。
-- 保持 native 直呼：单步操作、验证/观察动作（证据需可回放）、需审批的破坏性操作。
-- **红线**：`run_code` 中间值只存在于执行局部、每次运行状态全新、仅 print/return 回流——
-  需要证据链的动作（三通道"观察"）不得压进程序只吐摘要。
+**形态选择规则（persona 已内置，载体先于拆步）**：
+- 展开调用前，把下一段确定性工作作为整体，比较进入主上下文的字节与模型往返、共享状态/控制流/跨工具变换收益，对照程序构造、调度和可回放成本；不得先拆成简单步骤再逐项默认 native。
+- 用 `run_code`：多个结果只需裁剪/聚合后的派生结论、输出体积未知或肥中间值不是证据、需共享状态/局部控制流/跨工具变换；任务中新写的机械取数/计算 JS/TS 直接在此执行，不套 `bash node -e`/heredoc；只 print/return 决策所需结果。
+- 用 bash/probe/native：运行已有项目脚本、shell 原生 CLI，或整段一个无需另写程序且输出已决策就绪的操作；语义判断、编辑、审批、破坏性/发版等外部副作用、需逐步观察的验证保持 native。复杂多阶段用 workflow。
+- **红线**：原生 JS 副作用不经逐动作 guard，不得把破坏性/发版动作藏进 `run_code`；需要原始证据链的动作不得只吐摘要。不设调用配额。
 
 **配套改动**：
 - `plugins/kix-guards.js`：`run_code` 加入 `KNOWN_SAFE_TOOLS`（否则被"未知执行工具"

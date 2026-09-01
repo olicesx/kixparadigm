@@ -1,44 +1,41 @@
-// kix-settle — 结算信号（v4 terminal lifecycle + revision freshness，2026-08-24）
+// kix-settle — 结算信号（v5 settlement authority + blind calibration，2026-09-01）
 //
 // 出生证明：
 //   EXP1/2/3 的共同结构——报告可以正确而实现错位；每次我们让裁决变真
 //   （battery/盲审计/verify 脚本），缺陷几分钟内被抓；三轮在 prompt 里给
 //   反证「定价」零效果。结论：激励活在结算层，不活在劝说层。
-//   本插件只做一件事：交付时（agent/turn-stopping）按零结算框架单发
-//   advisory 提醒。不阻断、不规定验证方式。
+//   本插件只在交付时（agent/turn-stopping）单发 advisory；不阻断、不替模型
+//   判断风险，也不规定验证方式。
 //
-// 两条触发（互补，各自每会话单发）：
+// 三条触发（互斥，各自每会话单发）：
 //   ① 实现结算：源码/测试编辑跨 worktree 记账；只有当前 edit generation 的
 //      foreground exitCode=0 或 background job terminal success 才清账。spawn、
 //      running、nonzero、旧 revision job 都不算。后台仍运行时提示“该等未等”。
-//   ② 高置信提交：无编辑、无可复算执行证据、终稿像审查结论时，只有
-//      subagent/end=completed 且有 closing message 才算 fresh。工具启动和失败
-//      child 不记账；不再按 subagent_cross 工具名推断实际 provider，也不因
-//      同 provider 机械追加观察者。观察面扩展仍由 claim 风险和信息缺口决定。
+//   ② 高置信提交：仅根 settlement authority 生效。无编辑、无可复算执行证据、
+//      终稿前部存在独立 verdict 行时，只有 subagent/end=completed 且有 closing
+//      message 才算 fresh。evidence child 不递归结算自己的报告；元引用不算 verdict。
+//   ③ 低风险盲抽样：根会话当前 revision 有终态执行证据、改动面小且无 fresh
+//      observer 时稳定低频抽样；有效反例强更新风险分类，零 finding 只算弱证据。
 //
 // 退役条件：
 //   ① 实现结算：trace 数据显示采纳本提醒后未验证交付率趋零 → 通道已内化。
-//   ② 高置信提交：后续真实审查任务里独立观察者召回率趋近 4/4 fresh 覆盖，
-//      且误报（非结论姿态被提醒）> 真报 → 收紧启发式或删除本路。
+//   ② 高置信提交：真实审查里 fresh 召回稳定且误报 > 真报 → 收紧或删除本路。
+//   ③ 盲抽样：两轮匹配样本没有改变风险分类，或打断成本超过独有反例收益 → 删除。
 'use strict'
-const { randomUUID } = require('node:crypto')
+const { createHash, randomUUID } = require('node:crypto')
 const disciplineInternals = require('./kix-discipline.js').__internals
 
 const DIRECT_EXECUTION_TOOLS = new Set(['probe', 'run_code'])
 const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'killed'])
 const FAILED_JOB_STATUSES = new Set(['failed', 'killed'])
+const CALIBRATION_SAMPLE_DENOMINATOR = 16
+const MAX_VERDICT_SCAN_LINES = 12
 
-// 审查结论姿态：终稿在交付审查判定，不是过程叙述。
-// 刻意收窄——「看起来不错」「暂无问题」等软赞不触发（避免过程中途误报）。
+// 只接受终稿前部的独立结论行。全文关键词匹配会把规范讨论、正则引用和 evidence
+// child 的原始报告误判为裁决；本缺陷已在 2026-09-01 两次 fresh 观察中实弹触发。
 const VERDICT_RES = [
-  /\bLGTM\b/i,
-  /\bAPPROVE(?:D)?\b/,
-  /\brequest[- ]changes\b/i,
-  /\bCOMMENT\b/,
-  /可以合并/,
-  /建议合并/,
-  /不建议合并/,
-  /请求修改/,
+  /^(?:(?:✅|🔴|🟡)\s*)?(?:LGTM|APPROVE(?:D)?|REQUEST[- ]CHANGES|CHANGES[- ]REQUESTED)(?:\s*(?:[-—:：|·]\s*).*)?$/i,
+  /^(?:(?:✅|🔴|🟡)\s*)?(?:可以合并|建议合并|不建议合并|请求修改)(?:\s*(?:[-—:：|·]\s*).*)?$/,
 ]
 
 function makeUserMessage(text) {
@@ -53,7 +50,7 @@ function makeUserMessage(text) {
 function settleText(n) {
   return 'kix-settle: 本会话有 ' + n + ' 处源码/测试编辑，最后一次编辑后没有成功终态的验证命令。' +
     '后台启动、仍运行 job、失败 child 和工具 spawn 都不算执行证据；交付时只按可重放的 terminal 结果计价。' +
-    '若环境限制确实无法执行，请在交付说明中显式声明未验证点及其影响。'
+    '若环境限制确实无法执行，只在存在实质残余不确定性时用一句「本判断在 X 成立时失效；未验证 Y」说明，不补事前模板或完整清单。'
 }
 
 function pendingVerificationText(n) {
@@ -62,10 +59,15 @@ function pendingVerificationText(n) {
 }
 
 function commitBlindText() {
-  return 'kix-settle: 本回合终稿像审查结论（LGTM / APPROVE / request-changes / 可以合并），' +
-    '但本会话未派过任何成功的 fresh 观察者。拉取式记忆对高置信提交时刻失明——自信时不会去查库。' +
-    '独立性是验证杠杆：fresh 评审人（无先验结论）覆盖缺陷空间，原审者复审自己最差。' +
-    '消费对抗 finding 时复核严重度（对抗侧易过升，承诺侧易偏松）。已派过则忽略。'
+  return 'kix-settle: 根会话终稿包含独立审查结论行，但本会话没有成功的 fresh 观察者。' +
+    '拉取式记忆对高置信提交时刻失明；fresh 评审人（无先验结论）覆盖缺陷空间，原审者复审自己最差。' +
+    '消费对抗 finding 时复核严重度（对抗侧易过升，承诺侧易偏松）；APPROVE 不是票，失败 child 是零证据。'
+}
+
+function calibrationText(n) {
+  return 'kix-settle: 本会话当前 revision 已有成功终态执行证据，仅触及 ' + n + ' 个源码/测试文件且没有 fresh 观察者，命中低频盲抽样。' +
+    '把它只当风险分类校准：让无先验观察者寻找一个能翻转完成判断的可达反例；找到反例就重估“低风险”分类，' +
+    '未找到仅是弱证据，不自动降低后续验证强度；finding 数量不计价。'
 }
 
 function lastAssistantText(surface) {
@@ -85,9 +87,48 @@ function lastAssistantText(surface) {
 }
 
 function looksLikeVerdict(text) {
-  const t = String(text || '')
-  if (!t) return false
-  return VERDICT_RES.some((re) => re.test(t))
+  const lines = String(text || '').split(/\r?\n/)
+  let fenced = false
+  let visible = 0
+  for (const raw of lines) {
+    if (/^\s*```/.test(raw)) {
+      fenced = !fenced
+      continue
+    }
+    if (fenced) continue
+    let line = raw.trim()
+    if (!line) continue
+    visible += 1
+    if (visible > MAX_VERDICT_SCAN_LINES) return false
+    line = line
+      .replace(/^#{1,6}\s+/, '')
+      .replace(/^>\s*/, '')
+      .replace(/^[-*+]\s+/, '')
+      .replace(/\*\*/g, '')
+      .trim()
+    line = line.replace(/^(?:review|verdict|decision|结论|审查结论)\s*[:：]\s*/i, '')
+    if (VERDICT_RES.some((re) => re.test(line))) return true
+  }
+  return false
+}
+
+function settlementAuthority(agent) {
+  // DSH stamps live and persisted child lineage independently. Unknown/legacy agents stay root
+  // authority so a missing optional header cannot silently disable settlement for main sessions.
+  const depth = Number(agent && agent.options && agent.options.subagentDepth)
+  if (Number.isFinite(depth) && depth >= 1) return false
+  const header = agent && agent.session && agent.session.header
+  if (!header) return true
+  if (header.parentSession || header.origin === 'subagent') return false
+  const delegationDepth = Number(header.delegationDepth)
+  return !(Number.isFinite(delegationDepth) && delegationDepth >= 1)
+}
+
+function stableCalibrationSample(sessionId, denominator = CALIBRATION_SAMPLE_DENOMINATOR) {
+  const d = Number(denominator)
+  if (!sessionId || !Number.isInteger(d) || d < 1) return false
+  const bucket = createHash('sha256').update(String(sessionId)).digest().readUInt32BE(0)
+  return bucket % d === 0
 }
 
 function resultValue(result) {
@@ -122,8 +163,15 @@ function terminalJobOutcome(result) {
 function directExecutionSucceeded(tool, result) {
   if (!DIRECT_EXECUTION_TOOLS.has(tool) || !result || result.isError === true) return false
   const value = resultValue(result)
-  if (value && typeof value.exitCode === 'number') return value.exitCode === 0
-  return true
+  if (value && typeof value === 'object') {
+    if (value.error || value.ok === false || value.success === false) return false
+    if (value.timedOut === true || value.timed_out === true || value.aborted === true) return false
+    const exitCode = typeof value.exitCode === 'number' ? value.exitCode : value.exit_code
+    if (typeof exitCode === 'number' || exitCode === null) return exitCode === 0
+  }
+  // run_code may legitimately return structured data without an exit code. probe always owns
+  // exit_code; an unknown probe shape must not clear the verification account.
+  return tool === 'run_code'
 }
 
 function assistantMessageText(message) {
@@ -167,6 +215,8 @@ module.exports = {
           reminded: false,
           freshObserverSeen: false,
           commitBlindReminded: false,
+          calibrationReminded: false,
+          mutationPaths: new Set(),
           pendingVerificationJobs: new Map(),
         })
       }
@@ -215,6 +265,7 @@ module.exports = {
               st.edits += 1
               st.editGeneration += 1
               st.executedSinceLastEdit = false
+              st.mutationPaths.add(fp)
             }
           } else if (directExecutionSucceeded(name, result)) {
             recordExecution(st)
@@ -238,32 +289,36 @@ module.exports = {
       return typeof next === 'function' ? next() : result
     })
 
-    // ── 交付结算：回合收尾时投递按零结算 steer（2026-08-20 补齐；v2 2026-08-21）
-    // 出生证明补遗：初版（2026-08-19）只实现了 post-execute 状态记账，注释声称的
-    // "交付时（agent/turn-stopping）单发一条 steer 提醒" 从未落地——makeUserMessage/
-    // settleText 定义后零调用，reminded 字段预留未读。v1.3.2 补齐投递端。
-    // v2：PR#33 实证——审查 LGTM 无工作区编辑，v1 条件打不中；拉取式记忆对
-    // 高置信提交时刻失明。v3 按 fresh / vendor-independent 两级布尔证据位结算；
-    // 布尔位同时吸收 capability proxy 内外层重复 post 事件。readSurface 失败静默跳过。
+    // ── 交付结算：实现证据对所有 agent 生效；终局独立性只在根 authority 结算。
+    // v5 运行态反例：evidence child 因引用 verdict 词表被再次 steer，父线程只能看到
+    // 增量自检而丢失原始报告。root-only + 独立结论行同时修复递归和元引用误报。
     ctx.on('agent/turn-stopping', async (payload) => {
       try {
         const agent = payload && payload.agent
         if (!agent) return
         const st = stateFor(agent)
         if (!st) return
+        const authority = settlementAuthority(agent)
+        const sessionId = agent && agent.session && agent.session.id
         // ① 实现结算：后台验证尚在运行时明确“该等未等”；无 pending 且无成功
-        // terminal 验证时按零结算。两者共用一次提醒槽，避免回合收尾反复 steer。
+        // terminal 验证时按零结算。它覆盖 child，因为 evidence producer 也可能改源码。
         if (st.edits > 0 && !st.executedSinceLastEdit && !st.reminded) {
           st.reminded = true
           const currentJobPending = [...st.pendingVerificationJobs.values()].some((generation) => generation === st.editGeneration)
           const notice = currentJobPending ? pendingVerificationText(st.edits) : settleText(st.edits)
           agent.steer(makeUserMessage(notice))
         }
-        // ② 高置信提交：没有编辑、没有成功 fresh observer，也没有可复算物证时才提醒。
-        // 同 provider/cross 工具名不再作为机械门槛；模型可按风险自由扩展观察面。
-        if (st.edits === 0 && !st.freshObserverSeen && st.execs === 0 && !st.commitBlindReminded) {
+        // ② 小改动面盲抽样：稳定散列使样本可重放，不把随机波动当行为证据。
+        // 已被实现结算提醒过的会话不连续加压；零 finding 不会自动调整路由。
+        if (authority && st.edits > 0 && st.executedSinceLastEdit && !st.reminded &&
+            !st.freshObserverSeen && !st.calibrationReminded && st.mutationPaths.size > 0 &&
+            st.mutationPaths.size <= 2 && stableCalibrationSample(sessionId)) {
+          st.calibrationReminded = true
+          agent.steer(makeUserMessage(calibrationText(st.mutationPaths.size)))
+        }
+        // ③ 高置信提交：仅根 authority；没有编辑、fresh observer 或可复算物证时提醒。
+        if (authority && st.edits === 0 && !st.freshObserverSeen && st.execs === 0 && !st.commitBlindReminded) {
           const sessionQuery = ctx.get && ctx.get('sessionQuery')
-          const sessionId = agent && agent.session && agent.session.id
           if (sessionQuery && sessionId) {
             try {
               const surface = await sessionQuery.readSurface(sessionId)
@@ -282,6 +337,8 @@ module.exports = {
 
 module.exports.__internals = {
   looksLikeVerdict,
+  settlementAuthority,
+  stableCalibrationSample,
   lastAssistantText,
   resultValue,
   foregroundExecutionSucceeded,
@@ -293,7 +350,9 @@ module.exports.__internals = {
   settleText,
   pendingVerificationText,
   commitBlindText,
+  calibrationText,
   VERDICT_RES,
   DIRECT_EXECUTION_TOOLS,
   TERMINAL_JOB_STATUSES,
+  CALIBRATION_SAMPLE_DENOMINATOR,
 }

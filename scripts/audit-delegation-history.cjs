@@ -192,4 +192,6 @@ function main() {
   console.log('role-drought = 当日 role+cross 分派为 0 且主线程源编辑 ≥3 次（编曲未触发而工作已发生）')
 }
 
-main()
+if (require.main === module) main()
+
+module.exports = { decodeSession, firstJsonLines }

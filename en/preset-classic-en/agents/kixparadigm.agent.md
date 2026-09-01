@@ -1,6 +1,6 @@
 ---
 name: kixparadigm
-description: "kixParadigm — AI self-orchestration minimal paradigm main entry. Suitable for all programming tasks (PR/code review, cross-module or multi-file changes, bug fixes, refactoring, architecture design/tech-selection discussions, task planning and decomposition, multi-task parallel orchestration). Three-Channel Cross-Validation (execute/observe/synthesize) + mechanical safety guards + AI blind-spot compensation + Triple Requirement Check (no sycophancy, constructive pushback). Complex tasks automatically escalate to CEO team orchestration (kixpower). Use when the user needs review, implementation, fixes, planning, architecture discussion, or code-correctness verification."
+description: "kixParadigm — AI self-orchestration minimal-paradigm entry. Uses task scale, risk, side effects, and verification gaps to choose direct execution, tools, independent observation, or multi-agent work. Requirement triage, evidence settlement, and mechanical safety guards cover blind spots without fixed role sequences or automatic workflow escalation. Use for implementation, fixes, review, refactoring, architecture, planning, and verification."
 user-invocable: true
 disable-model-invocation: true
 # Omitted tools = all tools available; simple tasks must still pass the blast-radius mechanical guards

@@ -1,11 +1,11 @@
-// kix-settle 回归测试（terminal lifecycle + revision freshness，2026-08-24）
+// kix-settle 回归测试（settlement authority + blind calibration，2026-09-01）
 //
 // 覆盖：
 //   - 源码/测试编辑跨 worktree 记账；文档/运行产物不触发实现结算
-//   - bash/Go foreground 只按 exitCode=0 的 terminal 结果记账
-//   - background job 启动/运行不算证据；同 edit generation 的 completed 才清账
-//   - subagent spawn 不算 fresh；subagent/end=completed 且有 closing message 才算
-//   - 不以工具名推断 provider 独立性，不因已有成功 fresh observer 机械追加观察
+//   - foreground/background terminal success 与 edit generation 新鲜度
+//   - subagent/end=completed + closing message 才算 fresh
+//   - commit-blind 仅根 authority 生效；元引用不算独立 verdict 行
+//   - 已验证小改动面稳定低频抽样；反例强更新、零 finding 弱更新文案
 'use strict'
 
 const assert = require('node:assert')
@@ -43,12 +43,29 @@ const subagentEnd = listeners['subagent/end'][0]
 const sessionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kix-settle-session-'))
 const steered = []
 
-function mkAgent(id) {
+function mkAgent(id, overrides = {}) {
   return {
     id,
-    session: { id: 'session-' + id, header: { cwd: sessionRoot } },
+    options: overrides.options || {},
+    session: { id: 'session-' + id, header: { cwd: sessionRoot, ...(overrides.header || {}) } },
     steer(msg) { steered.push(msg) },
   }
+}
+
+function sampledAgent(label = 'calibration') {
+  for (let i = 0; i < 10_000; i++) {
+    const agent = mkAgent(label + '-' + i)
+    if (I.stableCalibrationSample(agent.session.id)) return agent
+  }
+  throw new Error('unable to find deterministic calibration sample')
+}
+
+function unsampledAgent(label = 'ordinary') {
+  for (let i = 0; i < 10_000; i++) {
+    const agent = mkAgent(label + '-' + i)
+    if (!I.stableCalibrationSample(agent.session.id)) return agent
+  }
+  throw new Error('unable to find deterministic non-sample')
 }
 
 function emitSubagentEnd(parent, info) {
@@ -125,6 +142,34 @@ await ok('subagent 仅 completed + closing message 成功', () =>
   I.subagentCompleted({ stopReason: 'completed', lastAssistantMessage: [{ type: 'text', text: 'evidence' }] }) &&
   !I.subagentCompleted({ stopReason: 'max-tokens', lastAssistantMessage: [{ type: 'text', text: 'partial' }] }) &&
   !I.subagentCompleted({ stopReason: 'completed', lastAssistantMessage: undefined }))
+await ok('settlement authority 只接受根会话', () =>
+  I.settlementAuthority(mkAgent('root')) &&
+  I.settlementAuthority({ options: {} }) &&
+  !I.settlementAuthority(mkAgent('depth-child', { options: { subagentDepth: 1 } })) &&
+  !I.settlementAuthority(mkAgent('parent-child', { header: { parentSession: 'root' } })) &&
+  !I.settlementAuthority(mkAgent('origin-child', { header: { origin: 'subagent' } })) &&
+  !I.settlementAuthority(mkAgent('delegated-child', { header: { delegationDepth: 2 } })))
+await ok('verdict 只认前部独立结论行，不认元引用或代码块', () =>
+  I.looksLikeVerdict('Review summary\n\n**✅ APPROVE — 0 blocking**') &&
+  I.looksLikeVerdict('结论：可以合并：0 blocking') &&
+  I.looksLikeVerdict('🔴 CHANGES REQUESTED - 2 major') &&
+  !I.looksLikeVerdict('The regex /APPROVE/ is discussed here, not issued as a verdict.') &&
+  !I.looksLikeVerdict('APPROVE 不是新增证据') &&
+  !I.looksLikeVerdict('## COMMENT') &&
+  !I.looksLikeVerdict('```text\nAPPROVE\n```'))
+await ok('probe 读取真实 snake_case 结果，run_code 允许无 exit code', () =>
+  I.directExecutionSucceeded('probe', { isError: false, value: { ok: true, exit_code: 0 } }) &&
+  !I.directExecutionSucceeded('probe', { isError: false, value: { ok: true, exit_code: 2 } }) &&
+  !I.directExecutionSucceeded('probe', { isError: false, value: { ok: true, timed_out: true, exit_code: null } }) &&
+  !I.directExecutionSucceeded('probe', { isError: false, value: { ok: true } }) &&
+  I.directExecutionSucceeded('run_code', { isError: false, value: { answer: 42 } }))
+await ok('盲抽样按 session id 稳定且参数非法时关闭', () => {
+  const sampled = sampledAgent('stable')
+  return I.stableCalibrationSample(sampled.session.id) &&
+    I.stableCalibrationSample(sampled.session.id) &&
+    !I.stableCalibrationSample('', 16) &&
+    !I.stableCalibrationSample(sampled.session.id, 0)
+})
 
 section('cross-worktree edit and foreground verification')
 await ok('workspace 外源码编辑仍记账', async () => {
@@ -180,17 +225,23 @@ await ok('普通 git status 不清账', async () => {
   await stop(agent)
   return steered.length === 1
 })
-await ok('probe exit0 清账，exit1 不清账', async () => {
+await ok('probe exit_code=0 清账，非零与 timeout 不清账', async () => {
   const green = mkAgent('probe-green')
   steered.length = 0
   await sourceEdit(green)
-  await post(green, 'probe', { code: 'print(1)' }, { exitCode: 0 })
+  await post(green, 'probe', { code: 'print(1)' }, { ok: true, exit_code: 0 })
   await stop(green)
   if (steered.length !== 0) return false
   const red = mkAgent('probe-red')
   await sourceEdit(red)
-  await post(red, 'probe', { code: 'raise Exception()' }, { exitCode: 1 })
+  await post(red, 'probe', { code: 'raise Exception()' }, { ok: true, exit_code: 1 })
   await stop(red)
+  if (steered.length !== 1) return false
+  steered.length = 0
+  const timeout = mkAgent('probe-timeout')
+  await sourceEdit(timeout)
+  await post(timeout, 'probe', { code: 'while True: pass' }, { ok: true, timed_out: true, exit_code: null })
+  await stop(timeout)
   return steered.length === 1
 })
 
@@ -233,13 +284,59 @@ await ok('旧 revision job 成功不能清掉新编辑', async () => {
   return steered.length === 1 && steered[0].content[0].text.includes('没有成功终态')
 })
 
+section('settlement authority and blind calibration')
+await ok('evidence child 的 verdict 不递归触发 commit-blind', async () => {
+  const child = mkAgent('evidence-child', { options: { subagentDepth: 1 }, header: { parentSession: 'root' } })
+  steered.length = 0
+  await stop(child, 'APPROVE')
+  return steered.length === 0
+})
+await ok('evidence child 编辑后无验证仍触发实现结算', async () => {
+  const child = mkAgent('editing-child', { options: { subagentDepth: 1 }, header: { parentSession: 'root' } })
+  steered.length = 0
+  await sourceEdit(child)
+  await stop(child, 'APPROVE')
+  return steered.length === 1 && steered[0].content[0].text.includes('源码/测试编辑')
+})
+await ok('root 元引用 verdict 词不误触发', async () => {
+  const agent = mkAgent('root-meta-quote')
+  steered.length = 0
+  await stop(agent, 'The regex /APPROVE/ and the phrase 可以合并 are examples, not a verdict.')
+  return steered.length === 0
+})
+await ok('命中样本的已验证小改动面触发一次盲抽样', async () => {
+  const agent = sampledAgent('sampled-green')
+  steered.length = 0
+  await sourceEdit(agent)
+  await post(agent, 'probe', { code: 'print(1)' }, { exitCode: 0 })
+  await stop(agent)
+  await stop(agent)
+  const text = steered[0] && steered[0].content[0].text
+  return steered.length === 1 && text.includes('低频盲抽样') &&
+    text.includes('未找到仅是弱证据') && text.includes('finding 数量不计价')
+})
+await ok('未命中样本或已有 fresh observer 不追加盲抽样', async () => {
+  const ordinary = unsampledAgent('unsampled-green')
+  steered.length = 0
+  await sourceEdit(ordinary)
+  await post(ordinary, 'probe', { code: 'print(1)' }, { exitCode: 0 })
+  await stop(ordinary)
+  if (steered.length !== 0) return false
+  const observed = sampledAgent('sampled-observed')
+  await sourceEdit(observed)
+  await post(observed, 'probe', { code: 'print(1)' }, { exitCode: 0 })
+  emitSubagentEnd(observed, { id: 'sample-observer', stopReason: 'completed', lastAssistantMessage: [{ type: 'text', text: 'evidence' }] })
+  await stop(observed)
+  return steered.length === 0
+})
+
 section('observer terminal accounting and stopping pressure')
 await ok('subagent spawn 成功但未 end → 不算 fresh', async () => {
   const agent = mkAgent('spawn-only')
   steered.length = 0
   await post(agent, 'subagent_cross', { prompt: 'review' }, { kind: 'continuable', subagentId: 'child-spawn' })
   await stop(agent, 'APPROVE')
-  return steered.length === 1 && steered[0].content[0].text.includes('未派过任何成功')
+  return steered.length === 1 && steered[0].content[0].text.includes('没有成功的 fresh 观察者')
 })
 await ok('失败/无 closing message child 不算 fresh', async () => {
   const failedAgent = mkAgent('child-failed')
