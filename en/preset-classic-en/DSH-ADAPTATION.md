@@ -91,8 +91,8 @@ Without these, `subagent_cross` / `subagent_vision` cannot route. The installer 
 
 ## §6 PTC / Code Mode (both enabled — red lines)
 
-- `run_code` is for mechanical multi-step / batch / concurrent read-only probes; **verification and observation stay native** (evidence must be replayable, gates visible one by one).
-- Red lines: verification evidence must be re-run natively or handed to an independent observer; the program must print all context later steps need (including denied sub-dispatches and reasons); on denial, stop immediately — never silently swallow a denial; intermediate values do not flow back.
+- Choose the carrier before splitting steps and assess each deterministic segment as a whole. Use `run_code` when multiple results need only a derived answer, bulky or unknown-size intermediates should stay out of context, shared state/control flow/cross-tool transforms matter, or the task needs new ad-hoc JS/TS computation; never wrap that program in `bash node -e`/heredocs. Bash may run existing project scripts, shell-native CLIs, or one self-contained operation whose output is decision-ready. Keep judgment, edits, approvals, external side effects, and stepwise verification native. Use workflow for complex stages; never route by tool quotas.
+- Red lines: native JS side effects are not audited action by action, so destructive/release actions must not be hidden in `run_code`; evidence that must remain replayable stays native. Print every decision-relevant result, denied sub-dispatch, and reason; stop on denial; intermediate values do not flow back.
 
 ## §7 Known translation scope
 

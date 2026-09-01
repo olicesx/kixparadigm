@@ -59,7 +59,7 @@ kixparadigm/                      ← 本 preset
 
 1. 在 GUI 选择此 preset 开新会话（kixparadigm 模式）。
 2. 认知层自动生效；机制细节按需加载 `kixparadigm` / `kixpower` 技能。
-3. 复杂任务（跨模块/大改动）自动升级 CEO 团队编排：producer 规划 / dev 实现 / qa 验证。
+3. 模型按任务规模、风险、副作用和验证缺口选择直接执行、工具、独立观察或团队；不会仅因跨模块/大改动自动升级固定角色流程。
 4. 说 `/kixpower-new` / `/kixpower-import` / `/kixpower-continue` / `/kixpower-review` 或对应自然语言意图 → 模型读取 `prompts/` 对应流程执行。
 5. 发布/合并/破坏性操作前会经 `ask_user_question` 请你确认。
 
