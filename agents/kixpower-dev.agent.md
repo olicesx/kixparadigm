@@ -13,6 +13,9 @@ hooks:
     - type: command
       command: 'pwsh -NoProfile -File "{{COPILOT_HOME}}/skills/kixpower/hooks/blast-radius-check.ps1"'
       timeout: 10
+    - type: command
+      command: 'pwsh -NoProfile -File "{{COPILOT_HOME}}/skills/kixpower/hooks/pre-commit-lint-check.ps1"'
+      timeout: 30
   PostToolUse:
     - type: command
       command: 'pwsh -NoProfile -File "{{COPILOT_HOME}}/skills/kixpower/hooks/auto-update-progress.ps1"'
@@ -74,7 +77,7 @@ cd frontend && npm run lint            # ESLint
 
 **禁止**：把 deterministic gates 推给 QA。QA 只做 LLM playthrough + ci_gate（docker-required）。
 **禁止**：用 LLM-as-judge 替代 deterministic check。
-**禁止**：跳过 fmt/clippy 直接 commit（blast-radius hook 不拦 lint，但 L2 会捕获并要求 retry）。
+**禁止**：跳过 fmt/clippy 直接 commit（pre-commit-lint-check hook 拦 fmt 失败；clippy/eslint 由 DSH kix-discipline 按本回合是否跑过对应命令提醒，L2 仍捕获漏网）。
 
 ### Runtime Context 收集规则
 

@@ -49,9 +49,9 @@ function baseEvents(extra = []) {
 test('resident pressure registry covers every active pressure', () => {
   const report = validatePressureRegistry(ROOT)
   assert.deepEqual(report.failures, [])
-  assert.equal(report.bullets.length, 10)
-  assert.equal(report.registry.length, 10)
-  assert.equal(new Set(PRESSURE_REGISTRY.map((entry) => entry.id)).size, 10)
+  assert.equal(report.bullets.length, 11)
+  assert.equal(report.registry.length, 11)
+  assert.equal(new Set(PRESSURE_REGISTRY.map((entry) => entry.id)).size, 11)
 })
 
 test('pressure extraction ignores ordinary prose and other headings', () => {

@@ -813,11 +813,24 @@ const SLEEP_WAIT_REMIND =
   'kix-orchestration: 检测到用 sleep 等待后台子代理。DSH 的结算/报告投递会无条件唤醒父级（收回合后自动开新回合，无丢失风险）；请改为：独立工作做完仍缺结果 → 简短状态后结束回合，等 subagent-settled/subagent-report 唤醒继续。sleep 只用于测试与超时语义（退避/等锁）。'
 
 /** sleep 等待子代理判定（纯函数，测试经 __internals 验证）。平台无关：
- *  双命令形态恒测（bash sleep / pwsh Start-Sleep），不依赖工具名。 */
-function isSleepWaitForSubagent({ command, description }) {
+ *  双命令形态恒测（bash sleep / pwsh Start-Sleep），不依赖工具名。
+ *  v12（2026-09-03，出生证明：同会话 3 发 sleep 45/90/120 轮询等待后台
+ *  reviewer，描述写 "wait for reviewer" 不含 subagent/子代理，措辞 AND 门
+ *  穿透）：判据从「措辞」改为「措辞 OR 状态」——inflightBackgroundDispatches
+ *  > 0（本 agent 有未结算的后台 subagent 分派）时命令命中即提醒。语义：无在飞
+ *  分派时 sleep 合法（测试/退避/等锁）；有在飞分派时 sleep 几乎必是等待形态。
+ *  零误报不升（原 desc 路径保留为高置信通道），漏报显著降（同义词/空描述不再
+ *  穿透）。前台分派（run_in_background:false）不计数；前台子代理 end 会误减
+ *  → 计数钳 0 下限，代价仅假阴性（漏报），无假阳性。 */
+function isSleepWaitForSubagent({ command, description, inflightBackgroundDispatches }) {
   const cmd = typeof command === 'string' ? command : ''
   const desc = typeof description === 'string' ? description : ''
-  return (SLEEP_WAIT_CMD.test(cmd) || PWSH_SLEEP_WAIT_CMD.test(cmd)) && SLEEP_WAIT_DESC.test(desc)
+  const inflight =
+    typeof inflightBackgroundDispatches === 'number' && Number.isFinite(inflightBackgroundDispatches)
+      ? inflightBackgroundDispatches
+      : 0
+  const cmdHit = SLEEP_WAIT_CMD.test(cmd) || PWSH_SLEEP_WAIT_CMD.test(cmd)
+  return cmdHit && (SLEEP_WAIT_DESC.test(desc) || inflight > 0)
 }
 
 // plan.md 契约轻量校验（v11，P5；边界注释「task_dag / verifiable_gates 结构
@@ -889,6 +902,7 @@ module.exports = {
           sleepReminded: false,
           planReminded: false,
           pendingPlanRemind: null,
+          inflightBg: 0,
           workspaceRoot,
           reviewEpochIds: new Set(),
           pendingReviewEpochs: [],
@@ -1104,7 +1118,7 @@ module.exports = {
           const args = exec && (exec.arguments ?? exec.args)
           const cmd = args && typeof args.command === 'string' ? args.command : ''
           const desc = args && typeof args.description === 'string' ? args.description : ''
-          if (cmd && isSleepWaitForSubagent({ command: cmd, description: desc })) {
+          if (cmd && isSleepWaitForSubagent({ command: cmd, description: desc, inflightBackgroundDispatches: st.inflightBg })) {
             st.pendingSleepRemind = { callId: exec.callId }
           }
         }
@@ -1149,6 +1163,14 @@ module.exports = {
       // DSH subagent 工具的 prompt 在 args.prompt（SubagentStartRequest 契约）
       const prompt = args && (args.prompt || args.content)
       if (typeof prompt !== 'string' || prompt.length === 0) return reviewAwareNext()
+
+      // v12（2026-09-03）：后台分派在飞计数——sleep 状态门的数据源（见
+      // isSleepWaitForSubagent v12 注释）。前台分派（run_in_background 显式
+      // false）不计；subagent/end 统一减一，前台分派的 end 会多减 → 0 下限
+      // 钳制，代价仅假阴性（漏一次提醒），无假阳性。分派发起即 +1：即便
+      // dispatch 随后抛错（无 end 事件配对），泄漏方向的后果也只是会话内
+      // 多一次 remindOnce 提醒（advisory，不拦），可接受。
+      if (args && args.run_in_background !== false) st.inflightBg = (st.inflightBg || 0) + 1
 
       const workspaceRoot = lib.resolveWorkspaceRoot(agent, sandboxPolicy) || st.workspaceRoot
       const result = checkHandoff({ prompt, workspaceRoot })
@@ -1288,6 +1310,10 @@ module.exports = {
         const agent = parent || (info && info.agent) || undefined
         if (!agent) return
         const st = stateFor(agent)
+        // v12：后台分派在飞计数递减（配对 pre-execute 的 inflightBg++；见
+        // isSleepWaitForSubagent v12 注释——前台分派的 end 也会走到这里，
+        // 0 下限钳制把误差方向锁死为假阴性）。
+        if (st.inflightBg > 0) st.inflightBg--
         if (!st.enabled || st.returnReminded) return
         const text = lastAssistantText(info && info.lastAssistantMessage)
         if (!text) return

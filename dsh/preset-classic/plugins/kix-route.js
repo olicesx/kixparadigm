@@ -14,10 +14,11 @@
 //     model 哨兵时，resolved.provider = 父模型厂商，正好作为取反输入。
 //   - read_image 路线门禁读 session.requestHeader()?.config（waterfall 之后
 //     的真实路由）→ vision 哨兵改写后门禁看到的是真实视觉模型 ✓。
-//   - `agent/request-error` prepend 监听 child 首轮首步 QUOTA/HTTP 402：在
-//     dsh-llm-retry 前熔断 provider、阻止旧 child 自动 retry，并把该 child 记为
-//     零证据；不命令补票式重派。HTTP 402/余额不足进程内硬熔断，其他 QUOTA
-//     保留 TTL 半开；只有该视角仍是未解决信息缺口时才由协调线程另派健康 child。
+//   - `agent/request-error` prepend 监听 child 首轮首步 provider 可用性失败：在
+//     dsh-llm-retry 前熔断失败 provider。cross child 默认最多原地 failover 2 次
+//     （同一 child 下一请求重过 agent/request，依次换健康异厂商）；达到上限或
+//     无备用才按零证据终止并通知父线程。非 cross 保留原终止行为。HTTP 402 /
+//     AUTH 进程内硬熔断；QUOTA/RATE_LIMIT/SERVER/TIMEOUT/TRANSPORT 保留 TTL 半开。
 //
 // 档位解析（候选全部来自 llm.listProviders()/listModels() 实时目录）：
 //   - cross：父厂商取反（zhipu→deepseek 系 / deepseek→zai 系 / 其他厂商
@@ -76,13 +77,21 @@ function vendorOf(provider) {
 }
 
 // 跨厂商取反的 provider 偏好顺序（按父厂商）；数组外的是通用兜底顺序。
+// 2026-09-03 出生证明：父=grok 走 GENERIC_CROSS_ORDER，首选未付费
+// deepseek-official → 402；熔断文案不点名健康下一跳，协调线程停在「勿补票」。
+// grok/xai 显式取反到 zai-coding-cn（已注册才进 head）。死亡条件：父=grok 且
+// zai 已注册时首选 zai；zai 熔断则落到其他异厂商；未知父厂商 generic 序不变。
 const CROSS_PROVIDER_ORDER = {
   zhipu: ['deepseek-official'],
   deepseek: ['zai-coding-cn'],
+  grok: ['zai-coding-cn'],
+  xai: ['zai-coding-cn'],
 }
 const GENERIC_CROSS_ORDER = ['deepseek-official', 'zai-coding-cn']
 const FALLBACK_PROVIDER_ORDER = ['su2api', 'zai-coding-cn', 'deepseek-official']
 const DEFAULT_PROVIDER_CIRCUIT_TTL_MS = 5 * 60 * 1000
+const DEFAULT_CROSS_PROVIDER_FAILOVERS = 2
+const PROVIDER_AVAILABILITY_CODES = new Set(['QUOTA', 'AUTH', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT', 'NO_ADAPTER'])
 
 // 各 provider 内部模型偏好（新的在前）；目录里不在表中的模型排在表后（目录序）。
 const MODEL_PREFERENCE = {
@@ -132,9 +141,38 @@ function quotaFailureOf(error) {
   return undefined
 }
 
+function availabilityFailureOf(error) {
+  const queue = [error]
+  const seen = new Set()
+  while (queue.length > 0) {
+    const value = queue.shift()
+    if (!value || (typeof value !== 'object' && typeof value !== 'function') || seen.has(value)) continue
+    seen.add(value)
+    const code = typeof value.code === 'string' ? value.code.toUpperCase() : ''
+    const status = typeof value.status === 'number' ? value.status : Number(value.status)
+    const statusUnavailable = status === 401 || status === 402 || status === 403 || status === 408 || status === 429 || status >= 500
+    if (PROVIDER_AVAILABILITY_CODES.has(code) || statusUnavailable) {
+      return {
+        code: code || (status === 402 ? 'QUOTA' : status === 401 || status === 403 ? 'AUTH' : status === 429 ? 'RATE_LIMIT' : status >= 500 ? 'SERVER' : 'TRANSPORT'),
+        status: Number.isFinite(status) ? status : undefined,
+        message: typeof value.message === 'string' ? value.message : 'provider unavailable',
+      }
+    }
+    for (const key of ['failure', 'error', 'cause', 'info', 'details']) {
+      if (value[key] !== undefined) queue.push(value[key])
+    }
+  }
+  return undefined
+}
+
 function hardQuotaFailure(failure) {
   const f = failure || {}
   return f.status === 402 || /insufficient\s+balance|payment\s+required/i.test(String(f.message || ''))
+}
+
+function hardProviderFailure(failure) {
+  const f = failure || {}
+  return hardQuotaFailure(f) || f.code === 'AUTH' || f.status === 401 || f.status === 403
 }
 
 function createProviderHealthCache(ttlMs = DEFAULT_PROVIDER_CIRCUIT_TTL_MS, now = Date.now) {
@@ -149,12 +187,15 @@ function createProviderHealthCache(ttlMs = DEFAULT_PROVIDER_CIRCUIT_TTL_MS, now 
   }
   return {
     ttlMs: ttl,
-    markQuota(provider, failure) {
+    markFailure(provider, failure) {
       const at = now()
-      const hard = hardQuotaFailure(failure)
+      const hard = hardProviderFailure(failure)
       const entry = { provider, failure, hard, openedAt: at, until: hard ? Number.POSITIVE_INFINITY : at + ttl }
       entries.set(provider, entry)
       return entry
+    },
+    markQuota(provider, failure) {
+      return this.markFailure(provider, failure)
     },
     isHealthy(provider) {
       return typeof provider !== 'string' || provider === '' || active(provider) === undefined
@@ -168,7 +209,7 @@ function createProviderHealthCache(ttlMs = DEFAULT_PROVIDER_CIRCUIT_TTL_MS, now 
   }
 }
 
-function quotaIncidentOf(payload) {
+function failureIncidentOf(payload, classifyFailure) {
   const agent = payload && payload.agent
   if (!agent || payload.turn !== 1 || payload.step !== 1) return undefined
   const header = agent.session && agent.session.header
@@ -176,7 +217,7 @@ function quotaIncidentOf(payload) {
     ? agent.options.subagentDepth
     : header && header.delegationDepth
   if (!(depth >= 1) && (!header || header.origin !== 'subagent')) return undefined
-  const failure = quotaFailureOf(payload.failure ?? payload.error)
+  const failure = classifyFailure(payload.failure ?? payload.error)
   if (failure === undefined) return undefined
   let request
   try {
@@ -200,6 +241,14 @@ function quotaIncidentOf(payload) {
   }
 }
 
+function quotaIncidentOf(payload) {
+  return failureIncidentOf(payload, quotaFailureOf)
+}
+
+function availabilityIncidentOf(payload) {
+  return failureIncidentOf(payload, availabilityFailureOf)
+}
+
 function makeUserMessage(text) {
   return {
     id: randomUUID(),
@@ -209,15 +258,37 @@ function makeUserMessage(text) {
   }
 }
 
-function quotaFeedbackText(incident, entry) {
+function quotaFeedbackText(incident, entry, healthyProviders) {
   const circuit = entry.hard
     ? '本进程内保持熔断，恢复额度后重启/重载 DSH 才半开'
     : '已熔断 ' + Math.max(1, Math.ceil((entry.until - entry.openedAt) / 1000)) + ' 秒'
+  const hops = Array.isArray(healthyProviders)
+    ? healthyProviders.filter((p) => typeof p === 'string' && p !== '' && p !== incident.provider)
+    : []
+  const hopLine = hops.length > 0
+    ? '健康路由仍可用：' + hops.join(', ') + '。若异质视角仍是未解决信息缺口，按其中之一启动新 child（不是补票同一失败 child）。'
+    : '当前没有已识别的健康备用路由。'
   return [
     '[kix-route/provider-quota]',
     '子代理 ' + incident.childId + ' 的首轮模型请求在 ' + incident.provider + '/' + incident.model + ' 失败：' + incident.failure.code + (incident.failure.status ? '/HTTP ' + incident.failure.status : '') + '（' + incident.failure.message + '）。',
     '本次 child 产出按零证据记账；provider ' + incident.provider + ' ' + circuit + '。不要等待或复用失败 child，也不要为补票机械重派。',
+    hopLine,
     '只有该异质视角仍是当前 claim 的未解决信息缺口时，才由协调线程按健康路由启动新 child；否则继续现有证据链。',
+  ].join(' ')
+}
+
+function availabilityFeedbackText(incident, entry, healthyProviders, failovers, maxFailovers) {
+  if (incident.failure.code === 'QUOTA' || incident.failure.status === 402) {
+    return quotaFeedbackText(incident, entry, healthyProviders) + ' cross 自动 failover 已用 ' + failovers + '/' + maxFailovers + ' 次。'
+  }
+  const circuit = entry.hard
+    ? '本进程内保持熔断，修复认证后重启/重载 DSH 才半开'
+    : '已熔断 ' + Math.max(1, Math.ceil((entry.until - entry.openedAt) / 1000)) + ' 秒'
+  return [
+    '[kix-route/provider-unavailable]',
+    '子代理 ' + incident.childId + ' 在 ' + incident.provider + '/' + incident.model + ' 失败：' + incident.failure.code + (incident.failure.status ? '/HTTP ' + incident.failure.status : '') + '（' + incident.failure.message + '）。',
+    'provider ' + incident.provider + ' ' + circuit + '；cross 自动 failover 已用 ' + failovers + '/' + maxFailovers + ' 次。',
+    '当前 child 未产出可用结果，按零证据记账；不要复用失败 provider。',
   ].join(' ')
 }
 
@@ -429,6 +500,10 @@ module.exports = {
     const notified = new WeakSet()
     const prefs = mergePreferences(config)
     const health = createProviderHealthCache(config && config.providerCircuitTtlMs)
+    const requestedFailovers = Number(config && config.crossProviderFailovers)
+    const maxCrossProviderFailovers = Number.isFinite(requestedFailovers)
+      ? Math.max(0, Math.min(10, Math.floor(requestedFailovers)))
+      : DEFAULT_CROSS_PROVIDER_FAILOVERS
 
     // Lifecycle callbacks receive only `info`; recover the runtime parent from the
     // published local child's durable lineage while the child is still registered.
@@ -439,20 +514,58 @@ module.exports = {
     ctx.on('subagent/end', (info) => {
       if (info && info.id) parents.delete(String(info.id))
     })
-    // prepend=true：必须先于 dsh-llm-retry 观察首个失败。QUOTA/402 被本层认领
-    // 并返回 undefined，阻止旧 child 在同一 turn/step 内自动重试；非 QUOTA
-    // 完整下传 next()，宿主既有 retry policy 不变。
+    // prepend=true：先于 dsh-llm-retry 观察 provider 可用性失败。cross child
+    // 最多换 maxCrossProviderFailovers 家（同一 child 原地 retry）；非 cross 仅沿用
+    // 旧 QUOTA 终止语义，其他错误完整下传宿主 retry policy。
     ctx.on('agent/request-error', async (payload, next) => {
       try {
-        const incident = quotaIncidentOf(payload)
+        const incident = availabilityIncidentOf(payload)
         if (incident === undefined) return next()
-        // 每一次明确 QUOTA/402 都刷新 provider deadline；父代理通知按 child
-        // 去重，避免同一失败边界重复 steer。
-        const entry = health.markQuota(incident.provider, incident.failure)
+        const routeState = routes.get(incident.agent)
+        const isCross = routeState && routeState.tier === 'cross'
+        const isQuota = incident.failure.code === 'QUOTA' || incident.failure.status === 402
+        if (!isCross && !isQuota) return next()
+
+        const entry = health.markFailure(incident.provider, incident.failure)
+        if (routeState) {
+          routeState.failedProviders.add(incident.provider)
+          routeState.hit = undefined
+          routeState.degraded = false
+        }
+
+        if (isCross && routeState.failovers < maxCrossProviderFailovers) {
+          let nextHit
+          try {
+            const llm = ctx.get('llm')
+            if (llm) {
+              nextHit = await resolveCrossRoute(
+                llm,
+                routeState.parentProvider,
+                payload.signal,
+                prefs,
+                health.isHealthy,
+              )
+            }
+          } catch (error) {
+            ctx.logger?.warn?.('kix-route: cross failover 路由探测失败：' + (error && error.message ? error.message : String(error)))
+          }
+          if (nextHit !== undefined) {
+            routeState.hit = nextHit
+            routeState.failovers++
+            ctx.logger?.warn?.(
+              'kix-route: cross child ' + incident.childId + ' 的 ' + incident.provider + '/' + incident.model + ' 因 ' + incident.failure.code +
+              ' 失败，自动 failover ' + routeState.failovers + '/' + maxCrossProviderFailovers + ' → ' + nextHit.provider + '/' + nextHit.model,
+            )
+            return { kind: 'retry' }
+          }
+        }
+
+        // 无备用或达到上限：当前 child 零证据终止，父代理通知按 child 去重。
         if (!notified.has(incident.agent)) {
           notified.add(incident.agent)
           ctx.logger?.warn?.(
-            'kix-route: provider ' + incident.provider + ' 首轮 QUOTA/402，熔断 ' + health.ttlMs + 'ms（child ' + incident.childId + '）',
+            'kix-route: provider ' + incident.provider + ' 首轮 ' + incident.failure.code + '，cross failover ' +
+            (routeState ? routeState.failovers : 0) + '/' + maxCrossProviderFailovers + ' 后终止（child ' + incident.childId + '）',
           )
           let parent = parents.get(String(incident.childId))
           if (parent === undefined) {
@@ -461,14 +574,27 @@ module.exports = {
             if (parentId && agents && typeof agents.get === 'function') parent = agents.get(parentId)
           }
           if (parent && typeof parent.steer === 'function') {
-            parent.steer(makeUserMessage(quotaFeedbackText(incident, entry)))
+            let healthy = []
+            try {
+              const llm = ctx.get('llm')
+              if (llm) {
+                healthy = registeredProviders(llm).filter((p) => health.isHealthy(p) && p !== incident.provider)
+              }
+            } catch { /* circuit and terminal evidence do not depend on the hop list */ }
+            parent.steer(makeUserMessage(availabilityFeedbackText(
+              incident,
+              entry,
+              healthy,
+              routeState ? routeState.failovers : 0,
+              maxCrossProviderFailovers,
+            )))
           } else {
-            ctx.logger?.warn?.('kix-route: QUOTA/402 已熔断，但父代理不可用，无法即时投递重发提醒（child ' + incident.childId + '）')
+            ctx.logger?.warn?.('kix-route: provider 已熔断，但父代理不可用，无法即时投递终止提醒（child ' + incident.childId + '）')
           }
         }
         return undefined
       } catch (error) {
-        ctx.logger?.warn?.('kix-route: 处理 provider QUOTA/402 失败：' + (error && error.message ? error.message : String(error)))
+        ctx.logger?.warn?.('kix-route: 处理 provider failover 失败：' + (error && error.message ? error.message : String(error)))
         return next()
       }
     }, true)
@@ -480,7 +606,9 @@ module.exports = {
       if (agent === undefined) return resolved
       const opts = agent.options ?? {}
       if ((opts.subagentDepth ?? 0) < 1) return resolved
-      const tier = sentinelTierOf(resolved.model)
+      const requestedTier = sentinelTierOf(resolved.model)
+      let cached = routes.get(agent)
+      const tier = requestedTier || cached && cached.tier
       if (tier === undefined && health.isHealthy(resolved.provider)) return resolved
 
       const llm = ctx.get('llm')
@@ -489,22 +617,31 @@ module.exports = {
         throw new Error('kix-route: llm 服务不可用，无法解析 ' + target + ' 子代理路由（检查宿主 llm 插件是否加载）')
       }
 
-      let cached = routes.get(agent)
       if (cached === undefined) {
-        cached = { hit: undefined, degraded: false }
+        cached = {
+          hit: undefined,
+          degraded: false,
+          tier,
+          parentProvider: tier === 'cross' ? resolved.provider : undefined,
+          failovers: 0,
+          failedProviders: new Set(),
+        }
         routes.set(agent, cached)
-      } else if (cached.hit !== undefined && !health.isHealthy(cached.hit.provider)) {
-        // 其他并行 child 可在本 agent 两次请求之间熔断其已缓存 provider。
-        // 失效缓存，防止 continuable child 继续撞已知 QUOTA 路由。
-        cached.hit = undefined
-        cached.degraded = false
+      } else {
+        if (requestedTier !== undefined) cached.tier = requestedTier
+        if (cached.tier === 'cross' && cached.parentProvider === undefined) cached.parentProvider = resolved.provider
+        if (cached.hit !== undefined && !health.isHealthy(cached.hit.provider)) {
+          // 其他并行 child 或本 child 上一 attempt 可熔断已缓存 provider。
+          cached.hit = undefined
+          cached.degraded = false
+        }
       }
 
       let hit = cached.hit
       if (hit === undefined) {
         const routeKind = tier || 'fallback'
         try {
-          if (tier === 'cross') hit = await resolveCrossRoute(llm, resolved.provider, payload.signal, prefs, health.isHealthy)
+          if (tier === 'cross') hit = await resolveCrossRoute(llm, cached.parentProvider || resolved.provider, payload.signal, prefs, health.isHealthy)
           else if (tier === 'vision') hit = await resolveVisionRoute(llm, payload.signal, prefs, health.isHealthy)
           else if (tier === 'thinker') hit = await resolveThinkerRoute(llm, payload.signal, prefs, health.isHealthy)
           else hit = await resolveFallbackRoute(llm, payload.signal, prefs, health.isHealthy)
@@ -519,7 +656,7 @@ module.exports = {
 
         if (tier === undefined) {
           if (hit === undefined) throw new Error(providerCircuitFailText(resolved.provider, health, registeredProviders(llm)))
-          ctx.logger?.warn?.('kix-route: provider ' + resolved.provider + ' 处于 QUOTA/402 熔断，子代理改路由到 ' + hit.provider + '/' + hit.model)
+          ctx.logger?.warn?.('kix-route: provider ' + resolved.provider + ' 处于可用性熔断，子代理改路由到 ' + hit.provider + '/' + hit.model)
         } else {
           let defaultRoute
           if (hit === undefined && tier === 'thinker') {
@@ -540,7 +677,7 @@ module.exports = {
           }
 
           const failText = tier === 'cross'
-            ? crossFailText(resolved.provider, registeredProviders(llm))
+            ? crossFailText(cached.parentProvider || resolved.provider, registeredProviders(llm))
             : tier === 'vision'
               ? visionFailText(registeredProviders(llm))
               : thinkerFailText()
@@ -573,6 +710,8 @@ module.exports.__internals = {
   SENTINEL_PREFIX,
   FALLBACK_PROVIDER_ORDER,
   DEFAULT_PROVIDER_CIRCUIT_TTL_MS,
+  DEFAULT_CROSS_PROVIDER_FAILOVERS,
+  PROVIDER_AVAILABILITY_CODES,
   vendorOf,
   registeredProviders,
   orderedModels,
@@ -586,10 +725,14 @@ module.exports.__internals = {
   sentinelTierOf,
   decideTierAction,
   quotaFailureOf,
+  availabilityFailureOf,
   hardQuotaFailure,
+  hardProviderFailure,
   createProviderHealthCache,
   quotaIncidentOf,
+  availabilityIncidentOf,
   quotaFeedbackText,
+  availabilityFeedbackText,
   providerCircuitFailText,
   crossFailText,
   visionFailText,
