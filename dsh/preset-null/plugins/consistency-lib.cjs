@@ -418,6 +418,36 @@ function checkEnPkgVersion({ root, rel, expected }) {
   return { failures, notes }
 }
 
+const RESIDENT_MEMBER_TOOLS = ['subagent_reviewer', 'subagent_qa', 'subagent_dev']
+
+function checkResidentMemberBindings({ root, rel }) {
+  const failures = []
+  const notes = []
+  const text = read(root, rel)
+  if (text === null) return { failures: [`${rel}: unreadable`], notes }
+  const lines = text.split(/\r?\n/)
+  for (const toolName of RESIDENT_MEMBER_TOOLS) {
+    const rows = lines
+      .map((line, index) => (new RegExp('^\\s+toolName:\\s*' + toolName + '\\s*$').test(line) ? index : -1))
+      .filter((index) => index >= 0)
+    if (rows.length !== 1) {
+      failures.push(`${rel}: expected exactly one ${toolName} tool row, got ${rows.length}`)
+      continue
+    }
+    const row = rows[0]
+    let start = row
+    while (start >= 0 && !/^\s*- id:\s*/.test(lines[start])) start--
+    let end = row + 1
+    while (end < lines.length && !/^\s*- id:\s*/.test(lines[end])) end++
+    const block = lines.slice(Math.max(0, start), end)
+    if (block.some((line) => /^\s+disabled:\s*true\s*$/.test(line))) {
+      failures.push(`${rel}: ${toolName} must be resident (remove disabled: true)`)
+    }
+  }
+  if (failures.length === 0) notes.push(`${rel}: reviewer/qa/dev are resident role-first members`)
+  return { failures, notes }
+}
+
 // subagent_cross is a capability contract, not a naming hint: the managed tool row must
 // stay bound to the non-degrading kix-route:cross sentinel, and the route plugin must
 // remain enabled. This closes the only configuration-drift path that could make
@@ -586,7 +616,7 @@ function runAllZh(root) {
     checkPersonaBudget({ root, rel: 'dsh/preset-classic/agent.cordis.yml', ...PERSONA_BUDGETS.zh }),
     checkPersonaBudget({ root, rel: 'en/preset-classic-en/agent.cordis.yml', ...PERSONA_BUDGETS.en }),
     ...['dsh/preset/agent.cordis.yml', 'dsh/preset-classic/agent.cordis.yml', 'dsh/preset-null/agent.cordis.yml', 'en/preset-classic-en/agent.cordis.yml']
-      .map((rel) => checkCrossRouteBinding({ root, rel })),
+      .flatMap((rel) => [checkCrossRouteBinding({ root, rel }), checkResidentMemberBindings({ root, rel })]),
     // 身份组由 checkPluginPair / PLUGIN_IDENTITY_GROUPS 单一事实源展开：
     // 语言中立插件 4 根比对；budget 两簇、probe/settle/mem 仅 incentive 面。
     ...pluginNames(root).map((name) => checkPluginPair({ root, name })),
@@ -608,6 +638,7 @@ function runAllEn(root, expectedVersion) {
   return merge(
     checkPersonaBudget({ root, rel: 'preset-classic-en/agent.cordis.yml', ...PERSONA_BUDGETS.en }),
     checkCrossRouteBinding({ root, rel: 'preset-classic-en/agent.cordis.yml' }),
+    checkResidentMemberBindings({ root, rel: 'preset-classic-en/agent.cordis.yml' }),
     checkEnPkgVersion({ root, rel: 'package.json', expected: expectedVersion }),
     checkMarkdownLinks({ root, rel: 'preset-classic-en' }),
     checkSyntax({ root, rel: 'preset-classic-en', label: 'en/preset-classic-en' }),
@@ -642,6 +673,8 @@ module.exports = {
   checkVersionPair,
   checkEnPkgVersion,
   checkCrossRouteBinding,
+  checkResidentMemberBindings,
+  RESIDENT_MEMBER_TOOLS,
   checkMarkdownLinks,
   checkSyntax,
   checkFileSyntax,

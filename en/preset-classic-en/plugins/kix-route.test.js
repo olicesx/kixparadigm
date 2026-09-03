@@ -22,12 +22,17 @@ const {
   pickModel,
   decideTierAction,
   quotaFailureOf,
+  availabilityFailureOf,
   hardQuotaFailure,
+  hardProviderFailure,
   createProviderHealthCache,
   quotaIncidentOf,
+  availabilityIncidentOf,
   quotaFeedbackText,
+  availabilityFeedbackText,
   providerCircuitFailText,
   DEFAULT_PROVIDER_CIRCUIT_TTL_MS,
+  DEFAULT_CROSS_PROVIDER_FAILOVERS,
   crossFailText,
   visionFailText,
   thinkerFailText,
@@ -168,6 +173,14 @@ async function main() {
       '父=未知厂商 → 通用序全保留',
       JSON.stringify(crossProviderOrder(llm, 'anthropic-official')) === JSON.stringify(['deepseek-official', 'zai-coding-cn']),
     )
+    check(
+      '父=grok → zai 在前且 deepseek 仍在 tail',
+      JSON.stringify(crossProviderOrder(llm, 'grok')) === JSON.stringify(['zai-coding-cn', 'deepseek-official']),
+    )
+    check(
+      '父=xai → 与 grok 同序',
+      JSON.stringify(crossProviderOrder(llm, 'xai')) === JSON.stringify(['zai-coding-cn', 'deepseek-official']),
+    )
   }
 
   // ── resolveCrossRoute ───────────────────────────────────────────────────
@@ -179,6 +192,17 @@ async function main() {
     })
     const hit = await resolveCrossRoute(llm, 'zai-coding-cn', undefined)
     check('cross：父=zhipu → deepseek-v4-flash', hit !== undefined && hit.provider === 'deepseek-official' && hit.model === 'deepseek-v4-flash')
+  }
+  {
+    const llm = mockLlm({
+      providers: ['grok', 'zai-coding-cn', 'deepseek-official'],
+      models: { grok: ['grok-4.6'], 'zai-coding-cn': ['glm-5.3'], 'deepseek-official': ['deepseek-v4-flash'] },
+      resolvable: new Set(['grok/grok-4.6', 'zai-coding-cn/glm-5.3', 'deepseek-official/deepseek-v4-flash']),
+    })
+    const hit = await resolveCrossRoute(llm, 'grok', undefined)
+    check('cross：父=grok → 首选 zai glm-5.3', hit !== undefined && hit.provider === 'zai-coding-cn' && hit.model === 'glm-5.3')
+    const afterQuota = await resolveCrossRoute(llm, 'grok', undefined, undefined, (provider) => provider !== 'zai-coding-cn')
+    check('cross：父=grok 且 zai 熔断 → 落到 deepseek', afterQuota?.provider === 'deepseek-official')
   }
   {
     const llm = mockLlm({
@@ -515,9 +539,18 @@ async function main() {
     const byCode = quotaFailureOf({ failure: { code: 'QUOTA', message: 'Insufficient Balance' } })
     const byStatus = quotaFailureOf({ cause: { status: 402, message: 'payment required' } })
     check('Q1 QUOTA 或嵌套 HTTP 402 精确识别', byCode?.code === 'QUOTA' && byStatus?.status === 402)
-    check('Q2 429/网络/仅消息文本不误熔断',
+    check('Q2 429/网络/仅消息文本不误判为 QUOTA',
       quotaFailureOf({ code: 'RATE_LIMIT', status: 429 }) === undefined &&
       quotaFailureOf({ code: 'NETWORK', message: 'Insufficient Balance' }) === undefined)
+    check('Q2b provider 可用性精确分类，内容/上下文错误不跨厂商',
+      availabilityFailureOf({ code: 'RATE_LIMIT', status: 429 })?.code === 'RATE_LIMIT' &&
+      availabilityFailureOf({ cause: { code: 'AUTH', status: 401 } })?.code === 'AUTH' &&
+      availabilityFailureOf({ code: 'TIMEOUT' })?.code === 'TIMEOUT' &&
+      availabilityFailureOf({ code: 'CONTEXT_WINDOW_EXCEEDED', status: 400 }) === undefined &&
+      availabilityFailureOf({ code: 'INVALID_REQUEST', status: 400 }) === undefined)
+    check('Q2c AUTH/402 硬熔断，TIMEOUT 暂态熔断',
+      hardProviderFailure({ code: 'AUTH' }) && hardProviderFailure({ status: 402 }) &&
+      !hardProviderFailure({ code: 'TIMEOUT' }) && DEFAULT_CROSS_PROVIDER_FAILOVERS === 2)
   }
   {
     let now = 1000
@@ -543,6 +576,9 @@ async function main() {
       quotaIncidentOf({ agent: { ...agent, options: { subagentDepth: 0 }, session: { header: {}, requestContext: agent.session.requestContext } }, turn: 1, step: 1, provider: 'deepseek-official', failure: { code: 'QUOTA' } }) === undefined)
     const entry = { hard: true, openedAt: 0, until: Number.POSITIVE_INFINITY }
     const text = quotaFeedbackText(incident, entry)
+    const textWithHop = quotaFeedbackText(incident, entry, ['zai-coding-cn', 'deepseek-official', 'su2api'])
+    check('Q5b 健康下一跳点名且不含已熔断 provider',
+      textWithHop.includes('健康路由仍可用：zai-coding-cn, su2api') && !textWithHop.includes('健康路由仍可用：zai-coding-cn, deepseek-official') && text.includes('当前没有已识别的健康备用路由'))
     check('Q5 父代理反馈包含零证据、禁止复用且不机械补派',
       text.includes('deepseek-official/deepseek-v4-flash') && text.includes('零证据') &&
       text.includes('不要等待或复用') && text.includes('不要为补票机械重派') && text.includes('未解决信息缺口'))
@@ -592,7 +628,8 @@ async function main() {
         check('Q8 request-error prepend 首次 402 即硬熔断、阻止旧 child retry、恰好 steer 一次且不命令重派',
           listenerOptions['agent/request-error']?.[0] === true && firstAction === undefined && secondAction === undefined && retryCalls === 0 &&
           steers.length === 1 && steers[0]?.source?.plugin === 'kix-route' && notice.includes('零证据') &&
-          notice.includes('不要为补票机械重派') && !notice.includes('立即用一个新的'))
+          notice.includes('不要为补票机械重派') && !notice.includes('立即用一个新的') &&
+          notice.includes('健康路由仍可用：su2api'))
         const fresh = { agent: { id: 'child-retry', options: { subagentDepth: 1 } }, signal: undefined }
         const rerouted = await call(fresh, { provider: 'deepseek-official', model: 'deepseek-v4-flash', maxTokens: 8192 })
         check('Q9 协调线程仅在信息缺口仍存在时另派 child，健康路由会跳过硬熔断 provider', rerouted.provider === 'su2api' && rerouted.model === 'gpt-5.6-sol' && warns.some((w) => w.includes('改路由')))
@@ -661,6 +698,113 @@ async function main() {
       const after = await call(cachedAgent, seed)
       check('Q12 已缓存 agent 遇 402 硬熔断后持续失效，不因短 TTL 自动撞回余额不足 provider',
         before.provider === 'deepseek-official' && during.provider === 'su2api' && after.provider === 'su2api')
+    })
+  }
+  {
+    const llm = mockLlm({
+      providers: ['zai-coding-cn', 'deepseek-official', 'su2api', 'other-org'],
+      models: {
+        'zai-coding-cn': ['glm-5.3'],
+        'deepseek-official': ['deepseek-v4-flash'],
+        su2api: ['gpt-5.6-sol'],
+        'other-org': ['other-v1'],
+      },
+      resolvable: new Set([
+        'zai-coding-cn/glm-5.3',
+        'deepseek-official/deepseek-v4-flash',
+        'su2api/gpt-5.6-sol',
+        'other-org/other-v1',
+      ]),
+    })
+    const runtimeAgents = new Map()
+    const agents = { get: (id) => runtimeAgents.get(String(id)) }
+    await withRuntime(routeMod, { llm, agents }, undefined, async ({ emit, waterfall, call, warns }) => {
+      const steers = []
+      const parent = { id: 'cross-failover-parent', steer: (message) => steers.push(message) }
+      let current
+      const crossAgent = {
+        id: 'cross-failover-child',
+        options: { subagentDepth: 1, maxTokens: 65536 },
+        session: {
+          header: { origin: 'subagent', delegationDepth: 1, parentSession: parent.id },
+          requestContext: () => current,
+        },
+      }
+      runtimeAgents.set(parent.id, parent)
+      runtimeAgents.set(crossAgent.id, crossAgent)
+      await emit('subagent/start', { runId: 'run-cross-failover', id: crossAgent.id })
+      const payload = { agent: crossAgent, signal: undefined }
+      const seed = { provider: 'zai-coding-cn', model: 'kix-route:cross', maxTokens: 65536 }
+
+      current = await call(payload, seed)
+      const first = current
+      const action1 = await waterfall('agent/request-error', {
+        agent: crossAgent, turn: 1, step: 1, provider: first.provider,
+        failure: { code: 'QUOTA', status: 402, message: 'Insufficient Balance' },
+      })
+      current = await call(payload, seed)
+      const second = current
+      const action2 = await waterfall('agent/request-error', {
+        agent: crossAgent, turn: 1, step: 1, provider: second.provider,
+        failure: { code: 'AUTH', status: 401, message: 'invalid key' },
+      })
+      current = await call(payload, seed)
+      const third = current
+      let downstream = 0
+      const action3 = await waterfall('agent/request-error', {
+        agent: crossAgent, turn: 1, step: 1, provider: third.provider,
+        failure: { code: 'TIMEOUT', message: 'provider timed out' },
+      }, async () => { downstream++; return { kind: 'retry' } })
+      const notice = steers[0]?.content?.[0]?.text || ''
+
+      check('Q13 cross 同一 child 可用性失败自动换 2 次且 provider 不重复',
+        first.provider === 'deepseek-official' && second.provider === 'su2api' && third.provider === 'other-org' &&
+        action1?.kind === 'retry' && action2?.kind === 'retry' && action3 === undefined && downstream === 0 &&
+        new Set([first.provider, second.provider, third.provider]).size === 3)
+      check('Q14 cross 达上限才零证据 steer 一次，日志记录两次自动 failover',
+        steers.length === 1 && notice.includes('零证据') && notice.includes('2/2') &&
+        warns.filter((w) => w.includes('自动 failover')).length === 2)
+    })
+  }
+  {
+    const llm = mockLlm({
+      providers: ['zai-coding-cn', 'deepseek-official', 'su2api'],
+      models: { 'zai-coding-cn': ['glm-5.3'], 'deepseek-official': ['deepseek-v4-flash'], su2api: ['gpt-5.6-sol'] },
+      resolvable: new Set(['zai-coding-cn/glm-5.3', 'deepseek-official/deepseek-v4-flash', 'su2api/gpt-5.6-sol']),
+    })
+    const runtimeAgents = new Map()
+    const agents = { get: (id) => runtimeAgents.get(String(id)) }
+    await withRuntime(routeMod, { llm, agents }, { crossProviderFailovers: 0 }, async ({ waterfall, call }) => {
+      const crossAgent = { id: 'cross-no-failover', options: { subagentDepth: 1 }, session: { header: { origin: 'subagent', delegationDepth: 1 } } }
+      const payload = { agent: crossAgent, signal: undefined }
+      const seed = { provider: 'zai-coding-cn', model: 'kix-route:cross' }
+      const first = await call(payload, seed)
+      const disabled = await waterfall('agent/request-error', {
+        agent: crossAgent, turn: 1, step: 1, provider: first.provider,
+        failure: { code: 'QUOTA', status: 402, message: 'Insufficient Balance' },
+      })
+      check('Q15 crossProviderFailovers=0 禁用自动换厂商', disabled === undefined)
+    })
+  }
+  {
+    const llm = mockLlm({
+      providers: ['zai-coding-cn', 'deepseek-official', 'su2api'],
+      models: { 'zai-coding-cn': ['glm-5.3'], 'deepseek-official': ['deepseek-v4-flash'], su2api: ['gpt-5.6-sol'] },
+      resolvable: new Set(['zai-coding-cn/glm-5.3', 'deepseek-official/deepseek-v4-flash', 'su2api/gpt-5.6-sol']),
+    })
+    await withRuntime(routeMod, { llm, agents: { get: () => undefined } }, undefined, async ({ waterfall, call }) => {
+      const crossAgent = { id: 'cross-context-error', options: { subagentDepth: 1 }, session: { header: { origin: 'subagent', delegationDepth: 1 } } }
+      const payload = { agent: crossAgent, signal: undefined }
+      const seed = { provider: 'zai-coding-cn', model: 'kix-route:cross' }
+      const first = await call(payload, seed)
+      let downstream = 0
+      const action = await waterfall('agent/request-error', {
+        agent: crossAgent, turn: 1, step: 1, provider: first.provider,
+        failure: { code: 'CONTEXT_WINDOW_EXCEEDED', status: 400, message: 'too long' },
+      }, async () => { downstream++; return { kind: 'retry' } })
+      const again = await call(payload, seed)
+      check('Q16 cross 上下文/请求错误不换 provider，交还宿主策略',
+        downstream === 1 && action?.kind === 'retry' && again.provider === first.provider)
     })
   }
 

@@ -93,8 +93,8 @@
 # composition)"，persona 教的「长任务 run_in_background+job_output」与组成
 # 互相矛盾。2026-08-17 决策（用户原则：简单机械、不影响思考的工具常驻）：
 # job_* 是纯机械控制面（启动/回收/停止已跑任务，不引入决策负担）→ 常驻启用。
-# workflow/goal 与 subagent 细分档位仍默认 disabled，首次使用由 kix-focus
-# 自动激活（kix_capability_call 代理即挂载，无需模型记住先激活）。
+# goal 与低频 subagent 档位仍默认 disabled，由 kix-focus 首用自动激活；
+# workflow/job_* 及 reviewer/dev/qa 高频成员常驻。
 - id: tool-jobs
   name: '@deepseek-ai/dsh-tool-jobs'
 
@@ -452,14 +452,11 @@
     # kixpower-reviewer 角色的机制化落点（此前仅 agents/ 模板 + review prompt
     # 按需加载）：只读 + 反方辩护三层（2026-08-17 三问显式分层）+ 结构化
     # rebuttal 输出。「结论发布前」的对抗性检查通道（对照：kix-guards 管操作
-    # 前、kix-discipline 管编辑前）。默认 disabled（渐进面），首次使用自动
-    # 激活（kix_capability_call { tool: subagent_reviewer, arguments: {...} }
-    # 即挂载并执行）或 kix_tool_activate 显式预激活；核心语义来自
-    # agents/kixpower-reviewer.agent.md（保持单一权威，此处为可注入的精简
-    # persona 快照）。
+    # 前、kix-discipline 管编辑前）。现为常驻高频观察成员；重大审查可按不同
+    # lens 并发多个 reviewer 实例。核心语义来自 agents/kixpower-reviewer.agent.md
+    #（保持单一权威，此处为 DSH 可注入的精简 persona 快照）。
     - id: tool-subagent-reviewer
       name: '@deepseek-ai/dsh-tool-subagent'
-      disabled: true
       config:
         provider: spawn
         toolName: subagent_reviewer
@@ -516,12 +513,10 @@
     #     body（「根据任务类型在三个角色间切换」），一行 persona 蒸馏契约即可。
     # 契约快照与 agents/kixpower-{qa,dev}.agent.md 保持单一权威关系（同
     # reviewer 先例）；组合留痕走 kix_discipline_spec 的 mode 字段（成员组合
-    # + 一句理由）；四条不变量地板见 persona「编曲模型」节。默认 disabled
-    #（渐进面），首次使用自动激活（kix_capability_call 挂载）或 kix_tool_activate
-    # 显式预激活。
+    # + 一句理由）；四条不变量地板见 persona「编曲模型」节。dev/qa/reviewer
+    # 常驻；职责命中优先专用成员，低频 lite/thinker/vision/fork 仍按需激活。
     - id: tool-subagent-qa
       name: '@deepseek-ai/dsh-tool-subagent'
-      disabled: true
       config:
         provider: spawn
         toolName: subagent_qa
@@ -565,7 +560,6 @@
 
     - id: tool-subagent-dev
       name: '@deepseek-ai/dsh-tool-subagent'
-      disabled: true
       config:
         provider: spawn
         toolName: subagent_dev
@@ -758,12 +752,14 @@
 # 告警；插件缺失时哨兵直达适配器响亮失败（不静默同厂商降级）。与 kix-cost
 # 顺序无关协作（effort 规则同源复用）。见 plugins/kix-route.js 头部注释；
 # v8：cross 偏好表候选先过滤未注册 provider，目录探测失败不再放大为 cross 失败。
-# 单元测试：node plugins/kix-route.test.js（80 断言）。
+# v13：cross provider 可用性失败时同一 child 最多换 2 家健康异厂商；耗尽才零证据终止。
+# 单元测试：node plugins/kix-route.test.js（91 断言）。
 - id: kix-route
   name: ./plugins/kix-route.js
   config:
     # Generic QUOTA TTL; HTTP 402 / Insufficient Balance stays process-wide open until restart/reload.
     providerCircuitTtlMs: 300000
+    crossProviderFailovers: 2
     fallbackProviderOrder: [ su2api, zai-coding-cn, deepseek-official ]
 
 # ── presentation（PTC/Code Mode 融入）───────────────────────────────────────
@@ -797,14 +793,13 @@
 #   Phase 2 — kix_capability_search（按需目录查询，返回分组元数据不含全
 #     schema）+ kix_capability_call（代理执行，经 ctx.tools.execute 走完整
 #     pre-execute→guards→execute→post-execute 管线，门禁依然拦截）。
-#     scope 编排工具 restrict 裁剪不到、自动可见：job_*/子代理控制保留并
-#     纳入语义常驻；workflow/goal/ralph 低频重型 → 默认 disabled（2026-08-15
-#     精简决策；实测 workflow 7 路并行可用，启用即用，见 delegation 组注释）。
+#     scope 工具 restrict 裁剪不到：workflow/job_*/子代理控制及 reviewer/dev/qa
+#     常驻；goal 与 lite/thinker/vision/fork 按需激活；ralph 已移除。
 #   Phase 3 — 保持 tool-presentation mode:both（native 直呼验证 + run_code
 #     机械多步），kix 红线「验证/观察用 native 直呼（证据可回放）」不变；
 #     capability_call 亦可被 run_code SDK 子分派调用（子分派过门禁）。
 # 关闭裁剪（仅保留 search/call）：config: { enableRestrict: false }。
-# 单元测试：node plugins/kix-focus.test.js（102 断言，含枚举同步回归防线 +
+# 单元测试：node plugins/kix-focus.test.js（123 断言，含常驻成员/枚举回归防线 +
 #   symlink 部署跨平台解析：候选根链 argv[1]→realpath→插件文件，2026-08-17
 #   WSL2 E2E 发现修复；jobs 常驻化 + 首次使用自动激活；v1.2.13 lite 平台
 #   条件化 shell + 编曲成员 current_sprint 机械注入用例）。

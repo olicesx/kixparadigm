@@ -9,6 +9,9 @@ hooks:
 		- type: command
 			command: 'pwsh -NoProfile -File "{{COPILOT_HOME}}/skills/kixpower/hooks/blast-radius-check.ps1"'
 			timeout: 10
+		- type: command
+			command: 'pwsh -NoProfile -File "{{COPILOT_HOME}}/skills/kixpower/hooks/pre-commit-lint-check.ps1"'
+			timeout: 30
 ---
 # kixparadigm — AI 自编排范式主入口
 

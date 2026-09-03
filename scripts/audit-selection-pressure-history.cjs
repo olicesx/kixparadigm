@@ -85,15 +85,16 @@ const PRESSURE_REGISTRY = [
   },
   {
     id: 'member-selection',
-    marker: '成员档（',
+    marker: '成员优先：',
     carriers: ['choice-pressure', 'mechanism', 'audit'],
     support: [
+      'dsh/preset/agent.cordis.yml',
       'dsh/preset/plugins/kix-focus.js',
       'scripts/audit-delegation-history.cjs',
       'scripts/audit-selection-pressure-history.cjs',
     ],
-    observability: 'Member visibility and activation are mechanical; audits report edited sessions without an independent-observer candidate.',
-    retirement: 'Keep the menu only while real tasks use it; never replace semantic member choice with role quotas.',
+    observability: 'Reviewer/dev/qa visibility is mechanical; delegation audit exposes role drought while lens count and role fit remain semantic.',
+    retirement: 'Keep the menu only while real tasks use it; never replace semantic member choice with role quotas. The floor-Ⅳ gate clause (publish/destructive default-off; explicit user instruction settles it) retires only when kix-guards soft-constraint semantics are confirmed as the sole mechanical carrier, independent of menu usage.',
   },
   {
     id: 'blind-risk-calibration',
@@ -118,6 +119,17 @@ const PRESSURE_REGISTRY = [
     ],
     observability: 'Skill and experience retrieval calls are observable; being stuck is deliberately not classified by a plugin.',
     retirement: 'Remove a pointer after two relevant crises show zero retrieval and no quality loss.',
+  },
+  {
+    id: 'dispatch-dependency-weight',
+    marker: '分派先判依赖与肥瘦：',
+    carriers: ['choice-pressure', 'memory'],
+    support: [
+      'scripts/audit-selection-pressure-history.cjs',
+      'dsh/preset/memories/orchestration-lessons.md',
+    ],
+    observability: 'Audit reports native call clusters and large direct results as dispatch candidates; dependency shape and task weight stay model-judged.',
+    retirement: 'Delete or narrow after two matched dispatch probes show no wall-clock or context benefit over serial dispatch.',
   },
   {
     id: 'execution-carrier',

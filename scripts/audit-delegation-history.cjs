@@ -3,15 +3,16 @@
 //
 // 回答一个问题：成本优化是否压制了自主组队（v7 编曲能力）？
 // 方法：离线扫 DSH 会话库（session.jsonl.zstd，多帧 zstd + JSONL），
-//   主会话统计交接工具调用，子会话按 subagent/descriptor 的 agentModel/label
-//   分类（role / cross-observer / lite / regular），按天聚合。
-//   role-drought 判定：≥2 个主会话有 ≥3 次源编辑（edit/write 直改）而当日
-//   role+cross 分派为 0 —— 该天标记 ROLE_DROUGHT。
+//   主会话只解析 type=tool/call 事件；子会话按 descriptor agentModel 分类
+//   （cross / lite / regular），按天聚合。header/schema/prompt 内工具名不计。
+//   同时按父会话真实工具名统计 member/reviewer/qa/dev/generic/cross 调用，避免
+//   generic subagent 仅凭 "review" label 被误算成 kixpower 成员。
+//   MEMBER_DROUGHT：有源编辑但 reviewer/dev/qa/cross 实际调用为 0。
 //
 // 用法：
 //   node scripts/audit-delegation-history.cjs [sessionsRoot]
 //   默认根：Windows ~/.dsh/sessions 下的 kix-bundle 目录（可传任意项目目录）
-// 输出：stdout 表格 + ROLE_DROUGHT 标记；--json 输出机器可读格式。
+// 输出：stdout 表格 + MEMBER_DROUGHT 标记；--json 输出机器可读格式。
 //
 // 设计依据：kix-orchestration-lessons ⑥（度量涌现而非假设涌现）。
 // 零运行时成本（不挂插件、不进 preset），纯事后审计——candidate 状态。
@@ -104,22 +105,61 @@ function firstJsonLines(text, n) {
 
 function classifyChild(lines) {
   let model = ''
-  let label = ''
-  for (const j of lines.slice(0, 5)) {
-    if (j && j.type === 'subagent/descriptor' && j.data) {
-      model = String(j.data.agentModel || '')
-      label = String(j.data.label || '')
+  for (const event of lines.slice(0, 6)) {
+    if (event && event.type === 'subagent/descriptor' && event.data) {
+      model = String(event.data.agentModel || '')
       break
     }
   }
   if (model.includes('kix-route:cross') || model.includes('zhipu')) return 'cross'
   if (model.includes('lite') || model.includes('glm-4.7') || model.includes('glm-4.5-air')) return 'lite'
-  const l = label.toLowerCase()
-  if (/dev|qa|review|sprint|producer|ivy|nova|sage|milo/.test(l)) return 'role'
   return 'regular'
 }
 
-const TOOL_NAME_RE = /"name":"(run_code|subagent[a-z_]*|workflow|kix_capability_call|kix_tool_activate|create_goal|edit|write)"/g
+function toolCallEvents(text) {
+  const calls = []
+  for (const line of String(text || '').split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const event = JSON.parse(line)
+      if (event && event.type === 'tool/call' && typeof event.data?.name === 'string') calls.push(event.data)
+    } catch { /* 跨帧断裂行：忽略 */ }
+  }
+  return calls
+}
+
+function toolCallNames(text) {
+  return toolCallEvents(text).map((call) => call.name)
+}
+
+const SOURCE_PATH_RE = /\.(?:c|cc|cpp|h|hpp|cs|go|rs|py|rb|php|java|kt|kts|swift|js|cjs|mjs|jsx|ts|cts|mts|tsx|vue|svelte|css|scss|less|html|sql|sh|bash|zsh|ps1|psm1|yml|yaml|json|jsonc|toml|ini|conf)$/i
+
+function toolArguments(call) {
+  const raw = call && call.arguments
+  if (raw && typeof raw === 'object') return raw
+  if (typeof raw !== 'string') return {}
+  try { return JSON.parse(raw) } catch { return {} }
+}
+
+function recordToolCall(slot, call) {
+  const name = typeof call === 'string' ? call : String(call?.name || '')
+  if (name === 'run_code') slot.runCode += 1
+  else if (name === 'workflow') slot.workflow += 1
+  else if (name === 'kix_capability_call') slot.capability += 1
+  else if (name === 'kix_tool_activate') slot.activate += 1
+  else if (name === 'create_goal') slot.goal += 1
+  else if (name === 'edit' || name === 'write') {
+    const filePath = String(toolArguments(call).file_path || '')
+    if (SOURCE_PATH_RE.test(filePath)) slot.sourceEdits += 1
+  } else if (name.startsWith('subagent')) {
+    slot.spawnCalls += 1
+    if (name === 'subagent_reviewer') { slot.memberCalls += 1; slot.reviewerCalls += 1 }
+    else if (name === 'subagent_qa') { slot.memberCalls += 1; slot.qaCalls += 1 }
+    else if (name === 'subagent_dev') { slot.memberCalls += 1; slot.devCalls += 1 }
+    else if (name === 'subagent_cross') slot.crossCalls += 1
+    else if (name === 'subagent') slot.genericCalls += 1
+  }
+}
 
 function main() {
   if (!fs.existsSync(root)) {
@@ -143,25 +183,16 @@ function main() {
     const slot = days[day] ?? (days[day] = {
       mainSessions: 0, childSessions: 0, spawnCalls: 0, runCode: 0,
       workflow: 0, capability: 0, activate: 0, goal: 0, sourceEdits: 0,
-      role: 0, cross: 0, lite: 0, regular: 0,
+      memberCalls: 0, reviewerCalls: 0, qaCalls: 0, devCalls: 0,
+      genericCalls: 0, crossCalls: 0,
+      cross: 0, lite: 0, regular: 0,
     })
     if ('parentSession' in hdr) {
       slot.childSessions += 1
       slot[classifyChild(firstJsonLines(text, 6))] += 1
     } else {
       slot.mainSessions += 1
-      TOOL_NAME_RE.lastIndex = 0
-      let m
-      while ((m = TOOL_NAME_RE.exec(text))) {
-        const n = m[1]
-        if (n === 'run_code') slot.runCode += 1
-        else if (n === 'workflow') slot.workflow += 1
-        else if (n === 'kix_capability_call') slot.capability += 1
-        else if (n === 'kix_tool_activate') slot.activate += 1
-        else if (n === 'create_goal') slot.goal += 1
-        else if (n === 'edit' || n === 'write') slot.sourceEdits += 1
-        else if (n.startsWith('subagent')) slot.spawnCalls += 1
-      }
+      for (const call of toolCallEvents(text)) recordToolCall(slot, call)
     }
   }
 
@@ -171,27 +202,27 @@ function main() {
     return
   }
   console.log(`# delegation audit: ${root}`)
-  console.log('day         main child spawn run_code  wf  cap act goal edits role cross lite reg  drought')
+  console.log('day         main child spawn member rev qa dev generic xcall run_code  wf edits cross  drought')
   let droughtDays = 0
   for (const [day, s] of sorted) {
-    const heavyMain = s.mainSessions // 干旱判定用主会话源编辑总量
-    const drought = s.role + s.cross === 0 && s.sourceEdits >= 3 && heavyMain > 0
+    const heavyMain = s.mainSessions
+    const drought = s.memberCalls + s.crossCalls === 0 && s.sourceEdits >= 3 && heavyMain > 0
     if (drought) droughtDays += 1
-    const flag = drought ? 'ROLE_DROUGHT' : '-'
+    const flag = drought ? 'MEMBER_DROUGHT' : '-'
     console.log(
       `${day}  ${String(s.mainSessions).padStart(4)} ${String(s.childSessions).padStart(5)}`
-      + ` ${String(s.spawnCalls).padStart(5)} ${String(s.runCode).padStart(8)}`
-      + ` ${String(s.workflow).padStart(3)} ${String(s.capability).padStart(3)}`
-      + ` ${String(s.activate).padStart(3)} ${String(s.goal).padStart(4)}`
-      + ` ${String(s.sourceEdits).padStart(5)} ${String(s.role).padStart(4)}`
-      + ` ${String(s.cross).padStart(5)} ${String(s.lite).padStart(4)}`
-      + ` ${String(s.regular).padStart(3)}  ${flag}`,
+      + ` ${String(s.spawnCalls).padStart(5)} ${String(s.memberCalls).padStart(6)}`
+      + ` ${String(s.reviewerCalls).padStart(3)} ${String(s.qaCalls).padStart(2)}`
+      + ` ${String(s.devCalls).padStart(3)} ${String(s.genericCalls).padStart(7)}`
+      + ` ${String(s.crossCalls).padStart(5)} ${String(s.runCode).padStart(8)}`
+      + ` ${String(s.workflow).padStart(3)} ${String(s.sourceEdits).padStart(5)}`
+      + ` ${String(s.cross).padStart(5)}  ${flag}`,
     )
   }
-  console.log(`\ndrought days: ${droughtDays}/${sorted.length}`)
-  console.log('role-drought = 当日 role+cross 分派为 0 且主线程源编辑 ≥3 次（编曲未触发而工作已发生）')
+  console.log(`\nmember-drought days: ${droughtDays}/${sorted.length}`)
+  console.log('member-drought = 当日实际 reviewer/dev/qa/cross 工具调用为 0，且主线程源编辑 ≥3 次')
 }
 
 if (require.main === module) main()
 
-module.exports = { decodeSession, firstJsonLines }
+module.exports = { decodeSession, firstJsonLines, classifyChild, toolCallEvents, toolCallNames, recordToolCall, SOURCE_PATH_RE }
