@@ -39,11 +39,10 @@
 //         此前默认 disabled 实测导致 run_in_background 直接报
 //         "background jobs unavailable: no job controller serves this agent"，
 //         persona 与组成互相矛盾；常驻后此错消失，job_* 纳入语义常驻集。
-//       * subagent 细分档位（lite/thinker/vision/fork/reviewer/qa/dev）与
-//         goal 保持默认 disabled + **首次使用自动激活**：kix_capability_call
-//         代理调用未挂载的可激活工具时自动 ctx.plugin 挂载并继续执行——
-//         激活由机制兜底，模型无需记住先 kix_tool_activate；下一轮起可直呼，
-//         kix_tool_deactivate 仍可卸载。显式 kix_tool_activate 保留为预激活。
+//       * lite/thinker/vision/fork 与 goal 默认 disabled + 首用自动激活。
+//       * 2026-09-03 role drought 反例：reviewer/qa/dev 改为常驻，职责命中
+//         优先专用成员；generic subagent 仅无归属 Explore。重大审查动态
+//         2–4 reviewer、每路不同 lens，不设固定人数。
 //
 // 挂载：agent.cordis.yml 一行（同款相对路径）：
 //   - id: kix-focus
@@ -64,30 +63,24 @@ const { readFileSync, statSync } = require('node:fs')
 // （kix 的 subagent 五档、kix_capability_*、门禁插件工具）不受 restrict 影响、
 // 自动可见，列入 allow 反而会 fail。所以 RESTRICT_ALLOW 只列全局工具；
 // RESIDENT_TOOLS 是"常驻语义全集"（含 scope 工具，用于 search/感知判断）。
-// 2026-08-15 实测（workflow 7 路并行审计）：workflow/goal/job_* 等
-// preset 行注册的编排工具同为 scope-local —— restrict 裁剪不到、对模型
-// 自动可见、可直接调用，无需经 capability_call 代理（全局视图查不到
-// scope-local 名，代理反而失败）。故 SCOPE_RESIDENT 把它们纳入语义常驻集，
-// 目录/统计口径与实际可见面一致；capability_call 对它们拒绝（"请直接调用"）。
-// RESTRICT_ALLOW 是 allow 时代的白名单（现改用 deny 模式）；保留作统计/文档。
-// 2026-08-16：web_search 低频（库文档已由 context7 MCP 承担）→ 移出常驻。
-// 2026-08-20 修正（系统提示词瘦身）：deny 方案从未生效——tool-web 是 preset
-// 行注册（scope-local），restrict 只作用于全局工具；真实裁法是 cordis 行
-// disabled + ACTIVATABLE_TOOLS.web_search 自动激活（见 ACTIVATABLE_TOOLS）。
+// preset 行注册的 workflow/job_*/成员/控制工具是 scope-local：restrict 裁剪
+// 不到、自动可见。goal 与低频 subagent 档位则由 disabled + 按需激活控制。
+// SCOPE_RESIDENT 记录常驻语义集；成员兼容 capability_call 的 Sprint 注入，
+// 其余 scope 常驻工具拒绝代理并提示直接调用。
+// RESTRICT_ALLOW 是 allow 时代的白名单（现改用 deny 模式），仅保留作统计。
+// preset tool-web 注册的 web_search 是 scope-local，restrict 不会隐藏；若其他
+// profile 把 web_search 注册到全局层，则与 MCP 一样进入 denyTargets。
 const RESTRICT_ALLOW = [
   // 全局基础工具（host 平面注册）
   'edit', 'write', 'read', 'grep', 'glob', 'pwsh', 'bash',
   'ask_user_question', 'todo_write', 'skill',
 ]
 
-// scope 注册、自动可见（restrict 裁剪不到）的编排/后台/控制工具
-// 2026-08-15 精简：workflow/goal 低频重型 → 默认 disabled（主 agent 工具面
-// 只留范式必需；restrict 裁不到 scope 工具，disabled 是唯一精简手段）。
-// 2026-08-16：workflow 临时启用（自发使用测试）；ralph 移除。
-// 2026-08-17 决策（用户拍板 A+B）：tool-jobs 常驻（job_* 纯机械控制面，
-// 无认知负担）纳入语义常驻集；subagent 细分档位与 goal 保持 disabled +
-// 首次使用自动激活（kix_capability_call 代理即挂载）。此处只列常驻挂载的
-// scope 工具。
+// scope 注册、自动可见（restrict 裁剪不到）的编排/后台/控制工具。
+// workflow 经实测后常驻；goal 保持按需；ralph 已移除。
+// 2026-08-17：tool-jobs 常驻；细分档位按需。2026-09-03 用户实证 generic
+// subagent 常驻而角色成员隐藏会造成 role drought（用户跨实现观察）：reviewer/dev/qa 改为常驻，
+// 职责命中优先专用成员；lite/thinker/vision/fork 与 goal 仍按需。
 const SCOPE_RESIDENT = [
   // plan mode realm（挂载，先规划用 plan mode）
   'exit_plan_mode',
@@ -95,6 +88,8 @@ const SCOPE_RESIDENT = [
   'list_agents', 'send_message', 'interrupt_agent',
   // tool-jobs（2026-08-17 常驻：后台任务启动/回收/停止）
   'job_output', 'job_list', 'job_kill',
+  // 高频编曲成员（2026-09-03 role-first：职责命中时直接可见）
+  'subagent_reviewer', 'subagent_qa', 'subagent_dev',
 ]
 
 // 常驻语义全集 = RESTRICT_ALLOW + scope 注册的观察/发现/编排工具（自动可见）
@@ -117,8 +112,8 @@ const CAPABILITY_GROUPS = [
     // 不替模型选人、不强制 /kixpower。死亡条件：两轮真实任务零调用 → 收回本组。
     id: 'kix-surface',
     title: '完整能力面（skill / 经验 / 编曲成员 / 流程命令）',
-    hint: '思考层是激励面，能力自选。skill（how-to，常驻直呼）与 experience（危机教训，常驻直呼）不要走 capability_call。编曲成员 lite/dev/qa/reviewer/cross/vision 用 kix_capability_call 首用即挂（见 subagent-tiers 组）。用户斜杠命令 /kixpower-new|/kixpower-import|/kixpower-continue|/kixpower-review|/kixpower 由 UI 注入，模型不必背流程。',
-    tools: ['skill', 'experience'],
+    hint: '思考层是激励面，能力自选。skill/experience 常驻直呼，不走 capability_call。reviewer/dev/qa 常驻直呼且职责命中优先；generic subagent 仅无归属 Explore；lite/thinker/vision/fork 按需激活，cross 常驻且只补厂商独立维度（见 subagent-tiers 组）。用户斜杠命令 /kixpower-new|/kixpower-import|/kixpower-continue|/kixpower-review|/kixpower 由 UI 注入。',
+    tools: ['skill', 'experience', 'kix_capability_search', 'kix_capability_call'],
   },
   {
     id: 'github',
@@ -158,8 +153,8 @@ const CAPABILITY_GROUPS = [
   },
   {
     id: 'subagent-tiers',
-    title: '子代理细分档位（lite/thinker/vision/fork/reviewer/qa/dev）',
-    hint: '默认未挂载，**首次使用自动激活**：kix_capability_call { tool: subagent_lite, arguments: {...} } 即挂载并执行、下一轮起可直呼（或 kix_tool_activate 预激活）；reviewer = 反方辩护三层只读审查（结论发布前对抗检查）；qa = Ivy 验收+签署（不写业务源码、证据门禁、signoff 工件）；dev = Nova/Sage/Milo 三合一编码（按 plan、target_rules 内写、不替 QA 签署）——qa/dev/reviewer 即编曲成员菜单',
+    title: '子代理成员与档位（resident reviewer/qa/dev；on-demand lite/thinker/vision/fork）',
+    hint: 'reviewer/dev/qa 常驻可直接调用；职责命中优先专用成员，generic subagent 仅无归属 Explore。重大审查按风险并发 2–4 个 reviewer、每路不同 lens；cross 是厂商独立维度。lite/thinker/vision/fork 首用由 kix_capability_call 自动激活，或 kix_tool_activate 预激活。组合留痕写 kix_discipline_spec mode',
     tools: ['subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork', 'subagent_reviewer', 'subagent_qa', 'subagent_dev'],
   },
   {
@@ -213,10 +208,39 @@ function isOnDemand(name) {
   return true
 }
 
+// 2026-09-03 出生证明：search 用 toolName.includes(整句 query)，
+// 「skill experience glm thinking」无法命中 skill，groups=[]，属性路由空转。
+// token 命中 id/title/hint/tool/schema 名（OR）。死亡条件：空 query 仍全目录；
+// 单 token skill/github 仍精确；自然语言多词不再空组。两轮真实任务无空组即留。
+function queryTokens(query) {
+  const raw = String(query || '').toLowerCase().trim()
+  if (!raw) return []
+  return raw.split(/[\s,;:|/]+/u).map((t) => t.trim()).filter((t) => t.length >= 2)
+}
+
+function textMatchesQuery(text, tokens, raw) {
+  const hay = String(text || '').toLowerCase()
+  if (!raw) return true
+  if (tokens.length === 0) return hay.includes(raw)
+  return tokens.some((t) => hay.includes(t))
+}
+
+function groupHaystack(group) {
+  // hint 是复制粘贴的引导句（几乎每组都有 kix_capability_call），不能当检索面，
+  // 否则 token「capability/call」会灌回全部 MCP 组。id/title/tools 才是身份。
+  return [group.id, group.title, ...(group.tools || [])].join('\n')
+}
+
 // 纯函数：把一组工具 schema 投影为轻量元数据（名字/描述/参数名，不含全 schema）
 function projectToolMeta(schemas, nameFilter) {
+  const raw = String(nameFilter || '').toLowerCase().trim()
+  const tokens = queryTokens(raw)
   return schemas
-    .filter((s) => s && s.name && (!nameFilter || String(s.name).includes(nameFilter)))
+    .filter((s) => {
+      if (!s || !s.name) return false
+      if (!raw) return true
+      return textMatchesQuery(s.name, tokens, raw)
+    })
     .map((s) => ({
       name: s.name,
       description: String(s.description || '').slice(0, 140),
@@ -242,20 +266,17 @@ function matchedToolMeta(members, q) {
 // 5 个命中（元数据按需披露的语义：先看参数名，完整 schema 调用时由管线校验）。
 function searchCapabilities(schemas, query) {
   const q = String(query || '').toLowerCase().trim()
+  const tokens = queryTokens(q)
   const results = []
   for (const group of CAPABILITY_GROUPS) {
-    const matched = group.tools.filter((t) => {
-      if (t.endsWith('__')) return true // 前缀组（MCP 命名空间）
-      return q === '' || t.toLowerCase().includes(q)
-    })
-    // 前缀组：query 非空时按名称匹配具体工具
+    const groupHit = q === '' || textMatchesQuery(groupHaystack(group), tokens, q)
+    // 前缀组：query 非空时按名称或组元数据匹配具体工具
     if (group.tools.some((t) => t.endsWith('__'))) {
       const prefix = group.tools[0]
-      if (q !== '' && !schemas.some((s) => s.name && s.name.startsWith(prefix) && s.name.toLowerCase().includes(q))) {
-        continue
-      }
       const members = schemas.filter((s) => s.name && s.name.startsWith(prefix))
-      if (members.length === 0 && q === '') continue
+      if (members.length === 0) continue
+      const schemaHit = members.some((s) => textMatchesQuery(s.name, tokens, q))
+      if (q !== '' && !groupHit && !schemaHit) continue
       results.push({
         id: group.id,
         title: group.title,
@@ -267,7 +288,7 @@ function searchCapabilities(schemas, query) {
       })
       continue
     }
-    if (matched.length > 0 || q === '') {
+    if (groupHit) {
       const members = schemas.filter((s) => s.name && group.tools.includes(s.name))
       results.push({
         id: group.id,
@@ -293,7 +314,7 @@ function searchCapabilities(schemas, query) {
   }
   const fallbackMembers = schemas.filter((s) => s.name && !covered.has(s.name) && !RESIDENT_TOOLS.has(s.name))
   if (fallbackMembers.length > 0) {
-    const matched = q === '' || fallbackMembers.some((s) => s.name.toLowerCase().includes(q))
+    const matched = q === '' || fallbackMembers.some((s) => textMatchesQuery(s.name, tokens, q))
     if (matched) {
       results.push({
         id: FALLBACK_GROUP.id,
@@ -323,10 +344,9 @@ function makeUserMessage(text) {
   }
 }
 
-// ── 按需激活（Phase 2 扩展，2026-08-15）：scope 重型工具默认 disabled，
-// 经 kix_tool_activate 运行时挂载（ctx.plugin），下一轮请求即直呼可用；
-// kix_tool_deactivate 卸载。避免"全禁 = 能力消失"与"常驻 = 每轮占 schema"
-// 两极，语义对齐 skill 的按需发现。
+// ── 按需激活（Phase 2 扩展，2026-08-15）：低频 scope 工具默认 disabled，
+// 经 kix_tool_activate 挂载；reviewer/dev/qa 已常驻，不在本表重复注册。
+// 避免"全禁 = 能力消失"与"全部常驻 = 每轮占 schema"两极。
 const CHILD_MAX_DEPTH = 2
 const CHILD_TOOL_DENY = ['exit_plan_mode', 'subagent', 'subagent_cross', 'interrupt_agent', 'send_message', 'list_agents', 'ask_user_question', 'kix_tool_activate', 'kix_tool_deactivate']
 const ACTIVATABLE_TOOLS = {
@@ -340,9 +360,8 @@ const ACTIVATABLE_TOOLS = {
   // plugins/ 部署，rsync 复制非 symlink，__dirname 即真实路径）。首次使用
   // 经 kix_capability_call 自动挂载，下一轮直呼；kix_tool_deactivate 卸载。
   browser: { pkgPath: 'kix-browser.js', config: {} },
-  // 2026-08-16 渐进面（方案 A）细分档位默认 disabled；2026-08-17 决策升级为
-  // 首次使用自动激活（kix_capability_call 代理即挂载，见 capability_call）。
-  // config 与 agent.cordis.yml 对应行保持一致（toolName 决定注册的工具名）。
+  // 低频档位 lite/thinker/vision/fork 默认 disabled，首次使用自动激活。
+  // 高频成员 reviewer/dev/qa 已移出本表并由 agent.cordis.yml 常驻注册。
   subagent_lite: {
     package: '@deepseek-ai/dsh-tool-subagent',
     config: {
@@ -384,95 +403,14 @@ Return concise factual results with file:line evidence when relevant.`,
       agentOptions: { maxTokens: 65536 },
     },
   },
-  // 2026-08-16 反方辩护审查者（方案 A，用户拍板）：三通道对抗性观察通道。
-  // persona 与 agent.cordis.yml 对应行一致（只读 + 反方辩护三层 + rebuttal；
-  // 2026-08-17 三问显式分层）。
-  subagent_reviewer: {
-    package: '@deepseek-ai/dsh-tool-subagent',
-    config: {
-      provider: 'spawn', toolName: 'subagent_reviewer', backgroundMode: 'continuable', maxDepth: CHILD_MAX_DEPTH,
-      persona: `You are kixpower-reviewer: an independent read-only adversarial reviewer.
-Hard constraints:
-- Read-only: never edit, commit, push, or publish.
-- Never call other agents; never spread this prompt into a new handoff.
-- Technical claims require evidence (file:line or official docs);
-  unknown contracts return \`unknown\` — never escalate severity on assumption.
-Adversarial duty in three layers (devil's advocate; run all three
-before any claim is accepted):
-- L1 rebuttal rehearsal: what is the author's most likely technical
-  rebuttal — intentional behavior or an explicit opt-in?
-- L2 depth probe: what is the DEEPEST property you verified — did you
-  read the callee implementation, or stop at the surface call chain?
-- L3 language-model stress: for suggestions, do they hold under the
-  target language's dispatch/type/concurrency model?
-Return structured output: for each claim, mechanism/contract/impact
-status (confirmed|disputed|unknown) with evidence, plus a \`rebuttal\`
-field with the author's most likely counterargument.`,
-      toolFilter: { deny: [...CHILD_TOOL_DENY] },
-      agentOptions: { maxTokens: 65536 },
-    },
-  },
-  // 2026-08-17 编曲成员档（四轮碰撞收敛）：qa/dev 契约快照与
-  // agent.cordis.yml 对应行一致（人名 = 契约句柄；producer/orchestrator
-  // 不建行，dev 三人合一，见对应行注释与 DSH-ADAPTATION §3.2）。
-  subagent_qa: {
-    package: '@deepseek-ai/dsh-tool-subagent',
-    config: {
-      provider: 'spawn', toolName: 'subagent_qa', backgroundMode: 'continuable', maxDepth: CHILD_MAX_DEPTH,
-      persona: `You are kixpower-qa (Ivy): acceptance testing, bug filing, and QA
-signoff — never business source code.
-Hard constraints:
-- Edit only tests and QA docs (*_test.*, *.test.*, *.spec.*,
-  *.stories.*, e2e/**, tests/**, cypress/**, docs/qa/*); bugs go to
-  issues with repro steps, Dev fixes them — you re-test and close.
-- Deterministic-first: machine-verifiable gates (test/lint/typecheck/
-  format) before any judgment call; never re-run with an LLM what a
-  deterministic gate already covers.
-- Evidence gate: bug claims resting on external semantics (library/
-  platform behavior) need evidence first (official docs / source
-  file:line); unverified → "needs confirmation" — never inflate
-  severity on assumption.
-- Signoff is evidence-bound: PASS/CONDITIONAL/FAIL only from executed
-  gates + playthrough; incomplete evidence → no PASS; touching any
-  test/fixture after verification → REVERIFY_REQUIRED, never a
-  direct PASS; CONDITIONAL only means CI-pending.
-Report with tables: gate results / verdict / issue list.`,
-      toolFilter: { deny: [...CHILD_TOOL_DENY] },
-      agentOptions: { maxTokens: 65536 },
-    },
-  },
-  subagent_dev: {
-    package: '@deepseek-ai/dsh-tool-subagent',
-    config: {
-      provider: 'spawn', toolName: 'subagent_dev', backgroundMode: 'continuable', maxDepth: CHILD_MAX_DEPTH,
-      persona: `You are kixpower-dev (Nova frontend / Sage backend / Milo design —
-one contract, three hats): the coding member on the CEO team.
-Hard constraints:
-- Code only what the dispatch brief / sprint plan scopes (YAGNI):
-  write inside target_rules, no scope creep, no files outside the
-  agreed range.
-- Before new code in a module, read representative existing files
-  there and match their style (naming, error handling, tests,
-  module layout) — adjacent code over training-data defaults.
-- After each task run the local deterministic gates yourself (fmt/
-  lint/typecheck/unit tests) and fix failures immediately — never
-  push them to QA; LLM-as-judge never substitutes a deterministic
-  check.
-- Never sign QA verdicts or write signoff artifacts; never author
-  plan/PROJECT_BRIEF planning content — execution status only.
-- Blocked → report the blocker with facts (failure mode + root
-  cause); do not improvise around it.
-Report: what changed / gate results / known issues, tables over prose.`,
-      toolFilter: { deny: [...CHILD_TOOL_DENY] },
-      agentOptions: { maxTokens: 65536 },
-    },
-  },
+  // reviewer/dev/qa 是 agent.cordis.yml 常驻成员；不要在动态激活表重复注册
+  // 同名工具。lite/thinker/vision/fork 仍按需，角色契约只在常驻工具行维护。
   // 2026-08-17：jobs 已从可激活清单移除——tool-jobs 常驻化（组成启用），
   // 再动态挂载会与服务实例冲突；job_* 直接可用，无需激活。
 }
 
-// 工具名 → 激活键。ACTIVATABLE_TOOLS 的键是**激活名**（goal/subagent_qa…），
-// 而 capability_call 收到的是**工具名**：细分档位的工具名==激活名（toolName
+// 工具名 → 激活键。ACTIVATABLE_TOOLS 的键是激活名（goal/subagent_lite…），
+// capability_call 收到工具名：低频档位的工具名==激活名（toolName
 // 决定），goal 包则注册 create_goal/update_goal/get_goal 三个工具名。
 // 2026-08-17 WSL2 E2E 实锤：缺此映射时 capability_call({tool:'create_goal'})
 // 查不到激活键 → 报"工具不存在"，goal 首次使用自动激活失效。
@@ -790,7 +728,7 @@ module.exports = {
             denyCount: restrictDenyCount,
             error: restrictError,
           },
-          guidance: '用 kix_capability_call { tool, arguments } 代理调用选中的按需工具（MCP 等，走完整门禁管线）；scope 常驻工具（subagent/subagent_cross/子代理控制/后台任务 jobs）可直接调用；workflow 已挂载可直接调用（批量扇出）；subagent 细分档位与 goal 首次使用自动激活——kix_capability_call 代理即挂载并执行、下一轮起可直呼（也可 kix_tool_activate 预激活，kix_tool_deactivate 卸载）。',
+          guidance: 'reviewer/dev/qa 是 role-first 常驻成员，职责命中时直接调用；generic subagent 仅无归属 Explore，workflow 用于批量扇出。lite/thinker/vision/fork 与 goal 首用由 kix_capability_call 自动激活；MCP 等按需工具经代理走完整门禁。成员仍可经 capability_call 兼容调用，以保留 Sprint current_sprint 自动注入。',
         }
       },
     })
@@ -799,14 +737,14 @@ module.exports = {
     // ── Phase 2：kix_capability_call（代理执行 + 首次使用自动激活，常驻）──
     const disposeCall = tools.register({
       name: 'kix_capability_call',
-      description: '代理调用按需披露工具（走完整 pre-execute→guards→execute 管线，门禁仍拦）。MCP/cordis_* 全局按需工具直接代理执行；未挂载的 subagent 细分档位与 goal（subagent_lite/thinker/vision/fork/reviewer/qa/dev、create_goal 等）首次使用自动激活（本调用即挂载并执行、下一轮起直呼）；scope 常驻工具（workflow/job_* 等）请直接调用，本工具会拒绝。',
+      description: '代理调用按需披露工具（走完整 pre-execute→guards→execute 管线，门禁仍拦）。MCP/cordis_* 直接代理；未挂载的 lite/thinker/vision/fork 与 goal 首次使用自动激活。reviewer/qa/dev 已常驻且应直接调用，但保留本兼容入口以注入 Sprint current_sprint；其他 scope 常驻工具（workflow/job_* 等）拒绝代理。',
       parameters: {
         // tools.register 原样投影 parameters（不做 ValueSchemaSpec 转换）：
         // 必须传合法 JSON Schema，含顶层 type: 'object'。arguments 用 object +
         // 空 properties + additionalProperties（任意键参数对象）。
         type: 'object',
         properties: {
-          tool: { type: 'string', description: '要调用的按需工具名（如 mcp__github__get_issue / workflow）' },
+          tool: { type: 'string', description: '要调用的按需工具名，或成员兼容入口（如 mcp__github__get_issue / subagent_lite / subagent_reviewer）' },
           arguments: { type: 'object', properties: {}, additionalProperties: true, description: '传给目标工具的参数对象（任意键）' },
         },
         required: ['tool'],
@@ -851,8 +789,9 @@ module.exports = {
         // 全局视图。必须传 exec.agent。
         const agentScope = exec && exec.agent
         const def = (agentScope ? tools.get(toolName, agentScope) : null) || tools.get(toolName, undefined)
-        // 常驻且已挂载的工具应直接调用，不让代理绕一层
-        if (resident.has(toolName) && def) {
+        // 常驻工具通常直接调用；成员工具保留 capability_call 兼容入口，用于
+        // 旧 prompt 与 Sprint current_sprint 契约的机械注入。新选择压仍优先直呼。
+        if (resident.has(toolName) && def && !ORCH_MEMBER_TOOLS.has(toolName)) {
           return { ok: false, error: `kix-focus: ${toolName} 是常驻工具，请直接调用（无需代理）。` }
         }
         // 2026-08-17 首次使用自动激活：未挂载的细分档位/goal（ACTIVATABLE_TOOLS）
@@ -870,11 +809,7 @@ module.exports = {
         // 档位守卫：subagent_lite 仅在 maxTokens > 8192 时可用（避免 lite 档反锁）。
         if (toolName === 'subagent_lite' && exec.agent && exec.agent.options && exec.agent.options.maxTokens <= 8192) {
           return { ok: false, error: `kix-focus: subagent_lite 需要 maxTokens > 8192（当前 ${exec.agent.options.maxTokens}）。升级档位或直接调用目标工具。` }
-
-        // 档位放行：subagent_lite 且 maxTokens > 8192 时放行（与守卫对称）
-        if (toolName === 'subagent_lite' && exec.agent && exec.agent.options && exec.agent.options.maxTokens > 8192) {
-          // 放行，继续执行（档位守卫已拦截不满足条件的情况）
-        }        }
+        }
         // 目标工具必须存在（agent 视图优先；restrict 不影响存在性检查）
         const def2 = (agentScope ? tools.get(toolName, agentScope) : null) || tools.get(toolName, undefined)
         if (!def2) {
@@ -918,10 +853,8 @@ module.exports = {
     ctx.effect(() => disposeCall)
 
     // ── Phase 2 扩展：首次使用自动激活 + kix_tool_activate/deactivate ──────
-    // scope 工具（goal/subagent 细分档位）默认 disabled。2026-08-17 决策
-    // （用户拍板 A+B）：激活由**机制**兜底——capability_call 首次代理调用时
-    // 自动挂载（ensureActivated），模型无需记住先激活；kix_tool_activate 保留
-    // 为显式预激活，kix_tool_deactivate 卸载。
+    // goal 与低频 subagent 档位默认 disabled；capability_call 首次代理调用时
+    // 自动挂载。reviewer/dev/qa 是常驻成员，不经过本激活生命周期。
     // ⚠️ 不要挂 ctx.effect 自动清理：工具 execute 的 effect 域在本次调用
     // 结束时触发清理，会立即卸载刚激活的插件（实测 2026-08-15/16：
     // workflow/ralph/goal 激活全部返回 ok:true 但下一轮全不可见——根因
@@ -980,14 +913,12 @@ module.exports = {
     }
     const disposeActivate = tools.register({
       name: 'kix_tool_activate',
-      // 2026-08-17 枚举 bug 修复：描述枚举曾漏 subagent_reviewer（集合有、
-      // 描述无——模型照描述行事即永远激活不了它）；现与 ACTIVATABLE_TOOLS
-      // 键集合同步（测试有回归防线），新增 qa/dev 一并列入。
-      description: '显式预激活默认未挂载工具：goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev / browser。qa·dev·reviewer=编曲成员（Ivy 验收签署 / Nova·Sage·Milo 编码 / 反方辩护审查）。通常无需手动调用——kix_capability_call 首次使用即自动激活，本工具仅用于想提前挂载的场景；jobs 常驻无需；workflow 动态激活不可用（直接挂载）。激活后下一轮直呼，kix_tool_deactivate 卸载。',
+      // 描述与 ACTIVATABLE_TOOLS 键集合保持同步；常驻成员另行点明不可激活。
+      description: '显式预激活默认未挂载工具：goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / browser。reviewer/qa/dev 已常驻，无需激活；通常无需手动调用——kix_capability_call 首次使用按需工具即自动激活。本工具仅用于提前挂载；jobs 常驻；workflow 直接挂载。激活后下一轮直呼，kix_tool_deactivate 卸载。',
       parameters: {
         type: 'object',
         properties: {
-          tool: { type: 'string', description: '要激活的工具名（goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev / browser）' },
+          tool: { type: 'string', description: '要激活的工具名（goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / browser）' },
         },
         required: ['tool'],
       },
@@ -1012,11 +943,11 @@ module.exports = {
 
     const disposeDeactivate = tools.register({
       name: 'kix_tool_deactivate',
-      description: '卸载一个已激活的按需工具（goal/subagent 细分档位含编曲成员 qa/dev/reviewer、browser 浏览器插件）。延迟卸载：入队后本回合内仍可直呼，回合结束才生效（防工具面中途变更打断前缀缓存）。jobs 常驻、无需也卸载不了。',
+      description: '卸载一个已激活的按需工具（goal、lite/thinker/vision/fork、browser）。reviewer/qa/dev 与 jobs 常驻，无法卸载。延迟卸载：入队后本回合内仍可直呼，回合结束才生效（防工具面中途变更打断前缀缓存）。',
       parameters: {
         type: 'object',
         properties: {
-          tool: { type: 'string', description: '要卸载的工具名（goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / subagent_reviewer / subagent_qa / subagent_dev / browser）' },
+          tool: { type: 'string', description: '要卸载的工具名（goal / subagent_lite / subagent_thinker / subagent_vision / subagent_fork / browser）' },
         },
         required: ['tool'],
       },
@@ -1078,6 +1009,8 @@ module.exports.__internals = {
   injectSprintContractLine,
   workspaceRootOf,
   isOnDemand,
+  queryTokens,
+  textMatchesQuery,
   projectToolMeta,
   matchedToolMeta,
   searchCapabilities,

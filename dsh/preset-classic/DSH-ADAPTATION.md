@@ -61,12 +61,13 @@ autoApprove 全开 → 对应 DSH 权限预设（本部署 `danger-full-access`�
 - `tools/pre-execute`：实现编辑（edit/write）前查需求三检契约（spec）在档；无 spec + 首次实现编辑 → `remind`（默认，放行+注入提醒一次）/ `ask`（聊天内提问）/ `block`（deny）。测试文件永远放行
 - `kix_discipline_spec` 工具：模型记录契约（goal/xy/assumptions/path/acceptance 五字段，对应 kix 需求三检①XY ②前提 ③路径），写工作区 `kix-discipline/spec.md`（跨会话可查）
 - `agent/turn-stopping`：回合结束有实现编辑但无测试运行 → 注入「交付前验证三问」提醒（remindOnce）
+- 提交前语言语法检查（2026-09-03 回补）：按编辑文件扩展名记账（Rust 拆 `cargo fmt` / `cargo clippy` 两族；JS/Go/Python 各一桶）。`git commit` 与 turn-stopping 漏跑则 remind（不 deny）；`cargo test`/`npm test` 不算 lint。VS Code Copilot 侧 `hooks/pre-commit-lint-check.ps1` 对暂存文件跑 rustfmt --check / gofmt（prettier/ruff 仅项目本地配置存在时；失败才 deny；clippy/eslint 仍走本插件记账）
 - `/kix-discipline` 命令：status/report/on|off
 - 强度默认 `remind`（限制越少越好；字面明确低风险可逆任务可忽略提醒直接执行）；`ask`/`block` 需在 agent.cordis.yml 该行 config 显式配置
 - 边界：按 agent scope 挂载，不覆盖子代理会话；与 kix-guards 同款（见 §9 已知限制①）
 
 **极简+渐进披露插件（kix-focus，2026-08-16 新增，三层递进 P4）**：把模型每轮可见工具面从 ~85 个（~108KB schema，估算 ~30.8K token）裁到常驻核心集，量化 **-81.6%**（`scripts/quantify-focus.cjs` 可复跑）：
-- **Phase 1 裁剪**：`tools.restrict({ allow })` —— allow 只列**全局工具**（RESTRICT_ALLOW ~11 个：edit/write/pwsh/read/grep/glob/ask_user_question/todo_write/skill/web_search）；subagent 五档与 kix_capability_* 是 **scope 注册工具，自动可见，不列入 allow**（DSH restrict 契约：scope-local 名列入会 fail）。MCP（GitHub/Playwright/Context7/Semgrep）、workflow/goal/ralph/cordis_* 按需（job_* 2026-08-17 起常驻，见下）。`tools/change` 事件重试（MCP 可能晚于插件注册）。restrict 只影响模型可见面，scope 工具与门禁插件不受影响
+- **Phase 1 裁剪**：当前用 `tools.restrict({ deny })` 隐藏全局 MCP / global web_search；历史 `RESTRICT_ALLOW` 仅作统计，含 10 个全局基础工具（edit/write/read/grep/glob/pwsh/bash/ask_user_question/todo_write/skill）。scope 注册的 generic/cross/reviewer/dev/qa、workflow、job_*、子代理控制与 preset `web_search` 自动可见，不列入 restrict；goal、lite/thinker/vision/fork 按需，ralph 已移除。`tools/change` 事件重试（MCP 可能晚于插件注册）
 - **Phase 2 渐进披露**：`kix_capability_search`（用**全局视图** `schemas(undefined)` 列出被裁剪工具，返回分组元数据不含全 schema）+ `kix_capability_call`（`get(name, undefined)` 全局存在性检查 + 经 `ctx.tools.execute` 代理执行，走完整 pre-execute→guards→execute→post-execute 管线，门禁依然拦截；**传播 `rootCallId`**（嵌套执行树归属），带 agent 调用非 model-direct 不会被 UNKNOWN_TOOL 拒绝）
 - **感知设计（2026-08-16 修订）**：**不挂 pre-execute deny**——restrict 已保证被裁剪工具对模型不可见（直呼=UNKNOWN_TOOL 到不了 pre-execute），且 capability_call 内部子调用必须放行（否则代理永远失败）；引导由 call 返回与 persona 触发句承担
 - **Phase 3 PTC 协同**：保持 `tool-presentation mode: both`；kix 红线「原始输出即证据或需逐步观察时用 native 直呼（证据可回放）」不变；capability_call 亦可被 run_code SDK 子分派调用（子分派过门禁）
@@ -102,7 +103,7 @@ subagent（run_in_background 按需）:
   | `subagent` | 继承主模型（deepseek-official） | 普通分派 / 同厂商观察 |
   | `subagent_cross` | `kix-route:cross` 哨兵 → 运行时自动取反厂商（父 GLM→deepseek 系 / 父 DeepSeek→zai 系） | **跨厂商正交观察者**（三通道观察、最高置信 claim、平台/库语义断言） |
   | `subagent_vision` | `kix-route:vision` 哨兵 → 运行时自动路由到首个声明 image 输入的模型（zai-vision 偏好） | **识图补充**（主模型无视觉；图片路径 + 问题 → child 调 read_image 看图；无 image 模型时启动报错） |
-  - 机制：`agentOptions.provider/model` 在 `resolveChildAgentOptions` 中覆盖父模型路由（已实证）；工具行级配置，模型按需选工具即实现"主模型自主选择子 agent 模型"。**「自动选择」的落点（v5.9 起 kix-route 自动路由）**：cross/vision/thinker 工具行只钉 `kix-route:<tier>` 哨兵模型名，`plugins/kix-route.js` 在子代理首次请求的 agent/request waterfall 里按 llm 实时目录解析——cross = 父厂商取反、vision = 首个声明 image 输入的模型、thinker = deepseek 系首选。**边界语义（v5.9.1，角色核心能力缺失报错 / 角色仍成立降级）**：cross 在单厂商部署（无任何异厂商 provider）、vision 在全目录无 image 模型时**启动即报错**——错误信息附已注册清单与改用建议（subagent 同厂商复核 + 注明局限 / 配置对应 provider），随 run 失败带回父模型，绝不静默同厂商降级（假独立性比失败更糟）；thinker 无 deepseek 时降级环境默认路由（大预算深思考角色仍成立）+ 一次性告警；解析失败不缓存（中途注册的 provider 下一请求生效）；插件缺失时哨兵直达适配器响亮失败（UNKNOWN_MODEL）。此前「必须钉精确对」是声明层约束（agentOptions 自定义键会被 zod 剥离），waterfall 层可整体改写（kix-cost lite 回退同机制已实证）。候选池 = settings.yaml `llm-pi-ai:` 清单 + pi-ai 内置目录；模型线升级只改 settings
+  - 机制：`agentOptions.provider/model` 在 `resolveChildAgentOptions` 中覆盖父模型路由（已实证）；工具行级配置，模型按需选工具即实现"主模型自主选择子 agent 模型"。**「自动选择」的落点（v5.9 起 kix-route 自动路由）**：cross/vision/thinker 工具行只钉 `kix-route:<tier>` 哨兵模型名，`plugins/kix-route.js` 在子代理首次请求的 agent/request waterfall 里按 llm 实时目录解析——cross = 父厂商取反、vision = 首个声明 image 输入的模型、thinker = deepseek 系首选。**边界语义（v5.9.1，角色核心能力缺失报错 / 角色仍成立降级）**：cross 在单厂商部署（无任何异厂商 provider）、vision 在全目录无 image 模型时**启动即报错**——错误信息附已注册清单与改用建议（subagent 同厂商复核 + 注明局限 / 配置对应 provider），随 run 失败带回父模型，绝不静默同厂商降级（假独立性比失败更糟）；thinker 无 deepseek 时降级环境默认路由（大预算深思考角色仍成立）+ 一次性告警；解析失败不缓存（中途注册的 provider 下一请求生效）；cross child 遇 provider 可用性失败时在同一 child 内依次换健康异厂商，默认最多 failover 2 次（可配 `crossProviderFailovers`，耗尽才零证据终止；上下文/请求错误不换厂商）；插件缺失时哨兵直达适配器响亮失败（UNKNOWN_MODEL）。此前「必须钉精确对」是声明层约束（agentOptions 自定义键会被 zod 剥离），waterfall 层可整体改写（kix-cost lite 回退同机制已实证）。候选池 = settings.yaml `llm-pi-ai:` 清单 + pi-ai 内置目录；模型线升级只改 settings
   - 模型路由：`settings.yaml` 的 `llm-pi-ai:` 段配置多 provider profile（pi-ai 适配器内置 `zai-coding-cn`（智谱 GLM-5.3/5.2/5.1/5-turbo，1M 窗口）、`deepseek`、`kimi-coding`、`moonshotai`、`qwen-token-plan` 等目录路由；OpenAI 兼容网关可整体自声明）
   - 已激活 provider：`deepseek-official` + `zai-coding-cn` + `zai-vision`（自定义 profile：`api/coding/paas/v4` 订阅端点，models 列表声明 `glm-4.6v`/`glm-4.6v-flash`/`glm-4.5v`，均声明 image 输入）；`glm-5.3` 可解析（2026-08-15 起 profile 声明，1M 窗口；pi-ai 内置目录尚无该模型，reasoning 档位未声明则按非推理处理，需要档位时在 settings 该条目加 `reasoningEfforts`）、`glm-5.2` 可解析（reasoning: off/low/medium/high/max）；`glm-4.6v` 订阅内实测可用（2026-08-15 识图通过），`glm-5v-turbo` 当前订阅未开放（429 code 1311）
   - 再加其他厂商：`settings.yaml` `llm-pi-ai.providers` 追加 profile + 在 preset 加对应 subagent 工具行即可
@@ -150,17 +151,17 @@ subagent（run_in_background 按需）:
 
 ### §3.2 编曲模型与成员菜单（2026-08-17，四轮碰撞收敛）
 
-CEO「挑成员」在 DSH 的最终落点：**主模型 = 编曲者，成员 = activatable 档**。固定 producer→dev→qa 流水线是 kixpower sprint 工作流约定（重路径），不是范式不变量——S7（CEO 直做）/S8/S9（只借 dev）已实践自由组合并验证；本节把它显式化（规则是负债：拆掉一条没人遵守的固定规则是还债）。
+CEO「挑成员」在 DSH 的最终落点：**主模型 = 编曲者，reviewer/dev/qa = 常驻成员契约，低频能力 = activatable 档**。固定 producer→dev→qa 流水线是 kixpower sprint 工作流约定（重路径），不是范式不变量——S7（CEO 直做）/S8/S9（只借 dev）已实践自由组合并验证。2026-09-03 用户跨实现观察到 generic subagent 常驻、成员隐藏会形成 role drought，故改为职责命中优先专用成员；generic subagent 仅承接无归属 Explore/研究。
 
-| 成员档 | 人名句柄 | 契约（蒸馏自 agents/*.agent.md，单一权威仍在文件） | 激活 |
+| 成员档 | 人名句柄 | 契约（蒸馏自 agents/*.agent.md，单一权威仍在文件） | 可用性 |
 |---|---|---|---|
-| `subagent_dev` | Nova/Sage/Milo 三合一 | 按 plan 编码、target_rules 内写、不越权、不替 QA 签署；每任务自跑 deterministic gate | 首次使用自动激活（kix_capability_call 代理即挂载）／kix_tool_activate 预激活 |
-| `subagent_qa` | Ivy | 不写业务源码、证据门禁、signoff 工件（PASS/CONDITIONAL/FAIL/REVERIFY_REQUIRED 证据绑定） | 首次使用自动激活（kix_capability_call 代理即挂载）／kix_tool_activate 预激活 |
-| `subagent_reviewer` | 无名 | 只读 + 反方辩护三层（L1 反驳预演 / L2 深度下钻 / L3 语言模型压测）+ rebuttal 输出 | 首次使用自动激活（kix_capability_call 代理即挂载）／kix_tool_activate 预激活 |
+| `subagent_dev` | Nova/Sage/Milo 三合一 | 按 plan 编码、target_rules 内写、不越权、不替 QA 签署；每任务自跑 deterministic gate | 常驻，直接调用 |
+| `subagent_qa` | Ivy | 不写业务源码、证据门禁、signoff 工件（PASS/CONDITIONAL/FAIL/REVERIFY_REQUIRED 证据绑定） | 常驻，直接调用 |
+| `subagent_reviewer` | 无名 | 只读 + 反方辩护三层（L1 反驳预演 / L2 深度下钻 / L3 语言模型压测）+ rebuttal 输出 | 常驻，可按 lens 并发多实例 |
 
 **三项不建行决策**：producer 不建行（S7 已证 CEO 自规划通常够；真需要 Remy 级规划，主线程读一次 `agents/kixpower-producer.agent.md`）；orchestrator 不建行（协调留在主线程——DSH 主 agent 有全套编排工具，物化协调子代理 = 雇个协调员协调自己；636 行 orchestrator.agent.md 是 Copilot 时代残留，不建行不蒸馏）；dev 三人合一档（Nova/Sage/Milo 内部切换本就发生在同一 agent body）。
 
-**四条不变量地板**（自由组合不侵蚀，见 persona「编曲模型」节）：① 观察独立性（二相性）——组合的是"手"，"眼"不能自证；② 协调留在主线程；③ 视角来自 prompt 不做角色化——人名是契约句柄不是人设，轻路径观察位仍用无名视角 prompt（双层菜单）；④ 门禁地板与组合无关（发布/合并/破坏性仍走人类确认，kix-guards/kix-discipline 照常，团队产出仍是 claim）。
+**四条不变量地板**（自由组合不侵蚀，见 persona「编曲模型」节）：① 观察独立性（二相性）——组合的是"手"，"眼"不能自证；② 协调留在主线程；③ 视角来自 prompt 不做角色化——人名是契约句柄不是人设；重大审查按风险并发 2–4 个 reviewer 实例，每路必须是不同 lens，cross 只增加厂商独立维度，可补/替一观察路但不替代 reviewer 契约；④ 门禁地板与组合无关（发布/合并/破坏性仍走人类确认，kix-guards/kix-discipline 照常，团队产出仍是 claim）。
 
 **漂移解药（不加新门禁）**：组合决策说出来（本单用了谁、为什么）+ `kix_discipline_spec` mode 字段留痕（成员组合 + 一句理由，2026-08-17 新增，可选字段）+ 「规则是负债」回收纪律观测组合分布（过度组合 / 默认独奏均回收）。中途组合错位 → 重路由一次并说出来。
 
@@ -174,7 +175,6 @@ kix 的原始编排假设只有 runSubagent；DSH 提供更结构化的原生能
 | `goal`（持久同会话目标 + 自动续跑） | Sprint 目标 / 长任务 | `create_goal` 持久化目标，跨轮自动推进 |
 | `plan mode`（只规划不执行） | 写码前决策链 / 需求三检后的规划 | 需要先规划再实现时进入 plan mode |
 | `job`（后台任务） | 长测试/构建 | `pwsh run_in_background: true` + `job_output` |
-| `ralph`（fresh-agent 迭代） | 还债测试 / 零基重写 | 用户明确要求时使用 |
 | `subagent_fork`（继承会话） | 需要上文连续性的子代理 | 比 spawn 更省上下文 |
 | `todo_write` | 多任务跟踪 | 每任务一行 |
 | `ask_user_question` | 发布确认点 | 发布/合并/破坏性操作前必用 |
@@ -220,17 +220,11 @@ kix 的原始编排假设只有 runSubagent；DSH 提供更结构化的原生能
 4. **CodeGraphy / GitHub MCP 无对应**——降级 grep/read + gh CLI
 5. **memory 不自动注入**——按需读取
 
-## 8. 决策树：什么时候用哪个编排
+## 8. 编排载体选择
 
-```
-简单任务（字面明确/低风险/可逆）  → 三通道自编排直接做（subagent 并发观察）
-中等任务（多文件/有副作用）       → 三通道 + ask_user_question 确认点
-复杂任务（跨模块/大改动/全流程）  → CEO 团队编排：
-   ├─ 单会话内分派：subagent（producer→dev→qa 串行，观察并发）
-   ├─ 结构化多阶段：workflow（phases/pipeline/parallel）
-   └─ 长目标自动推进：goal（create_goal + 续跑）
-发布/合并/破坏性操作             → ask_user_question 确认（机械门禁由 sandbox 承担）
-```
+不按“简单/中等/复杂”静态映射动作，也不预设 producer→dev→qa 序列。先看依赖形态与信息流：顺序依赖且中间值很小可直接串行；多结果裁剪、肥中间值隔离、共享状态或控制流优先 `run_code`；独立且够肥的语义子任务用专用成员并行；大规模多阶段扇出才用 `workflow`。角色选择与载体选择正交：职责命中优先 reviewer/dev/qa，generic `subagent` 仅无归属 Explore。
+
+简单低风险任务可 solo；只有缺少真实决策信息才用 `ask_user_question`。发布/合并/破坏性操作默认不做，用户明确指示即已决策，不逐次复问。
 
 ## 9. PTC / Code Mode 融入（2026-08 决策，ADR 性质）
 

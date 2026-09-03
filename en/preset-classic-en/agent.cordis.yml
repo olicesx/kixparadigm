@@ -78,12 +78,12 @@
       ## Arranger Model
       - Main model = arranger; compose by task attributes (solo / observers / dev / qa / reviewer), not a fixed producer→dev→qa pipeline. Say it aloud and persist it in `kix_discipline_spec` `mode`. Dispatch prompt: Tri-Block + contract lines ≤5K (large context → file).
       - Handoff metadata: when dispatching Sprint-orchestrated subagents (dev/qa/reviewer), the dispatch prompt's contract lines MUST carry `current_sprint: N` (N read from docs/.kixpower-current-sprint) — kix-orchestration's handoff gate (marker / plan+progress / QA-completion) only fires on that metadata line; sprint-less observer/light dispatches omit it.
-      - Heavy-path members (auto-activate on first use): dev = Nova/Sage/Milo three-in-one (plan-scoped, target_rules only, never QA sign-off); qa = Ivy (no business source, evidence gate, signoff artifacts); reviewer = read-only three-layer devil's advocate. Light-path observers use unnamed perspective prompts; read producer.agent.md for heavy planning; no orchestrator — coordination stays in the main thread.
+      - Member-first: dev/qa/reviewer are resident; prefer the matching member, generic subagent only for unowned Explore. Dev = Nova/Sage/Milo (plan-scoped, target_rules only, never QA sign-off); qa = Ivy (no business source, evidence gate, signoff). Material reviews fan out 2–4 reviewer instances by risk, each with a distinct lens. Cross may add/replace one lane for provider independence, never a role; planning stays in the main thread.
       - Mis-composition mid-flight → recompose once and say it.
       - Four floors: ① your/dev claims always independently observed, never self-attested ② coordination stays in the main thread ③ perspectives come from prompts, names are contract handles ④ gates are composition-independent — never publish/comment/merge/destructive by default; an explicit user instruction ("comment on the PR") already is the decision — execute without re-asking; team output returns to three-channel verification. Full-flow signals → suggest `/kixpower-*`, wait for confirmation.
 
       ## Cost Discipline
-      - Tiers: lite (mechanical 8K) → subagent (default 64K) → subagent_cross (cross-vendor 64K) → subagent_thinker (128K, high-risk).
+      - Tiers: lite (mechanical 8K) → subagent (general 64K) → subagent_cross (cross-vendor 64K) → subagent_thinker (128K, high-risk).
       - Mark dispatch `[EFFORT]`+`[BUDGET]`; grow observation from unresolved information gaps, not fixed ballot counts, and never replace APPROVE/failure calls just to fill votes.
       - No polling spin: use background only while independent work remains; design observers that can change implementation settle before coding. Final/verification review epochs freeze the artifact until the last child in the tree settles; an edit invalidates old evidence. Prompts carry absolute paths, version anchors, and forbid lists; collect terminal results and proceed; `sleep` is only for tests/backoff/locks.
       - Single-channel results: small results return one complete final message and never duplicate it via `report`; large results write one complete artifact, then final returns only its absolute path, conclusion, and status. Prefer `outputSchema`; reuse conclusions from progress.md/memories.
@@ -96,10 +96,10 @@
       - Tool surface: see the host tool list; on-demand tiers auto-activate on first use via `kix_capability_call`; workflow needs `disabled` removed + restart.
       - Child orchestration plane (v5.12): a depth-1 child may use kix_capability_call only for subagent_lite mechanical evidence; in-process maxDepth=2 plus static/dynamic toolFilter and the guard reject depth>=2, regular/cross/goal/workflow.
       - Sandbox escalation arguments: omit sandbox_permissions and justification on the first call; pair them only for one exact retry after a real sandbox denial; never set them when approval is disabled.
-      - Choose carrier before steps; judge each segment whole. run_code for aggregation, bulky/unknown intermediates, state/control flow, cross-tool transforms, and ad-hoc JS/TS computation; never wrap new JS in bash node -e/heredocs. Bash runs existing scripts or one decision-ready operation. Judgment/raw evidence/edits/approvals/side effects/stepwise checks stay native. Workflow stages; goal long; plan first; long jobs; stop on deny. No quotas.
+      - Choose carrier before steps; judge each segment whole. Outer semantic work does not swallow inner mechanical islands. run_code for aggregation, bulky/unknown intermediates, state/control flow, cross-tool transforms, and ad-hoc JS/TS computation; never wrap new JS in bash node -e/heredocs. Bash runs existing scripts or one decision-ready operation. Judgment/raw evidence/edits/approvals/side effects/stepwise checks stay native. Workflow stages; goal long; plan first; long jobs; stop on deny. No quotas.
 
       ## Resources
-      `instructions/kixparadigm-core.instructions.md`; `prompts/kixpower-*`; `memories/*.md` (orchestration lessons ①-⑪ + candidates live in `memories/orchestration-lessons.md` — consult before dispatch/audit-type decisions); skills live in the session catalog. Deep-mechanism docs stay Chinese in this edition (TRANSLATION-STATUS.md).
+      `instructions/kixparadigm-core.instructions.md`; `prompts/kixpower-*`; `memories/*.md` (orchestration lessons ①-⑬ + candidates live in `memories/orchestration-lessons.md` — consult before dispatch/audit/review-type decisions); skills live in the session catalog. Deep-mechanism docs stay Chinese in this edition (TRANSLATION-STATUS.md).
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
   config:
@@ -541,12 +541,10 @@
     # three layers (2026-08-17: three questions made explicit layers) +
     # structured rebuttal output. The "before publishing a claim" adversarial
     # channel (compare: kix-guards guards operations, kix-discipline guards
-    # edits). Disabled by default (progressive surface); first use auto-activates
-    # (kix_capability_call { tool: subagent_reviewer, arguments: {…} } mounts and
-    # runs it) or kix_tool_activate pre-activates.
+    # edits). It is now a resident high-frequency observer; material review may
+    # fan out multiple reviewer instances with distinct lenses.
     - id: tool-subagent-reviewer
       name: '@deepseek-ai/dsh-tool-subagent'
-      disabled: true
       config:
         provider: spawn
         toolName: subagent_reviewer
@@ -613,11 +611,10 @@
     # (single source of truth, reviewer precedent); composition traces go to
     # the mode field of kix_discipline_spec (members + one-line reason); the
     # four floor invariants live in the persona Arranger Model section.
-    # Disabled by default (progressive surface); first use auto-activates
-    # (kix_capability_call mounts) or kix_tool_activate pre-activates.
+    # reviewer/dev/qa are resident and role-first; low-frequency lite/thinker/
+    # vision/fork tiers remain on-demand.
     - id: tool-subagent-qa
       name: '@deepseek-ai/dsh-tool-subagent'
-      disabled: true
       config:
         provider: spawn
         toolName: subagent_qa
@@ -665,7 +662,6 @@
 
     - id: tool-subagent-dev
       name: '@deepseek-ai/dsh-tool-subagent'
-      disabled: true
       config:
         provider: spawn
         toolName: subagent_dev
@@ -882,12 +878,14 @@
 # environment default (role still stands) with a warning; a missing plugin
 # fails LOUD on the sentinel (never silently degrades to same-vendor).
 # Cooperates with kix-cost under any waterfall order (effort rule reused from
-# the same source). v8: cross preference candidates are filtered to registered providers first. See plugins/kix-route.js; unit tests: node plugins/kix-route.test.js (80 assertions).
+# the same source). v8: cross preference candidates are filtered to registered providers first.
+# v13: a cross child automatically failovers to at most two other healthy providers on provider-availability failures; only exhaustion is terminal zero evidence. See plugins/kix-route.js; unit tests: node plugins/kix-route.test.js (91 assertions).
 - id: kix-route
   name: ./plugins/kix-route.js
   config:
     # Generic QUOTA TTL; HTTP 402 / Insufficient Balance stays process-wide open until restart/reload.
     providerCircuitTtlMs: 300000
+    crossProviderFailovers: 2
     fallbackProviderOrder: [ su2api, zai-coding-cn, deepseek-official ]
 
 # ── presentation（PTC/Code Mode 融入）───────────────────────────────────────
@@ -921,17 +919,15 @@
 #   retry. Phase 2 — kix_capability_search (on-demand catalog, group metadata,
 #   no full schemas) + kix_capability_call (proxy execution via ctx.tools.execute,
 #   full pre-execute→guards→execute→post-execute pipeline, gates still fire).
-#   Scope orchestration tools are NOT trimmed by restrict (auto-visible):
-#   job_*/subagent control stay mounted and resident; workflow/goal/ralph are
-#   low-frequency heavy → disabled by default (2026-08-15 trimming decision;
-#   measured: workflow 7-way parallel audit works once enabled — see delegation
-#   group comment).
+#   Scope tools are not trimmed by restrict: workflow/job_*/subagent control and
+#   reviewer/dev/qa are resident; goal plus lite/thinker/vision/fork are
+#   on-demand; ralph was removed.
 # Phase 3 — keeps tool-presentation mode:both (native direct calls for
 #   verification + run_code for mechanical steps); kix red line "verification/
 #   observation stay native (evidence replayable)" unchanged; capability_call is
 #   also callable from run_code SDK sub-dispatches (which pass through gates).
 # Disable trimming (keep search/call only): config: { enableRestrict: false }.
-# Unit tests: node plugins/kix-focus.test.js (49 assertions).
+# Unit tests: node plugins/kix-focus.test.js (123 assertions, including resident-member routing).
 - id: kix-focus
   name: ./plugins/kix-focus.js
 

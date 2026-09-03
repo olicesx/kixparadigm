@@ -15,10 +15,10 @@
 | # | 交付 | 落点 |
 |---|---|---|
 | 1 | persona 路由节改写为**编曲模型**（含重路由一行 + 四条不变量地板：观察独立性/协调主线程/视角来自 prompt/门禁不变） | `agent.cordis.yml` persona「流程路由信号」+「编曲模型」节（替换「CEO 团队编排」） |
-| 2 | **qa/dev/reviewer 三个 activatable 档**：人名=契约句柄（Ivy：不写业务源码+证据门禁+signoff 工件；Nova/Sage/Milo 三合一：按 plan 编码+target_rules 内写+不替 QA 签署）；producer 不建行（S7 已证，需要时主线程读 .md）；orchestrator 不建行（协调留主线程） | `agent.cordis.yml` delegation group 三行（照抄 lite/reviewer 先例：spawn 行 persona 字段）+ kix-focus `ACTIVATABLE_TOOLS`/目录组 |
-| 3 | reviewer **反方辩护三层**（三问显式分层：L1 反驳预演 / L2 深度下钻 / L3 语言模型压测） | reviewer 行 persona（agent.cordis.yml + kix-focus.js 双副本同步） |
+| 2 | **qa/dev/reviewer 三个 role-first 常驻成员**：人名=契约句柄；职责命中优先专用成员，generic subagent 仅无归属 Explore；重大审查动态 2–4 reviewer lens；producer/orchestrator 不建行 | `agent.cordis.yml` delegation group 三个常驻 spawn 行 + kix-focus resident/目录组 |
+| 3 | reviewer **反方辩护三层**（三问显式分层：L1 反驳预演 / L2 深度下钻 / L3 语言模型压测） | agent.cordis.yml 常驻 reviewer 行 persona；kix-focus 不再重复注册同名 persona |
 | 4 | **spec mode 字段**（编曲留痕：成员组合+一句理由，可选不进必填集；空值渲染占位、回读映射 undefined 防假值） | `plugins/kix-discipline.js`（工具 schema/renderSpec/parseSpec）|
-| 5 | **枚举 bug 修复**：`kix_tool_activate`/`kix_tool_deactivate` 描述与参数枚举曾漏 `subagent_reviewer`（集合有、描述无——模型照描述行事永远激活不了它）；修为全枚举 + 回归断言（描述必须覆盖 ACTIVATABLE_TOOLS 全键；workflow 仅激活侧枚举——realm 限制永不入 activated） | `plugins/kix-focus.js` + 测试 |
+| 5 | **枚举与常驻边界**：激活/卸载描述覆盖全部低频 `ACTIVATABLE_TOOLS`，并明确 reviewer/qa/dev 已常驻、不可重复激活；成员 capability_call 仅作 Sprint 注入兼容入口 | `plugins/kix-focus.js` + 测试 |
 
 **附带修复**：`parseSpec` 标题按字面构造 RegExp 未转义——mode 节标题「成员组合 + 一句理由」的 ASCII `+` 改变匹配语义致 grab 空转（潜在 bug 类：任何含元字符的节标题都会静默失效）；`escapeRe` 按字面转义，既有标题无元字符行为不变。`kix-orchestration SUBAGENT_TOOLS` 补 `subagent_qa/dev`（集合本意=全部 subagent 行，reviewer 前例）。
 

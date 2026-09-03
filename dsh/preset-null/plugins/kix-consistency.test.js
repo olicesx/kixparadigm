@@ -885,6 +885,32 @@ function makePostExec(callId) {
       lib.checkCrossRouteBinding({ root: crossRoot, rel }).failures.some((f) => f.includes('must be enabled')))
   }
 
+  // ── role-first resident member bindings ────────────────────────────────
+  {
+    section('__internals: reviewer/qa/dev resident bindings')
+    const memberRoot = mkdtemp('kix-cons-members-')
+    const rel = 'agent.cordis.yml'
+    const memberRows = lib.RESIDENT_MEMBER_TOOLS.map((toolName) => [
+      `    - id: tool-${toolName}`,
+      "      name: '@deepseek-ai/dsh-tool-subagent'",
+      '      config:',
+      `        toolName: ${toolName}`,
+    ].join('\n')).join('\n')
+    fs.writeFileSync(path.join(memberRoot, rel), memberRows, 'utf8')
+    await ok('reviewer/qa/dev 各一条且未禁用 → 通过',
+      lib.checkResidentMemberBindings({ root: memberRoot, rel }).failures.length === 0)
+    fs.writeFileSync(path.join(memberRoot, rel), memberRows.replace(
+      '    - id: tool-subagent_qa\n',
+      '    - id: tool-subagent_qa\n      disabled: true\n'), 'utf8')
+    await ok('任一成员 disabled → 失败并点名成员', (() => {
+      const r = lib.checkResidentMemberBindings({ root: memberRoot, rel })
+      return r.failures.length === 1 && r.failures[0].includes('subagent_qa must be resident')
+    })())
+    fs.writeFileSync(path.join(memberRoot, rel), memberRows.replace(/.*toolName: subagent_dev\n?/, ''), 'utf8')
+    await ok('任一成员工具行缺失 → 失败',
+      lib.checkResidentMemberBindings({ root: memberRoot, rel }).failures.some((f) => f.includes('subagent_dev tool row')))
+  }
+
   // ── 收尾：清理夹具 ─────────────────────────────────────────────────────
   for (const dir of created) {
     try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* 忽略清理失败 */ }

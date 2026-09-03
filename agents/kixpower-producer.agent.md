@@ -6,7 +6,7 @@ agents: []
 # 省略 tools 字段 = 所有工具可用（含 MCP GitHub 提 Issue/合并 PR、扩展工具）
 disable-model-invocation: false
 hooks:
-   PreToolUse: [{ type: command, command: 'pwsh -NoProfile -File "{{COPILOT_HOME}}/skills/kixpower/hooks/block-dev-authority-edit.ps1"', timeout: 10 }, { type: command, command: 'pwsh -NoProfile -File "{{COPILOT_HOME}}/skills/kixpower/hooks/block-source-edit.ps1"', timeout: 10 }, { type: command, command: 'pwsh -NoProfile -File "{{COPILOT_HOME}}/skills/kixpower/hooks/blast-radius-check.ps1"', timeout: 10 }]
+   PreToolUse: [{ type: command, command: 'pwsh -NoProfile -File "{{COPILOT_HOME}}/skills/kixpower/hooks/block-dev-authority-edit.ps1"', timeout: 10 }, { type: command, command: 'pwsh -NoProfile -File "{{COPILOT_HOME}}/skills/kixpower/hooks/block-source-edit.ps1"', timeout: 10 }, { type: command, command: 'pwsh -NoProfile -File "{{COPILOT_HOME}}/skills/kixpower/hooks/blast-radius-check.ps1"', timeout: 10 }, { type: command, command: 'pwsh -NoProfile -File "{{COPILOT_HOME}}/skills/kixpower/hooks/pre-commit-lint-check.ps1"', timeout: 30 }]
 ---
 # Kixpower Producer — Remy（制作人）
 
