@@ -791,6 +791,51 @@ await ok('v4.1 无 command 参数的工具 → 零开销短路不注入', (async
 await ok('SUBAGENT_TOOLS 覆盖全部工具行（含 reviewer，2026-08-17 补；含编曲成员 qa/dev）', (() => {
   return I.SUBAGENT_TOOLS.has('subagent_reviewer') && I.SUBAGENT_TOOLS.has('subagent_cross') && I.SUBAGENT_TOOLS.has('subagent_lite') && I.SUBAGENT_TOOLS.has('subagent_qa') && I.SUBAGENT_TOOLS.has('subagent_dev')
 })())
+
+// ── v12（2026-09-03）：sleep 状态门——在飞后台分派计数替代措辞 AND 门 ──────
+// 出生证明：真实会话 3 发 sleep 45/90/120 轮询等待后台 reviewer，描述写
+// "wait for reviewer" 不含 subagent/子代理，措辞 AND 门穿透。
+await ok('v12 纯函数：inflight>0 + 措辞不匹配 → 命中（本会话实证形态）', (() => {
+  return I.isSleepWaitForSubagent({ command: 'sleep 45; echo waited', description: 'Brief wait for reviewer to finish', inflightBackgroundDispatches: 1 })
+})())
+await ok('v12 纯函数：inflight=0 + 措辞不匹配 → 不命中（合法 sleep：测试/退避）', (() => {
+  return !I.isSleepWaitForSubagent({ command: 'sleep 5', description: 'Retry backoff before re-running test', inflightBackgroundDispatches: 0 })
+})())
+await ok('v12 纯函数：inflight>0 + 非 sleep 命令 → 不命中', (() => {
+  return !I.isSleepWaitForSubagent({ command: 'go test ./...', description: 'Run tests', inflightBackgroundDispatches: 3 })
+})())
+await ok('v12 纯函数：措辞命中 + inflight=0 → 仍命中（原高置信通道不回归）', (() => {
+  return I.isSleepWaitForSubagent({ command: 'sleep 240', description: 'Extended wait for subagent C', inflightBackgroundDispatches: 0 })
+})())
+await ok('v12 端到端：后台分派后 sleep（描述写 reviewer）→ 注入提醒', (async () => {
+  const agentId = 'orch-v12-bg'
+  await dispatchPre('subagent', { prompt: '反方审查任务书', run_in_background: true }, agentId)
+  await dispatchPre('bash', { command: 'sleep 90; echo waited', description: 'Wait for reviewer completion' }, agentId)
+  const exec = { name: 'bash', arguments: { command: 'sleep 90' }, token: 't', callId: 'c', agent: { id: agentId, session: { header: sessionHeader } } }
+  const d = await postExecute[0](exec, { isError: false }, () => Promise.resolve({ kind: 'accept' }))
+  return d.kind === 'accept' && Array.isArray(d.additionalContexts) && d.additionalContexts.length === 1
+    && d.additionalContexts[0].content.some((c) => c.text.includes('sleep'))
+})())
+await ok('v12 端到端：前台分派（run_in_background:false）不计数 → sleep 不注入', (async () => {
+  const agentId = 'orch-v12-fg'
+  await dispatchPre('subagent', { prompt: '前台阻塞审查', run_in_background: false }, agentId)
+  await dispatchPre('bash', { command: 'sleep 60', description: 'Wait for reviewer' }, agentId)
+  const exec = { name: 'bash', arguments: { command: 'sleep 60' }, token: 't', callId: 'c', agent: { id: agentId, session: { header: sessionHeader } } }
+  const d = await postExecute[0](exec, { isError: false }, () => Promise.resolve({ kind: 'accept' }))
+  return d.kind === 'accept' && (d.additionalContexts === undefined || d.additionalContexts.length === 0)
+})())
+await ok('v12 端到端：subagent/end 递减计数 → 结算后 sleep 不再命中状态门', (async () => {
+  const agentId = 'orch-v12-end'
+  const fakeAgent = { id: agentId, session: { header: { cwd: os.tmpdir() } }, steer() {} }
+  await dispatchPre('subagent', { prompt: '观察任务', run_in_background: true }, agentId)
+  await emitCompletedChild(fakeAgent, { runId: 'v12r', provider: 'kix-subagent', id: 'v12-child', local: true, stopReason: 'end_turn', lastAssistantMessage: [{ type: 'text', text: 'done' }] })
+  await dispatchPre('bash', { command: 'sleep 30', description: 'Idle wait' }, agentId)
+  const exec = { name: 'bash', arguments: { command: 'sleep 30' }, token: 't', callId: 'c', agent: { id: agentId, session: { header: sessionHeader } } }
+  const d = await postExecute[0](exec, { isError: false }, () => Promise.resolve({ kind: 'accept' }))
+  return d.kind === 'accept' && (d.additionalContexts === undefined || d.additionalContexts.length === 0)
+})())
+// ── v12 测试块结束 ────────────────────────────────────────────────────────
+
 await ok('pre→post 一次性注入提醒，第二次同模式不再注入', (async () => {
   await dispatchPre('bash', { command: 'sleep 60 && echo done', description: 'Wait for subagent C' }, 'orch-sleep')
   const exec = { name: 'bash', arguments: { command: 'sleep 60' }, token: 't', callId: 'c', agent: { id: 'orch-sleep', session: { header: sessionHeader } } }

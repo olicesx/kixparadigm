@@ -145,9 +145,27 @@ await ok('classifyMutationPath: documentation', I.classifyMutationPath('README.m
 await ok('classifyMutationPath: Windows absolute artifact', I.classifyMutationPath('C:\\repo\\tmp-analyze\\report.md') === 'artifact')
 await ok('classifyMutationPath: sprint artifact', I.classifyMutationPath('/repo/docs/sprint-3/qa-signoff.md') === 'artifact')
 await ok('classifyMutationPath: config remains source', I.classifyMutationPath('dsh/preset/agent.cordis.yml') === 'source')
+await ok('classifyMutationPath: DSH settings.yaml 是 artifact',
+  I.classifyMutationPath('/root/.dsh/settings.yaml') === 'artifact' &&
+  I.classifyMutationPath('.dsh/settings.yml') === 'artifact' &&
+  I.classifyMutationPath('C:\\Users\\x\\.dsh\\settings.yaml') === 'artifact')
+await ok('classifyMutationPath: preset 插件源码仍是 source',
+  I.classifyMutationPath('/root/.dsh/.agent-presets/kixparadigm/plugins/kix-focus.js') === 'source')
+await ok('isTestCommand 否定: node heredoc 不算测试',
+  !I.isTestCommand("node --input-type=module <<'JS'\nconsole.log(1)\nJS") &&
+  !I.isVerificationCommand('echo test'))
 await ok('isMutationTool: edit', I.isMutationTool('edit'))
 await ok('isMutationTool: write', I.isMutationTool('write'))
 await ok('isMutationTool 否定: read', !I.isMutationTool('read'))
+await ok('lintIdsForPath: rust 两族', I.lintIdsForPath('src/main.rs').join(',') === 'rust-fmt,rust-clippy')
+await ok('lintIdsForPath: js/ts', I.lintIdsForPath('src/a.ts').join(',') === 'js' && I.lintIdsForPath('src/a.mjs').join(',') === 'js')
+await ok('lintIdsForPath: 文档/artifact 空', I.lintIdsForPath('README.md').length === 0 && I.lintIdsForPath('/root/.dsh/settings.yaml').length === 0)
+await ok('lintIdsForPath: rust 测试文件仍要 lint', I.lintIdsForPath('tests/foo.rs').join(',') === 'rust-fmt,rust-clippy')
+await ok('lintIdsForCommand: fmt/clippy 分族', I.lintIdsForCommand('cargo fmt --check').join(',') === 'rust-fmt' && I.lintIdsForCommand('cargo clippy -D warnings').join(',') === 'rust-clippy')
+await ok('lintIdsForCommand: cargo test / npm test 不算 lint', I.lintIdsForCommand('cargo test').length === 0 && I.lintIdsForCommand('npm test').length === 0)
+await ok('lintIdsForCommand: eslint 算 js', I.lintIdsForCommand('npx eslint src').join(',') === 'js')
+await ok('isGitCommitCommand: 普通 commit', I.isGitCommitCommand('git commit -m x') && I.isGitCommitCommand('git -C /tmp commit -m x'))
+await ok('isGitCommitCommand 否定: commit-tree/echo/status', !I.isGitCommitCommand('git commit-tree HEAD') && !I.isGitCommitCommand('echo git commit') && !I.isGitCommitCommand('git status'))
 await ok('specComplete: 空对象 false', !I.specComplete({}))
 await ok('specComplete: 部分字段 false', !I.specComplete({ goal: 'x' }))
 await ok('specComplete: 空白字段 false', !I.specComplete({ goal: ' ', xy: 'a', assumptions: 'b', path: 'c', acceptance: 'd' }))
@@ -371,11 +389,13 @@ section('turn-stopping')
 await ok('有实现 edit 无测试 → steer 提醒', (async () => {
   await dispatchPreAs('edit', { file_path: 'src/e.ts' }, 'g7')
   await dispatchTurnAs('g7')
-  return steered.length === 1
+  const texts = steered.map((m) => (m.content && m.content[0] && m.content[0].text) || '')
+  return steered.length === 2 && texts.some((t) => /测试未通过/.test(t)) && texts.some((t) => /语法检查/.test(t))
 })())
-await ok('有实现 edit 且有测试 → 不提醒', (async () => {
+await ok('有实现 edit 且有测试+lint → 不提醒', (async () => {
   await dispatchPreAs('edit', { file_path: 'src/f.ts' }, 'g8')
   await dispatchPostAs('bash', { command: 'npm test' }, { isError: false }, 'g8')
+  await dispatchPostAs('bash', { command: 'npx eslint src/f.ts' }, { isError: false }, 'g8')
   await dispatchTurnAs('g8')
   return steered.length === 0
 })())
@@ -389,7 +409,7 @@ await ok('remindOnce：同会话第二次不重复提醒', (async () => {
   const first = steered.length
   await dispatchPreAs('edit', { file_path: 'src/h.ts' }, 'g9')
   await dispatchTurnAs('g9')
-  return first === 1 && steered.length === 0
+  return first === 2 && steered.length === 0
 })())
 await ok('双重计数回归：pre-execute 测试命令不计数，被拦/失败测试不构成 green（审查修复）', (async () => {
   // 测试命令经 pre-execute(不再 +1) → 无 post-execute 成功 → turnTests=0
@@ -398,13 +418,52 @@ await ok('双重计数回归：pre-execute 测试命令不计数，被拦/失败
   // 被拦:post-execute isError → 不计数
   await dispatchPostAs('bash', { command: 'npm test' }, { isError: true }, 'dup-test')
   await dispatchTurnAs('dup-test')
-  return steered.length === 1 // 测试未成功运行 → 必须提醒(旧实现 turnTests≥1 静默)
+  return steered.length === 2 // green + lint；测试未成功运行必须提醒
 })())
 await ok('双重计数回归：成功测试仍计 1 次（非 2）', (async () => {
   await dispatchPreAs('edit', { file_path: 'src/ok.ts' }, 'ok-test')
   await dispatchPostAs('bash', { command: 'npm test' }, { isError: false }, 'ok-test')
+  await dispatchPostAs('bash', { command: 'npx eslint src/ok.ts' }, { isError: false }, 'ok-test')
   await dispatchTurnAs('ok-test')
-  return steered.length === 0 // 成功测试=green 证据 → 不提醒(若计 2 次语义仍 0,此断言保底线)
+  return steered.length === 0 // 成功测试+lint=不提醒
+})())
+section('language lint gate')
+await ok('rust 只跑 cargo test → 仍提醒 fmt/clippy', (async () => {
+  await dispatchPreAs('edit', { file_path: 'src/main.rs' }, 'lint-rs-test')
+  await dispatchPostAs('bash', { command: 'cargo test' }, { isError: false }, 'lint-rs-test')
+  await dispatchTurnAs('lint-rs-test')
+  const texts = steered.map((m) => (m.content && m.content[0] && m.content[0].text) || '')
+  return steered.length === 1 && texts.some((t) => /rust-fmt/.test(t) && /rust-clippy/.test(t) && /cargo test/.test(t))
+})())
+await ok('rust 只跑 fmt → 仍提醒 clippy', (async () => {
+  await dispatchPreAs('edit', { file_path: 'src/lib.rs' }, 'lint-rs-fmt')
+  await dispatchPostAs('bash', { command: 'cargo fmt --check' }, { isError: false }, 'lint-rs-fmt')
+  await dispatchPostAs('bash', { command: 'cargo test' }, { isError: false }, 'lint-rs-fmt')
+  await dispatchTurnAs('lint-rs-fmt')
+  const texts = steered.map((m) => (m.content && m.content[0] && m.content[0].text) || '')
+  return steered.length === 1 && texts.some((t) => /rust-clippy/.test(t) && !/rust-fmt/.test(t))
+})())
+await ok('rust fmt+clippy+test → 不提醒', (async () => {
+  await dispatchPreAs('edit', { file_path: 'src/ok.rs' }, 'lint-rs-ok')
+  await dispatchPostAs('bash', { command: 'cargo fmt --check && cargo clippy -D warnings && cargo test' }, { isError: false }, 'lint-rs-ok')
+  await dispatchTurnAs('lint-rs-ok')
+  return steered.length === 0
+})())
+await ok('git commit 漏 lint → allow + 注入提醒（不 deny）', (async () => {
+  await dispatchPreAs('edit', { file_path: 'src/c.rs' }, 'lint-commit')
+  const pre = await dispatchPreAs('bash', { command: 'git commit -m x' }, 'lint-commit')
+  const post = await dispatchPostAs('bash', { command: 'git commit -m x' }, { isError: false }, 'lint-commit')
+  const texts = ((post && post.additionalContexts) || []).map((m) => (m.content && m.content[0] && m.content[0].text) || '')
+  return pre.kind === 'allow' && post.kind === 'accept' && texts.some((t) => /语法检查/.test(t))
+})())
+await ok('git commit 已跑 lint → 不注入', (async () => {
+  await dispatchPreAs('edit', { file_path: 'src/d.rs' }, 'lint-commit-ok')
+  await dispatchPostAs('bash', { command: 'cargo fmt --check' }, { isError: false }, 'lint-commit-ok')
+  await dispatchPostAs('bash', { command: 'cargo clippy -D warnings' }, { isError: false }, 'lint-commit-ok')
+  const pre = await dispatchPreAs('bash', { command: 'git commit -m x' }, 'lint-commit-ok')
+  const post = await dispatchPostAs('bash', { command: 'git commit -m x' }, { isError: false }, 'lint-commit-ok')
+  const extras = (post && post.additionalContexts) || []
+  return pre.kind === 'allow' && extras.length === 0
 })())
 
 // ── 6. spec 加载竞态回归（审查修复）───────────────────────────────────────

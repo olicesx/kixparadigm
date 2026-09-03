@@ -89,7 +89,8 @@ assert.strictEqual(plugin.name, 'kix-focus')
 mockSchemas = [
   { name: 'edit', description: 'Edit' }, { name: 'read', description: 'Read' },
   { name: 'subagent', description: 'Sub' }, { name: 'ask_user_question', description: 'Ask' },
-  { name: 'pwsh', description: 'Shell' },
+  { name: 'subagent_reviewer', description: 'Reviewer' }, { name: 'subagent_qa', description: 'QA' },
+  { name: 'subagent_dev', description: 'Dev' }, { name: 'pwsh', description: 'Shell' },
   { name: 'workflow', description: 'Flow' },
   { name: 'job_output', description: 'Job' },
 ]
@@ -126,7 +127,8 @@ await ok('read 常驻', I.RESIDENT_TOOLS.has('read'))
 await ok('subagent 常驻', I.RESIDENT_TOOLS.has('subagent'))
 await ok('subagent_cross 常驻', I.RESIDENT_TOOLS.has('subagent_cross'))
 await ok('subagent_lite 未挂载(渐进面,默认 disabled)', I.isOnDemand('subagent_lite'))
-await ok('subagent_reviewer 未挂载(渐进面,默认 disabled)', I.isOnDemand('subagent_reviewer'))
+await ok('reviewer/qa/dev 为 role-first 常驻成员',
+  ['subagent_reviewer', 'subagent_qa', 'subagent_dev'].every((n) => I.RESIDENT_TOOLS.has(n) && !I.isOnDemand(n)))
 await ok('subagent_fork 未挂载(渐进面,默认 disabled)', I.isOnDemand('subagent_fork'))
 await ok('ask_user_question 常驻', I.RESIDENT_TOOLS.has('ask_user_question'))
 await ok('kix_capability_search 常驻', I.RESIDENT_TOOLS.has('kix_capability_search'))
@@ -223,6 +225,9 @@ const sampleSchemas = [
   { name: 'mcp__playwright__browser_click', description: 'Click' },
   { name: 'mcp__playwright__browser_snapshot', description: 'Snapshot' },
   { name: 'workflow', description: 'Run workflow' },
+  { name: 'subagent_reviewer', description: 'Reviewer' },
+  { name: 'subagent_qa', description: 'QA' },
+  { name: 'subagent_dev', description: 'Dev' },
   { name: 'create_goal', description: 'Create goal' },
   { name: 'job_output', description: 'Job output' },
   { name: 'skill', description: 'Load a skill' },
@@ -240,6 +245,23 @@ await ok('查询 workflow 返回编排组', (() => {
   const r = I.searchCapabilities(sampleSchemas, 'workflow')
   return r.some((g) => g.id === 'orchestration')
 })())
+await ok('单 token skill 命中 kix-surface', (() => {
+  const r = I.searchCapabilities(sampleSchemas, 'skill')
+  return r.some((g) => g.id === 'kix-surface') && r.every((g) => g.id !== 'github')
+})())
+await ok('自然语言多词不再空组', (() => {
+  const r = I.searchCapabilities(sampleSchemas, 'skill experience glm thinking effort DSH model')
+  return r.length > 0 && r.some((g) => g.id === 'kix-surface')
+})())
+await ok('多词仍能按 token 命中 github', (() => {
+  const r = I.searchCapabilities(sampleSchemas, 'kix-focus github issue')
+  return r.some((g) => g.id === 'github') && r.find((g) => g.id === 'github').toolCount === 3
+})())
+await ok('capability_call 只回 kix-surface 不灌全部 MCP', (() => {
+  const r = I.searchCapabilities(sampleSchemas, 'kix_capability_call')
+  return r.length === 1 && r[0].id === 'kix-surface'
+})())
+await ok('queryTokens 拆空白且丢 1 字符', I.queryTokens('skill experience a glm').join(',') === 'skill,experience,glm')
 await ok('组内 exampleTools 截断 3 个', (() => {
   const r = I.searchCapabilities(sampleSchemas, '')
   const gh = r.find((g) => g.id === 'github')
@@ -427,51 +449,35 @@ section('按需激活')
 const activateTool = registeredTools.find((t) => t.name === 'kix_tool_activate')
 const deactivateTool = registeredTools.find((t) => t.name === 'kix_tool_deactivate')
 await ok('activate/deactivate 工具已注册', activateTool !== undefined && deactivateTool !== undefined)
-await ok('ACTIVATABLE_TOOLS 含 workflow/goal/细分档位/reviewer/qa/dev(ralph/jobs/web_search 已移除)', (() => {
-  return ['workflow', 'goal', 'subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork', 'subagent_reviewer', 'subagent_qa', 'subagent_dev']
+await ok('ACTIVATABLE_TOOLS 仅含 workflow/goal/低频档位，常驻成员不重复注册', (() => {
+  return ['workflow', 'goal', 'subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork']
     .every((n) => I.ACTIVATABLE_TOOLS[n] && I.ACTIVATABLE_TOOLS[n].package)
-    && I.ACTIVATABLE_TOOLS.ralph === undefined
-    && I.ACTIVATABLE_TOOLS.jobs === undefined
-    && I.ACTIVATABLE_TOOLS.web_search === undefined // 2026-08-20 三分法回滚：恢复常驻
+    && ['subagent_reviewer', 'subagent_qa', 'subagent_dev', 'ralph', 'jobs', 'web_search']
+      .every((n) => I.ACTIVATABLE_TOOLS[n] === undefined)
 })())
 await ok('web_search 恢复常驻（三分法回滚：cordis tool-web 行已恢复）', I.ACTIVATABLE_TOOLS.web_search === undefined)
 await ok('所有动态 subagent 档位 maxDepth=2', (() => {
-  return ['subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork', 'subagent_reviewer', 'subagent_qa', 'subagent_dev']
+  return ['subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork']
     .every((n) => I.ACTIVATABLE_TOOLS[n].config.maxDepth === 2)
 })())
 await ok('动态非 lite 档位携静态 9-name toolFilter deny', (() => {
   const expected = ['exit_plan_mode', 'subagent', 'subagent_cross', 'interrupt_agent', 'send_message', 'list_agents', 'ask_user_question', 'kix_tool_activate', 'kix_tool_deactivate']
-  return ['subagent_thinker', 'subagent_vision', 'subagent_fork', 'subagent_reviewer', 'subagent_qa', 'subagent_dev']
+  return ['subagent_thinker', 'subagent_vision', 'subagent_fork']
     .every((n) => JSON.stringify(I.ACTIVATABLE_TOOLS[n].config.toolFilter && I.ACTIVATABLE_TOOLS[n].config.toolFilter.deny) === JSON.stringify(expected))
     && I.ACTIVATABLE_TOOLS.subagent_lite.config.toolFilter.allow.length === 4
     && I.ACTIVATABLE_TOOLS.subagent_lite.config.toolFilter.deny === undefined
 })())
-await ok('subagent_reviewer 激活配置含反方辩护三层 persona', (() => {
-  const c = I.ACTIVATABLE_TOOLS.subagent_reviewer.config
-  return c.toolName === 'subagent_reviewer'
-    && c.persona.includes('adversarial reviewer')
-    && c.persona.includes('L1 rebuttal rehearsal')
-    && c.persona.includes('L2 depth probe')
-    && c.persona.includes('L3 language-model stress')
-    && c.persona.includes('rebuttal')
-    && c.agentOptions.maxTokens === 65536
+await ok('成员发现组明确 role-first、动态 reviewer lens 与 generic Explore 边界', (() => {
+  const g = I.CAPABILITY_GROUPS.find((x) => x.id === 'subagent-tiers')
+  return !!g && g.hint.includes('常驻可直接调用') && g.hint.includes('generic subagent 仅无归属 Explore')
+    && g.hint.includes('2–4 个 reviewer') && g.hint.includes('每路不同 lens')
+    && g.hint.includes('cross 是厂商独立维度')
 })())
-await ok('subagent_qa 激活配置含 Ivy 契约（不写业务源码/证据门禁/REVERIFY）', (() => {
-  const c = I.ACTIVATABLE_TOOLS.subagent_qa.config
-  return c.toolName === 'subagent_qa'
-    && c.persona.includes('Ivy')
-    && c.persona.includes('never business source code')
-    && c.persona.includes('Evidence gate')
-    && c.persona.includes('REVERIFY_REQUIRED')
-    && c.agentOptions.maxTokens === 65536
-})())
-await ok('subagent_dev 激活配置含三人合一契约（Nova/Sage/Milo/不替 QA 签署）', (() => {
-  const c = I.ACTIVATABLE_TOOLS.subagent_dev.config
-  return c.toolName === 'subagent_dev'
-    && c.persona.includes('Nova') && c.persona.includes('Sage') && c.persona.includes('Milo')
-    && c.persona.includes('target_rules')
-    && c.persona.includes('Never sign QA verdicts')
-    && c.agentOptions.maxTokens === 65536
+await ok('常驻成员不会进入动态激活/卸载枚举', (() => {
+  const text = activateTool.parameters.properties.tool.description + '\n' + deactivateTool.parameters.properties.tool.description
+  return ['subagent_reviewer', 'subagent_qa', 'subagent_dev'].every((n) => !text.includes(n))
+    && activateTool.description.includes('reviewer/qa/dev 已常驻')
+    && deactivateTool.description.includes('reviewer/qa/dev 与 jobs 常驻')
 })())
 await ok('激活/卸载描述完整枚举 ACTIVATABLE_TOOLS（枚举 bug 回归防线：reviewer 曾漏）', (() => {
   const names = Object.keys(I.ACTIVATABLE_TOOLS)
@@ -561,22 +567,22 @@ await ok('activate/deactivate 描述与参数枚举不含 jobs（常驻化）', 
   const deaParam = deactivateTool.parameters.properties.tool.description
   return !actParam.includes('jobs') && !deaParam.includes('jobs') && !activateTool.description.includes(' / jobs')
 })())
-await ok('capability_call 首次调用细分档位 → 自动挂载并执行', (async () => {
+await ok('capability_call 首次调用低频档位 → 自动挂载并执行', (async () => {
   pluginCalls.length = 0
   executeCalls = []
   const before = effectCalls.length
   // 真实运行时 executor 总会带 exec.agent；agent 视图才看得到 scope 工具
-  const r = await callTool.execute({ tool: 'subagent_qa', arguments: { prompt: 'verify' } }, { agent: { id: 'agent-1' } })
-  return r.ok === true && r.tool === 'subagent_qa'
+  const r = await callTool.execute({ tool: 'subagent_thinker', arguments: { prompt: 'think' } }, { agent: { id: 'agent-1' } })
+  return r.ok === true && r.tool === 'subagent_thinker'
     && r.autoActivated === true && String(r.note).includes('首次使用自动激活')
-    && pluginCalls.length === 1 && pluginCalls[0].cfg.toolName === 'subagent_qa'
-    && executeCalls.length === 1 && executeCalls[0].name === 'subagent_qa'
-    && effectCalls.length === before // 回归防线：自动激活同样不得注册自动清理 effect
+    && pluginCalls.length === 1 && pluginCalls[0].cfg.toolName === 'subagent_thinker'
+    && executeCalls.length === 1 && executeCalls[0].name === 'subagent_thinker'
+    && effectCalls.length === before
 })())
-await ok('已自动激活后再次代理调用 → 不再挂载、直接执行', (async () => {
+await ok('低频档位自动激活后再次代理 → 不再挂载、直接执行', (async () => {
   pluginCalls.length = 0
   executeCalls = []
-  const r = await callTool.execute({ tool: 'subagent_qa', arguments: {} }, { agent: { id: 'agent-1' } })
+  const r = await callTool.execute({ tool: 'subagent_thinker', arguments: {} }, { agent: { id: 'agent-1' } })
   return r.ok === true && r.autoActivated === undefined
     && pluginCalls.length === 0 && executeCalls.length === 1
 })())
@@ -584,7 +590,8 @@ await ok('activationKeyFor：goal 工具名 → goal 激活键（工具名≠激
   return I.activationKeyFor('create_goal') === 'goal'
     && I.activationKeyFor('update_goal') === 'goal'
     && I.activationKeyFor('get_goal') === 'goal'
-    && I.activationKeyFor('subagent_qa') === 'subagent_qa'
+    && I.activationKeyFor('subagent_qa') === null
+    && I.activationKeyFor('subagent_thinker') === 'subagent_thinker'
     && I.activationKeyFor('workflow') === 'workflow'
     && I.activationKeyFor('job_output') === null
     && I.activationKeyFor('nonexistent') === null
@@ -607,7 +614,7 @@ await ok('已挂载的常驻工具仍拒绝代理（job_output 常驻）', (asyn
 })())
 await ok('自动激活后可用 kix_tool_deactivate 卸载（延迟语义）', (async () => {
   const before = disposeCalls
-  const r = await deactivateTool.execute({ tool: 'subagent_qa' })
+  const r = await deactivateTool.execute({ tool: 'subagent_thinker' })
   const mid = disposeCalls
   await flushTurn()
   return r.ok === true && r.deferred === true && mid === before && disposeCalls === before + 1
@@ -615,7 +622,7 @@ await ok('自动激活后可用 kix_tool_deactivate 卸载（延迟语义）', (
 await ok('卸载后再代理调用 → 重新自动挂载', (async () => {
   pluginCalls.length = 0
   executeCalls = []
-  const r = await callTool.execute({ tool: 'subagent_qa', arguments: {} }, { agent: { id: 'agent-1' } })
+  const r = await callTool.execute({ tool: 'subagent_thinker', arguments: {} }, { agent: { id: 'agent-1' } })
   return r.ok === true && r.autoActivated === true && pluginCalls.length === 1
 })())
 await ok('自动激活 fiber 非 ACTIVE → 回滚报错且不执行', (async () => {
@@ -874,8 +881,10 @@ await ok('CAPABILITY_GROUPS 含 browser-native 发现组（未挂载也可见 hi
 await ok('CAPABILITY_GROUPS 含 kix-surface 完整能力面（常驻货架+slash hint）', (() => {
   const g = I.CAPABILITY_GROUPS.find((x) => x.id === 'kix-surface')
   return !!g && g.tools.includes('skill') && g.tools.includes('experience')
-    && g.hint.includes('常驻直呼') && g.hint.includes('/kixpower')
-    && !g.hint.includes('先 kix_tool_activate')
+    && g.hint.includes('reviewer/dev/qa 常驻直呼')
+    && g.hint.includes('generic subagent 仅无归属 Explore')
+    && g.hint.includes('cross 常驻且只补厂商独立维度')
+    && g.hint.includes('/kixpower') && !g.hint.includes('先 kix_tool_activate')
 })())
 await ok('空查询 kix-surface 列出 skill/experience 且不经 capability_call', (() => {
   const r = I.searchCapabilities(sampleSchemas, '')

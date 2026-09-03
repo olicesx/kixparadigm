@@ -20,9 +20,13 @@
 //         block（deny 带 reason）。
 //       * 测试文件（*.test.* / test 目录）永远放行——写测试是需求三检/red 步骤。
 //   - tools/post-execute waterfall：识别测试运行（bash/pwsh 命令匹配测试模式）
-//     → 记录 green；识别实现 edit → 记录 red 证据缺失。
+//     → 记录 green；识别实现 edit → 记录 red 证据缺失；识别语言 lint 命令
+//     （cargo fmt/clippy、eslint/prettier、gofmt、ruff…）→ 本回合 lint 证据。
+//   - tools/pre-execute：git commit 时若本回合改过某语言源码但未跑对应 lint
+//     → 放行并排队 remind（不 deny，0% 误报只约束阻断）。
 //   - agent/turn-stopping serial：回合结束时，本回合有实现 edit 且无测试运行
-//     → 注入 green 提醒（remindOnce，durable 于会话日志）。
+//     → 注入 green 提醒（remindOnce，durable 于会话日志）；本回合改过的语言
+//     未跑对应语法检查 → 注入 lint 提醒（与 green 独立，remindOnce）。
 //   - agent/turn-stopping serial（v2，2026-08-16 用户反馈）：模型终稿把直接
 //     请求判为「不处理 / 在别处处理 / 系统信息不足」→ 弹问让用户裁决（接受 /
 //     要求继续；每会话一次）。启发式 ask（非 deny）——0% 误报纪律只约束
@@ -121,8 +125,48 @@ const OPERATIONAL_ARTIFACT_PATTERNS = [
   /(^|\/)kix-discipline\/spec\.md$/i,
   /(^|\/)docs\/sprint-\d+\/(?:plan|progress|done|blockers?|qa-signoff)\.md$/i,
   /(^|\/)docs\/\.kixpower-current-sprint$/i,
+  // 2026-09-03 出生证明：~/.dsh/settings.yaml 被当实现源码，green/settle
+  // 要 jest；真实验证是 Config schema 断言。用户控制平面 YAML 归 artifact。
+  // 死亡条件：preset 插件源码 / agent.cordis.yml 仍是 source；echo 仍不算测试。
+  /(^|\/)\.dsh\/settings\.ya?ml$/i,
 ]
 const DOCUMENTATION_FILE_PATTERN = /\.(?:md|mdx|rst|adoc)$/i
+const SHELL_TOOLS = new Set(['bash', 'pwsh'])
+// 提交前按语言语法检查（2026-09-03 回补）：persona 把 clippy/fmt 清单交给本插件
+// 机械提醒，但旧实现只 gate 测试。Rust 拆 fmt / clippy 两族（指令是 AND）；
+// JS/Go/Python 各一桶。cargo test / npm test 不算 lint。
+const LINT_RULES = [
+  {
+    id: 'rust-fmt',
+    ext: /\.rs$/i,
+    cmd: /(?:^|[;&|]\s*)(?:cargo\s+fmt\b|rustfmt\b)/,
+    hint: 'cargo fmt --check',
+  },
+  {
+    id: 'rust-clippy',
+    ext: /\.rs$/i,
+    cmd: /(?:^|[;&|]\s*)cargo\s+clippy\b/,
+    hint: 'cargo clippy -D warnings',
+  },
+  {
+    id: 'js',
+    ext: /\.(?:[cm]?[jt]sx?)$/i,
+    cmd: /(?:^|[;&|]\s*)(?:(?:pnpm|npm|npx|yarn|bun)(?:\s+run)?\s+(?:lint|typecheck|format|eslint|prettier|biome|tsc)(?:\s|$)|eslint\b|prettier\b|biome\s+(?:check|lint|format)\b|tsc(?:\s|$))/,
+    hint: 'eslint/prettier/biome/typecheck',
+  },
+  {
+    id: 'go',
+    ext: /\.go$/i,
+    cmd: /(?:^|[;&|]\s*)(?:gofmt\b|go\s+fmt\b|go\s+vet\b|golangci-lint\b)/,
+    hint: 'gofmt / go vet',
+  },
+  {
+    id: 'python',
+    ext: /\.py$/i,
+    cmd: /(?:^|[;&|]\s*)(?:ruff\b|black\b|mypy\b|flake8\b|isort\b)/,
+    hint: 'ruff/mypy/black',
+  },
+]
 
 // ── v2：回合结束「拒绝/转交」弹问（2026-08-16 用户反馈）────────────────────
 // 模型把直接请求判为「不处理 / 在别处处理 / 系统信息不足」时，回合结束弹问
@@ -163,6 +207,46 @@ function isTestCommand(text) {
 
 function isVerificationCommand(text) {
   return VERIFICATION_COMMAND_PATTERNS.some((re) => re.test(String(text || '')))
+}
+
+function lintIdsForPath(filePath) {
+  const kind = classifyMutationPath(filePath)
+  if (kind === 'artifact' || kind === 'documentation') return []
+  const p = normalizeFilePath(filePath)
+  return LINT_RULES.filter((r) => r.ext.test(p)).map((r) => r.id)
+}
+
+function lintIdsForCommand(text) {
+  const s = String(text || '')
+  return LINT_RULES.filter((r) => r.cmd.test(s)).map((r) => r.id)
+}
+
+function isGitCommitCommand(text) {
+  const s = String(text || '')
+  if (!/\bgit(?:\.exe)?\b/i.test(s)) return false
+  // 段首 git … commit，排除 commit-tree / echo git commit。
+  return /(?:^|[;&|\n]|&&|\|\|)\s*git(?:\.exe)?(?:\s+-C\s+(?:"[^"]+"|'[^']+'|\S+))?(?:\s+(?:--[a-z][\w-]*(?:=(\S+))?)|\s+-[a-zA-Z](?=\s|$))*\s+commit(?![\w-])/i.test(';' + s)
+}
+
+function missingLintIds(st) {
+  const need = (st && st.turnLintNeed) || {}
+  const ran = (st && st.turnLintRan) || {}
+  return LINT_RULES.map((r) => r.id).filter((id) => need[id] && !ran[id])
+}
+
+function lintRemindReason(ids) {
+  const hints = LINT_RULES.filter((r) => ids.includes(r.id)).map((r) => r.hint)
+  return 'kix-discipline: 本回合改了 ' + ids.join('/') + ' 源码，但未跑对应语言的语法检查（' + hints.join('；') + '）。提交前补跑后再声称完成。cargo test / npm test 不算 lint。'
+}
+
+function noteLintNeed(st, filePath) {
+  if (!st || !st.turnLintNeed) return
+  for (const id of lintIdsForPath(filePath)) st.turnLintNeed[id] = true
+}
+
+function noteLintRan(st, cmd, ok) {
+  if (!st || !st.turnLintRan || !ok) return
+  for (const id of lintIdsForCommand(cmd)) st.turnLintRan[id] = true
 }
 
 function normalizeFilePath(path) {
@@ -277,6 +361,10 @@ function makeState({ sessionKey, workspaceRoot, io }) {
     // 本回合（turn）内的实现编辑与测试运行计数——turn 边界重置
     turnEdits: 0,
     turnTests: 0,
+    turnLintNeed: Object.create(null),
+    turnLintRan: Object.create(null),
+    lintReminded: false,
+    pendingLintRemind: null,
     spec: undefined,
     lastSaveError: undefined,
     async loadSpec() {
@@ -491,7 +579,18 @@ module.exports = {
       // 命令 +1——命令尚未执行，成功/被拦/失败都未知；green 证据只在
       // post-execute 对「成功结果」计数（被门禁/sandbox 拦截或失败的测试
       // 不构成证据，turn-stopping 会据此提醒）。
+      // 2026-09-03：git commit 是提交前 lint 门的触发点（remind 不 deny）。
       if (!isMutationTool(tool)) {
+        const cmdText = args && (args.command || args.cmd)
+        if (SHELL_TOOLS.has(tool) && typeof cmdText === 'string' && isGitCommitCommand(cmdText)) {
+          const st = stateFor(agent)
+          if (st.enabled) {
+            const missing = missingLintIds(st)
+            if (missing.length && !(st.remindOnce && st.lintReminded)) {
+              st.pendingLintRemind = missing
+            }
+          }
+        }
         return next()
       }
 
@@ -500,7 +599,9 @@ module.exports = {
 
       // 只有 source 编辑进入需求三检和 green gate。测试、文档与操作性工件
       // 各有自己的验证语义，不能伪装成“实现编辑未测试”。
+      // lint 记账覆盖 source+test（.rs 测试也要 fmt/clippy），跳过文档/artifact。
       const path = args && (args.file_path || args.path)
+      noteLintNeed(st, path)
       if (classifyMutationPath(path) !== 'source') return next()
 
       st.turnEdits++
@@ -540,19 +641,39 @@ module.exports = {
       // 测试运行结果：成功 → green 证据（回合内）
       const args = exec && (exec.arguments ?? exec.args)
       const cmdText = args && (args.command || args.cmd)
-      if (typeof cmdText === 'string' && isTestCommand(cmdText)) {
-        const ok = result && !result.isError
-        if (ok) st.turnTests++
-        return next()
+      const ok = result && !result.isError
+      if (typeof cmdText === 'string') {
+        noteLintRan(st, cmdText, ok)
+        if (isTestCommand(cmdText)) {
+          if (ok) st.turnTests++
+          if (st.pendingLintRemind) {
+            const ids = st.pendingLintRemind
+            st.pendingLintRemind = null
+            if (!(st.remindOnce && st.lintReminded)) {
+              st.lintReminded = true
+              return lib.appendContexts(await next(), [makeUserMessage(lintRemindReason(ids))])
+            }
+          }
+          return next()
+        }
       }
 
       // 待注入的 red remind（合并注入：await next() 后并 contexts——裸返回
       // 会短路瀑布饿死后挂载的监听器，WSL2 实弹实锤首写提醒因此丢失）
+      const extras = []
       if (st.pendingRemind) {
         st.pendingRemind = false
-        const reason = 'kix-discipline: 本次编辑前未记录需求三检契约。若任务模糊或影响面大，请先调用 kix_discipline_spec 记录 goal/xy/assumptions/path/acceptance；字面明确低风险可逆的任务可忽略本提醒直接继续（kix 需求三检只按信号触发，不强制）。'
-        return lib.appendContexts(await next(), [makeUserMessage(reason)])
+        extras.push(makeUserMessage('kix-discipline: 本次编辑前未记录需求三检契约。若任务模糊或影响面大，请先调用 kix_discipline_spec 记录 goal/xy/assumptions/path/acceptance；字面明确低风险可逆的任务可忽略本提醒直接继续（kix 需求三检只按信号触发，不强制）。'))
       }
+      if (st.pendingLintRemind) {
+        const ids = st.pendingLintRemind
+        st.pendingLintRemind = null
+        if (!(st.remindOnce && st.lintReminded)) {
+          st.lintReminded = true
+          extras.push(makeUserMessage(lintRemindReason(ids)))
+        }
+      }
+      if (extras.length) return lib.appendContexts(await next(), extras)
       return next()
     })
 
@@ -565,8 +686,11 @@ module.exports = {
       // 回合边界重置
       const hadEdits = st.turnEdits > 0
       const hadTests = st.turnTests > 0
+      const missingLint = missingLintIds(st)
       st.turnEdits = 0
       st.turnTests = 0
+      st.turnLintNeed = Object.create(null)
+      st.turnLintRan = Object.create(null)
       // green gate：有实现 edit 无测试运行 → 提醒（原逻辑）
       if (hadEdits && !hadTests) {
         if (!(st.remindOnce && st.greenReminded)) {
@@ -574,6 +698,10 @@ module.exports = {
           const reason = 'kix-discipline: 本回合有实现编辑，但测试未通过或未运行（turnTests 只计成功结果——被拦/失败的测试不构成 green 证据）。交付前验证三问：① 测试镜像真实链路吗 ② 证据维度对吗 ③ 关键 claim 独立验证过吗。运行相关测试后再声称完成（kix 提交前必跑 lint/test）。'
           agent.steer(makeUserMessage(reason))
         }
+      }
+      if (missingLint.length && !(st.remindOnce && st.lintReminded)) {
+        st.lintReminded = true
+        agent.steer(makeUserMessage(lintRemindReason(missingLint)))
       }
       // v2（用户反馈）：模型终稿把直接请求判为「不处理/在别处处理/信息不足」
       // → 弹问让用户裁决（每会话一次；本回合做过实现编辑不算拒绝）。
@@ -617,8 +745,8 @@ module.exports = {
           'enabled: ' + st.enabled,
           'intensity: ' + intensity,
           'spec: ' + specLine,
-          'redReminded: ' + st.redReminded + ' / greenReminded: ' + st.greenReminded,
-          'turnEdits: ' + st.turnEdits + ' / turnTests: ' + st.turnTests,
+          'redReminded: ' + st.redReminded + ' / greenReminded: ' + st.greenReminded + ' / lintReminded: ' + st.lintReminded,
+          'turnEdits: ' + st.turnEdits + ' / turnTests: ' + st.turnTests + ' / lintNeed: ' + Object.keys(st.turnLintNeed || {}).join(',') + ' / lintRan: ' + Object.keys(st.turnLintRan || {}).join(','),
         ]
         if (arg === 'report') {
           base.push('specFile: ' + (st.specFile || '（无工作区根，仅会话内存）'))
@@ -637,6 +765,12 @@ module.exports.__internals = {
   isTestFile,
   classifyMutationPath,
   isMutationTool,
+  lintIdsForPath,
+  lintIdsForCommand,
+  isGitCommitCommand,
+  missingLintIds,
+  lintRemindReason,
+  LINT_RULES,
   specComplete,
   renderSpec,
   parseSpec,
