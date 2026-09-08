@@ -284,14 +284,37 @@ function pluginIdentityPaths(name, presetRoots) {
 // 语言中立插件默认仍是发现到的全部根；下列插件按设计分簇——
 //   incentive 面 default+null 一对，classic zh+en 一对。
 // 写时拦截与 CI 全量共用，避免 runAllZh 豁免、checkPluginPair 全根硬绑的双源重复检查。
+// 组员按**变体名**声明（仓库目录名 → preset 名映射，未知目录名用自身兜底），
+// 不按仓库路径——同一张表在仓库布局（dsh/preset）与安装布局
+// （~/.dsh/.agent-presets/kixparadigm）下都成立。此前按路径声明时，
+// 安装布局下 group.filter 全部落空 → 回落「全根同名比对」→ 假失败。
+// 只认「本仓已知布局」：仓库相对路径（dsh/preset…）或安装布局目录名
+// （kixparadigm…）。未知根返回 null → 不并入任何簇（退回同名全根比对），
+// 避免外仓恰好叫 preset/ 就被绑进本仓变体簇。
+const VARIANT_NAME_BY_PATH = {
+  'dsh/preset': 'kixparadigm',
+  'dsh/preset-null': 'kixparadigm-null',
+  'dsh/preset-classic': 'kixparadigm-classic',
+  'en/preset-classic-en': 'kixparadigm-classic-en',
+}
+const VARIANT_NAMES = new Set(Object.values(VARIANT_NAME_BY_PATH))
+
+function presetVariantName(rel) {
+  const p = String(rel || '').replace(/\/+$/, '')
+  if (VARIANT_NAME_BY_PATH[p]) return VARIANT_NAME_BY_PATH[p]
+  const parts = p.split('/').filter(Boolean)
+  const base = parts.length ? parts[parts.length - 1] : ''
+  return VARIANT_NAMES.has(base) ? base : null
+}
+
 const PLUGIN_IDENTITY_GROUPS = {
   'kix-budget.js': [
-    ['dsh/preset', 'dsh/preset-null'],
-    ['dsh/preset-classic', 'en/preset-classic-en'],
+    ['kixparadigm', 'kixparadigm-null'],
+    ['kixparadigm-classic', 'kixparadigm-classic-en'],
   ],
-  'kix-probe.js': [['dsh/preset', 'dsh/preset-null']],
-  'kix-settle.js': [['dsh/preset', 'dsh/preset-null']],
-  'kix-mem.js': [['dsh/preset', 'dsh/preset-null']],
+  'kix-probe.js': [['kixparadigm', 'kixparadigm-null']],
+  'kix-settle.js': [['kixparadigm', 'kixparadigm-null']],
+  'kix-mem.js': [['kixparadigm', 'kixparadigm-null']],
 }
 
 function pluginSourceName(name) {
@@ -329,7 +352,10 @@ function pluginIdentityGroups(name, presetRoots, root) {
   const spec = PLUGIN_IDENTITY_GROUPS[key]
   if (!spec) return [roots.slice()]
   const groups = spec
-    .map((group) => group.filter((r) => roots.includes(r)))
+    .map((group) => {
+      const wanted = group.map(presetVariantName)
+      return roots.filter((r) => wanted.includes(presetVariantName(r)))
+    })
     .filter((group) => group.length > 0)
   // 外仓根对不上本仓变体声明 → 退回同名全根比对，不把本仓分簇套到别人身上。
   return groups.length > 0 ? groups : [roots.slice()]
@@ -608,6 +634,40 @@ function pluginNames(root) {
 
 // ── 全量组装 ───────────────────────────────────────────────────────────────
 // zh 全量（仓库级：dsh/preset + en/preset + README + 副本 + 链接 + 语法）
+// 默认档共享货架（skills/agents）必须是指向 classic 的指针：仓库里是 symlink，
+// 或 Windows core.symlinks=false 检出成的文本指针；物化后的副本则是真目录。
+// 缺指针时「货架内相对链接可达」与安装期物化都无从成立，而实测删掉指针后
+// 其余门禁仍全绿——故在此机械钉住。
+const DEFAULT_SHELF_NAMES = ['skills', 'agents']
+
+function checkDefaultShelfPointers({ root, rel = 'dsh/preset' }) {
+  const failures = []
+  const notes = []
+  for (const name of DEFAULT_SHELF_NAMES) {
+    const p = path.join(root, rel, name)
+    let ok = false
+    try {
+      const st = fs.lstatSync(p)
+      if (st.isSymbolicLink()) {
+        ok = fs.statSync(p).isDirectory()
+      } else if (st.isDirectory()) {
+        ok = true
+      } else if (st.isFile() && st.size <= 256) {
+        const body = fs.readFileSync(p, 'utf8').trim()
+        const target = path.resolve(path.dirname(p), body)
+        ok = !/[\n\0]/.test(body) && fs.existsSync(target) && fs.statSync(target).isDirectory()
+      }
+    } catch {
+      ok = false
+    }
+    if (!ok) {
+      failures.push(`${rel}/${name}: 默认档共享货架指针缺失或不可解析（应为指向 preset-classic/${name} 的 symlink 或文本指针）`)
+    }
+  }
+  if (failures.length === 0) notes.push(`${rel}: 共享货架指针就位（${DEFAULT_SHELF_NAMES.join(', ')}）`)
+  return { failures, notes }
+}
+
 function runAllZh(root) {
   return merge(
     // v1.3.0 布局：默认 preset=激励面（含 disabled 经典 persona 遗产块）；classic 独立目录
@@ -623,6 +683,7 @@ function runAllZh(root) {
     checkVersionPair({ root }),
     checkMirrorTree({ root, left: 'dsh/vision-bridge', right: 'en/bridge', label: 'vision-bridge' }),
     checkIdenticalSet({ root, paths: ['scripts/install-lib.js', 'en/scripts/install-lib.js'], label: 'install-lib.js' }),
+    checkDefaultShelfPointers({ root }),
     checkMarkdownLinks({ root, rel: 'dsh/preset' }),
     checkMarkdownLinks({ root, rel: 'en/preset-classic-en' }),
     checkSyntax({ root, rel: 'dsh/preset', label: 'dsh/preset' }),
@@ -655,6 +716,8 @@ module.exports = {
   checkIdenticalSet,
   checkMirrorTree,
   PRESET_MARKERS,
+  checkDefaultShelfPointers,
+  DEFAULT_SHELF_NAMES,
   discoverPresetRoots,
   isMultiPresetWorkspace,
   appendContexts,

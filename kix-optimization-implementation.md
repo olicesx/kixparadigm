@@ -15,7 +15,7 @@
 | # | 交付 | 落点 |
 |---|---|---|
 | 1 | persona 路由节改写为**编曲模型**（含重路由一行 + 四条不变量地板：观察独立性/协调主线程/视角来自 prompt/门禁不变） | `agent.cordis.yml` persona「流程路由信号」+「编曲模型」节（替换「CEO 团队编排」） |
-| 2 | **qa/dev/reviewer 三个 role-first 常驻成员**：人名=契约句柄；职责命中优先专用成员，generic subagent 仅无归属 Explore；重大审查动态 2–4 reviewer lens；producer/orchestrator 不建行 | `agent.cordis.yml` delegation group 三个常驻 spawn 行 + kix-focus resident/目录组 |
+| 2 | **qa/dev/reviewer 三个 role-first 常驻成员**：人名=契约句柄；职责命中优先专用成员，generic subagent 仅无归属 Explore；重大审查动态 reviewer lens（人数由模型按信息缺口自定，不预设）；producer/orchestrator 不建行 | `agent.cordis.yml` delegation group 三个常驻 spawn 行 + kix-focus resident/目录组 |
 | 3 | reviewer **反方辩护三层**（三问显式分层：L1 反驳预演 / L2 深度下钻 / L3 语言模型压测） | agent.cordis.yml 常驻 reviewer 行 persona；kix-focus 不再重复注册同名 persona |
 | 4 | **spec mode 字段**（编曲留痕：成员组合+一句理由，可选不进必填集；空值渲染占位、回读映射 undefined 防假值） | `plugins/kix-discipline.js`（工具 schema/renderSpec/parseSpec）|
 | 5 | **枚举与常驻边界**：激活/卸载描述覆盖全部低频 `ACTIVATABLE_TOOLS`，并明确 reviewer/qa/dev 已常驻、不可重复激活；成员 capability_call 仅作 Sprint 注入兼容入口 | `plugins/kix-focus.js` + 测试 |

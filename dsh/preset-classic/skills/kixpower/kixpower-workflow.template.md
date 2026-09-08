@@ -18,7 +18,7 @@
    带着 stalled 的 plan 进入实现阶段 = 在过期上下文上叠新工作。
 3. `stalled == 0` → 进入正常流程。
 4. 定时检测形态（enable/disable 命令 + 惰性定时器 + 提醒注入）已做减法
-   （见 `memories/dsh-capability-map.md` §6.4）：无真实项目证据前不常驻、不自动提醒；
+   （见 `memories/dsh-capability-map.md`「动态 Cordis 插件实测机制事实」）：无真实项目证据前不常驻、不自动提醒；
    需要时从原型历史恢复。
 5. 脚本内无法机械检测（workflow 无 fs/命令能力，见「边界」）→ 脚本层用 Producer
    检查句双保险（见下），机械层由 `/kixst-check` 承担。
