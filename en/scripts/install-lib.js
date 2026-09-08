@@ -183,9 +183,23 @@ function resolveLinkedDir(p, entry) {
   }
 }
 
-/** 镜像复制 src → dst：同名同尺寸同 mtime 跳过；目标独有文件只报告不删除。 */
-function copyTree(src, dst, log) {
-  const added = [], updated = [], same = [], targetOnly = []
+/** 复制文件并保留源 mtime——否则 copyFileSync 会刷新目标 mtime，使
+ *  「size+mtime 相同即跳过」的幂等判断永远失效（每次安装都全量重写）。 */
+function copyFileKeepingMtime(s, d) {
+  fs.copyFileSync(s, d)
+  try {
+    const st = fs.statSync(s)
+    fs.utimesSync(d, st.atime, st.mtime)
+  } catch {
+    /* 平台不支持 utimes 时退化为普通复制（仅多一次写入） */
+  }
+}
+
+/** 镜像复制 src → dst：同名同尺寸同 mtime 跳过。
+ *  目标独有文件默认只报告不删除；**例外**：指针条目（symlink/文本指针指向的目录）
+ *  是镜像，其源侧已删除的残留会被裁剪（见 pruneMirror）。 */
+function copyTree(src, dst, log, opts = {}) {
+  const added = [], updated = [], same = [], targetOnly = [], pruned = []
   const walk = (from, to) => {
     for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
       const s = path.join(from, entry.name)
@@ -194,19 +208,40 @@ function copyTree(src, dst, log) {
       // preset skills/ (repo-relative link to classic) installs as a real tree.
       // Windows git with core.symlinks=false checks the link out as a text
       // file whose contents are the relative target — treat that as a dir too.
+      // 只有**指针条目**（symlink 目录 / git symlink 检出的文本指针）才是镜像：
+      // 其内容必须与源一致，源侧删除后目标侧残留一并清掉。
+      // 普通目录（memories/、plugins/ 等）**绝不裁剪**——安装副本里可能有
+      // 运行期产物（kix-mem 的经验库就写在安装副本 memories/ 下）与部署脚本
+      // 投放的文件；把它们当残留删除是数据丢失。
+      const isPointerEntry = !entry.isDirectory()
       const followDir = resolveLinkedDir(s, entry)
       if (followDir) {
         fs.mkdirSync(d, { recursive: true })
         walk(followDir, d)
+        if (isPointerEntry) pruneMirror(followDir, d)
       } else {
         if (!fs.existsSync(d)) {
-          fs.copyFileSync(s, d)
+          copyFileKeepingMtime(s, d)
           added.push(path.relative(src, s))
         } else {
           const a = fs.statSync(s), b = fs.statSync(d)
-          if (a.size === b.size && a.mtimeMs === b.mtimeMs) same.push(path.relative(src, s))
-          else { fs.copyFileSync(s, d); updated.push(path.relative(src, s)) }
+          // utimes 只有秒级精度，mtimeMs 的亚毫秒差会让幂等判断永远不成立。
+          if (a.size === b.size && Math.round(a.mtimeMs / 1000) === Math.round(b.mtimeMs / 1000)) same.push(path.relative(src, s))
+          else { copyFileKeepingMtime(s, d); updated.push(path.relative(src, s)) }
         }
+      }
+    }
+  }
+  const pruneMirror = (from, to) => {
+    if (!fs.existsSync(to)) return
+    for (const entry of fs.readdirSync(to, { withFileTypes: true })) {
+      const t = path.join(to, entry.name)
+      const s = path.join(from, entry.name)
+      if (!fs.existsSync(s)) {
+        fs.rmSync(t, { recursive: true, force: true })
+        pruned.push(path.relative(dst, t) + (entry.isDirectory() ? '/' : ''))
+      } else if (entry.isDirectory()) {
+        pruneMirror(s, t)
       }
     }
   }
@@ -220,6 +255,8 @@ function copyTree(src, dst, log) {
         const srcP = path.join(src, r)
         if (entry.isDirectory()) {
           if (!fs.existsSync(srcP)) targetOnly.push(r + '/')
+          // 指针目录是镜像：内容由 pruneMirror 负责，不当作「目标侧独有」噪声。
+          else if (!fs.lstatSync(srcP).isDirectory() && resolveLinkedDir(srcP)) continue
           else walk2(s, r)
         } else if (!fs.existsSync(srcP)) {
           targetOnly.push(r)
@@ -228,19 +265,41 @@ function copyTree(src, dst, log) {
     }
     walk2(dst, '')
   }
-  return { added, updated, same, targetOnly }
+  // opts.mirror：整树按源镜像——货架物化路径（ensureDefaultShelf）用它，
+  // 使「源侧删除」在货架自身也成立，而不只依赖 installPreset 的指针条目分支。
+  if (opts.mirror) pruneMirror(src, dst)
+  return { added, updated, same, targetOnly, pruned }
 }
 
-/** npm pack drops git symlink entries (dsh/preset/skills → classic).
- *  If the installed default tree has no shelf, materialize from classic
- *  into DSH_HOME only — never mutate the packed source tree. */
+/** 默认档共享货架：仓库里是指向 classic 的指针（git symlink；Windows
+ *  core.symlinks=false 时检出为含相对路径的文本文件，copyTree 的
+ *  resolveLinkedDir 已跟随）。npm pack 会丢掉 symlink 条目，此时按此表
+ *  从 classic 物化到 DSH_HOME——只写安装副本，绝不改打包源树。
+ *  agents/ 与 skills/ 同源同理：货架内的相对链接（../../agents/*.agent.md）
+ *  只有在货架被物化后才可达。 */
+const DEFAULT_SHELF_DIRS = ['skills', 'agents']
+const DEFAULT_SHELF_MARKERS = {
+  skills: path.join('handoff', 'SKILL.md'),
+  agents: 'kixparadigm.agent.md',
+}
+
+function ensureDefaultShelf(dirName, dst, log) {
+  const dest = path.join(dst, dirName)
+  const classic = path.join(PKG_ROOT, 'dsh/preset-classic', dirName)
+  const marker = DEFAULT_SHELF_MARKERS[dirName]
+  if (!marker || !fs.existsSync(path.join(classic, marker))) return null
+  const missing = !fs.existsSync(path.join(dest, marker))
+  // 目标侧可能残留同名指针文件（Windows 检出形态），先清掉再建树。
+  if (missing && fs.existsSync(dest) && !fs.statSync(dest).isDirectory()) fs.rmSync(dest, { force: true })
+  if (missing && log && log.warn) log.warn(`packed preset has no ${dirName} shelf; materializing from kixparadigm-classic`)
+  // 已存在也走一次镜像同步：源侧删除/新增必须反映到安装副本。
+  // 早退（marker 存在即 return null）会让 packed 路径（包里没有指针条目时）
+  // 的货架**永不重同步**——上游删除的陈旧文件永久留在运行时。
+  return copyTree(classic, dest, log, { mirror: true })
+}
+
 function ensureDefaultSkillsShelf(dst, log) {
-  const destSkills = path.join(dst, 'skills')
-  const classicSkills = path.join(PKG_ROOT, 'dsh/preset-classic/skills')
-  if (fs.existsSync(path.join(destSkills, 'handoff', 'SKILL.md'))) return null
-  if (!fs.existsSync(path.join(classicSkills, 'handoff', 'SKILL.md'))) return null
-  if (log && log.warn) log.warn('packed preset has no skills shelf; materializing from kixparadigm-classic')
-  return copyTree(classicSkills, destSkills, log)
+  return ensureDefaultShelf('skills', dst, log)
 }
 
 function installPreset(log) {
@@ -254,13 +313,19 @@ function installPreset(log) {
     log.step(`安装 preset ${variant.id} → ${dst}`)
     const r = copyTree(src, dst, log)
     if (variant.id === 'kixparadigm') {
-      const extra = ensureDefaultSkillsShelf(dst, log)
-      if (extra) {
-        r.added.push(...extra.added.map((p) => path.join('skills', p)))
-        r.updated.push(...extra.updated.map((p) => path.join('skills', p)))
+      for (const dirName of DEFAULT_SHELF_DIRS) {
+        const extra = ensureDefaultShelf(dirName, dst, log)
+        if (extra) {
+          r.added.push(...extra.added.map((p) => path.join(dirName, p)))
+          r.updated.push(...extra.updated.map((p) => path.join(dirName, p)))
+        }
       }
     }
     log.ok(`preset ${variant.id}：新增 ${r.added.length} / 更新 ${r.updated.length} / 相同 ${r.same.length}`)
+    if (r.pruned.length) {
+      log.warn(`镜像裁剪 ${r.pruned.length} 个源侧已删除的残留（指针目录是镜像，非普通目标）`)
+      if (!process.env.KIX_VERBOSE) log.warn(`  ${r.pruned.slice(0, 5).join(', ')}${r.pruned.length > 5 ? ' …' : ''}`)
+    }
     if (r.targetOnly.length) {
       log.warn(`目标侧独有 ${r.targetOnly.length} 个文件（保留未删，如需清理请人工确认）`)
       if (!process.env.KIX_VERBOSE) log.warn(`  ${r.targetOnly.slice(0, 5).join(', ')}${r.targetOnly.length > 5 ? ' …' : ''}`)
@@ -363,7 +428,7 @@ function reportSettingsChecklist(log) {
     ok = false
   }
   if (!ok) {
-    log.warn('请按 dsh/preset/DSH-ADAPTATION.md 的 settings.yaml 段补配置（zai-vision 视觉 provider + zai-coding-cn 跨厂商观察者）')
+    log.warn('请按 dsh/preset-classic/DSH-ADAPTATION.md 的 settings.yaml 段补配置（zai-vision 视觉 provider + zai-coding-cn 跨厂商观察者）')
   }
 }
 
@@ -541,4 +606,4 @@ function cli(argv) {
 
 if (require.main === module) cli(process.argv.slice(2))
 
-module.exports = { cli, dshHome, hasOtherPresetOwner, installPreset, installVisionBridge, uninstall, doctor, copyTree, ensureDefaultSkillsShelf, mergeVisionBridgePatch, restoreEmptyPatchRoot }
+module.exports = { cli, dshHome, hasOtherPresetOwner, installPreset, installVisionBridge, uninstall, doctor, copyTree, ensureDefaultSkillsShelf, ensureDefaultShelf, DEFAULT_SHELF_DIRS, mergeVisionBridgePatch, restoreEmptyPatchRoot }

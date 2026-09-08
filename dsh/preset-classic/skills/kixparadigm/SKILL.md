@@ -5,7 +5,7 @@ description: "kixParadigm — AI 自编排最小范式。按任务规模、风�
 
 # kixParadigm — AI 自编排范式
 
-> **定位（2026-09 瘦身）**：常驻认知锚点在 preset 的 `agent.cordis.yml` persona（三通道/二相性/需求三检/写码前/架构感知/编曲模型/成本纪律）；机制性纪律由插件强制（见下方插件地图）。本文件是**按需增量参考**：盲点图谱展开、分派模板、跨厂商判据、碰撞方式与例外条款——只载 persona 与插件之外的增量，不重复它们已承载的内容。Copilot 时代的工具名映射与机制实证见 preset 根 `DSH-ADAPTATION.md`（权威）与本文目录 `AUDIT.md`；插件化改造总览见 `PLUGINIZATION-ROADMAP.md`。与插件冲突时以插件行为为准。
+> **定位（2026-09 瘦身）**：常驻认知锚点在 preset 的 `agent.cordis.yml` persona（三通道/二相性/需求三检/写码前/架构感知/编曲模型/成本纪律）；机制性纪律由插件强制（见下方插件地图）。本文件是**按需增量参考**：盲点图谱展开、分派模板、跨厂商判据、碰撞方式与例外条款——只载 persona 与插件之外的增量，不重复它们已承载的内容。Copilot 时代的工具名映射与机制实证见 classic 档 `DSH-ADAPTATION.md`（权威；默认档根不部署该文件，货架经指针/物化共享 classic）与本文目录 `AUDIT.md`；插件化改造总览见 `PLUGINIZATION-ROADMAP.md`。与插件冲突时以插件行为为准。
 
 ## 三通道实操（锚点见 persona「三通道交叉验证」「二相性与 review epoch」）
 

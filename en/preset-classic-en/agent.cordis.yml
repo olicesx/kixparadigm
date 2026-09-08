@@ -69,7 +69,7 @@
       Run standard lint/tests before commit (Rust: fmt --check + clippy -D warnings + test; TS: eslint/prettier/typecheck). The green gate reminds on untested edits.
 
       ## Environment Defaults
-      Windows: `pwsh` 7.x (never 5.1); Linux/macOS: `bash`. Prefer the current major CLI; confirm with `Get-Command`/`--version` if unsure. Probe before declaring "insufficient system information" — never decline a task on that excuse.
+      Windows: `pwsh` 7.x (never 5.1); Linux/macOS: `bash`. Prefer the current major CLI; confirm with `Get-Command`/`--version` if unsure. Probe before declining a task as "insufficient information".
       Windows command reliability follows the `pwsh-reliable` skill; on shell failure, read it before retrying — never blind-escape.
 
       ## Process Routing Signals
@@ -78,7 +78,7 @@
       ## Arranger Model
       - Main model = arranger; compose by task attributes (solo / observers / dev / qa / reviewer), not a fixed producer→dev→qa pipeline. Say it aloud and persist it in `kix_discipline_spec` `mode`. Dispatch prompt: Tri-Block + contract lines ≤5K (large context → file).
       - Handoff metadata: when dispatching Sprint-orchestrated subagents (dev/qa/reviewer), the dispatch prompt's contract lines MUST carry `current_sprint: N` (N read from docs/.kixpower-current-sprint) — kix-orchestration's handoff gate (marker / plan+progress / QA-completion) only fires on that metadata line; sprint-less observer/light dispatches omit it.
-      - Member-first: dev/qa/reviewer are resident; prefer the matching member, generic subagent only for unowned Explore. Dev = Nova/Sage/Milo (plan-scoped, target_rules only, never QA sign-off); qa = Ivy (no business source, evidence gate, signoff). Material reviews fan out 2–4 reviewer instances by risk, each with a distinct lens. Cross may add/replace one lane for provider independence, never a role; planning stays in the main thread.
+      - Member-first: dev/qa/reviewer are resident; prefer the matching member, generic subagent only for unowned Explore. Dev = Nova/Sage/Milo (plan-scoped, target_rules only, never QA sign-off); qa = Ivy (no business source, evidence gate, signoff). Reviews set lane count and concurrency by risk and evidence; each lane takes a distinct lens. Cross may add/replace one lane for provider independence, never a role; planning stays in the main thread.
       - Mis-composition mid-flight → recompose once and say it.
       - Four floors: ① your/dev claims always independently observed, never self-attested ② coordination stays in the main thread ③ perspectives come from prompts, names are contract handles ④ gates are composition-independent — never publish/comment/merge/destructive by default; an explicit user instruction ("comment on the PR") already is the decision — execute without re-asking; team output returns to three-channel verification. Full-flow signals → suggest `/kixpower-*`, wait for confirmation.
 
@@ -781,7 +781,7 @@
 # default mcp__github__).
 # v9: publish/comment/ordinary-push confirmation gates are soft constraints
 # (no questions); hard deny remains for irreversible destruction only.
-# Unit tests: 210 assertions.
+# Unit tests: see plugins/kix-guards.test.js.
 # v13 (v1.2.15, less is more): the control plane IS the install plane —
 # one definition, nothing else. The v3 bare agent.cordis.yml fallback is
 # deleted: it false-positived on source repos (both the v11 and v13
@@ -791,7 +791,7 @@
 # keeps only the install plane. No exemptions, no predicates, no
 # per-path rules. Honest boundary: relative-path writes with cwd inside
 # the install dir do not remind — that is explicit self-iteration
-# (allowed by v12 decision). Unit tests: 243 assertions.
+# (allowed by v12 decision). Unit tests: see plugins/kix-guards.test.js.
 # 相对路径插件由 loader 以 baseUrl 解析（name 以 "." 开头 → new URL(name, baseUrl)）。
 - id: kix-guards
   name: ./plugins/kix-guards.js
@@ -813,7 +813,7 @@
 #    Intensity defaults to remind (fewer constraints; literal low-risk reversible
 #    tasks may ignore the reminder and proceed, matching kix signal-based
 #    triggering); ask/block require explicit config in this row.
-#    Unit tests: node plugins/kix-discipline.test.js (68 assertions).
+#    Unit tests: node plugins/kix-discipline.test.js .
 - id: kix-discipline
   name: ./plugins/kix-discipline.js
 
@@ -848,7 +848,7 @@
 # repo carrying the scripts entry; foreign repos are never forced onto it.
 # Default intensity remind (heuristic guidance only); ask/block need explicit
 # config. remindOnce: once per session per category.
-# Unit tests: node plugins/kix-consistency.test.js (111 assertions).
+# Unit tests: node plugins/kix-consistency.test.js .
 - id: kix-consistency
   name: ./plugins/kix-consistency.js
 
@@ -879,7 +879,7 @@
 # fails LOUD on the sentinel (never silently degrades to same-vendor).
 # Cooperates with kix-cost under any waterfall order (effort rule reused from
 # the same source). v8: cross preference candidates are filtered to registered providers first.
-# v13: a cross child automatically failovers to at most two other healthy providers on provider-availability failures; only exhaustion is terminal zero evidence. See plugins/kix-route.js; unit tests: node plugins/kix-route.test.js (91 assertions).
+# v13: a cross child automatically failovers to at most two other healthy providers on provider-availability failures; only exhaustion is terminal zero evidence. See plugins/kix-route.js; unit tests: node plugins/kix-route.test.js .
 - id: kix-route
   name: ./plugins/kix-route.js
   config:
@@ -927,7 +927,7 @@
 #   observation stay native (evidence replayable)" unchanged; capability_call is
 #   also callable from run_code SDK sub-dispatches (which pass through gates).
 # Disable trimming (keep search/call only): config: { enableRestrict: false }.
-# Unit tests: node plugins/kix-focus.test.js (123 assertions, including resident-member routing).
+# Unit tests: node plugins/kix-focus.test.js (including resident-member routing).
 - id: kix-focus
   name: ./plugins/kix-focus.js
 
@@ -953,7 +953,7 @@
 #   http://127.0.0.1:9222, empty string disables attach) / KIX_BROWSER_HEADLESS
 #   (default true) / KIX_BROWSER_CORE (explicit path) / KIX_BROWSER_TIMEOUT
 #   (default 15000ms).
-# Unit tests: node plugins/kix-browser.test.js (12 assertion groups:
+# Unit tests: node plugins/kix-browser.test.js (groups:
 #   URL gate / shape / queue semantics / new-action validation / dialog policy).
 # Progressive disclosure (2026-08-18, compliance shape agreed with the user):
 # NOT loaded by default — the browser tool costs zero schema tokens in

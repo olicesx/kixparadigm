@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.3.13（2026-09-08）自举审计闭环：单源、悬空引用、守护布局无关
+
+- **能力地图单源**：`skills/kixpower/dsh-capability-map.md` 经 diff 确认是 `memories/dsh-capability-map.md` 的旧子集（140 vs 202 行，无独有内容），删除重复副本。全部锚点由 `§数字` 改标题——classic 是 §6、默认档是 §4，只有标题「动态 Cordis 插件实测机制事实」两档都能命中；引用方 `kix-stalled.js`/`kixpower-v39-legacy-notes.md`/`kixpower-workflow.template.md` 同步改标题锚点。
+- **悬空引用系统性清零**：默认档不部署 `DSH-ADAPTATION.md`/`PLUGINIZATION-ROADMAP.md`/`agents/`，却有 13 处按「preset 根」断言引用（含 `skills/kixpower/SKILL.md` 的「冲突时以该文件为准」权威指针）。13 处改为「classic 档」限定；新增 `dsh/preset/agents` 指针（与 `skills` 同款 120000 gitlink）并在安装时物化，货架内 `../../agents/*.agent.md` 5 条断链归零——四变体 `checkMarkdownLinks` failures=0（此前安装副本 5 条）。
+- **守护自身布局无关**：`PLUGIN_IDENTITY_GROUPS` 由仓库路径改按变体名解析（只认已知仓库路径/安装目录名，外仓同名目录不并入）→ 安装布局下 `kix-consistency.test.js` 从 160 passed/3 failed 变为 168/0；live 探测支持仓库/安装两种布局并补安装布局断言；新增「默认档共享货架指针就位」门禁（探针移走指针即 FAIL 点名）。
+- **安装器镜像语义**：`copyTree` 只对**指针条目**按源裁剪（普通目录绝不裁剪——安装副本 `memories/` 是 kix-mem 经验库根，误删即数据丢失）；复制保留 mtime 使重复安装幂等；`ensureDefaultShelf` 每次调用都做镜像同步并裁剪，修掉「packed 路径货架永不重同步」；安装日志把「镜像裁剪」与「目标侧独有」分开，不再谎报「保留未删」。
+- **元规则可证伪**：registry 11 条各加 `proof{file,contains}`，校验 support 归属 → 文件存在 → 字面命中 → 非纯注释行，并排除 `PRESSURE_REGISTRY` 声明块——堵住 4/11 条 proof 的自指空转（改形真实载体即 4 条点名失败）。审计面改为显式契约 + `findUnscopedBullets` 反向断言（preamble/缩进/编号 bullet 同样被抓）；新增只读 `--deaths` 计数（7 通道 depth-0 调用 + 首末日期 + 根数），死亡条款从注释变成可结算，并补文档与 `KIX_SESSION_ROOTS`。
+- **易变事实与卫生**：yml 断言数/工具数/包数去数字改稳定引用；发布脚本去掉个人路径；persona 恢复被压缩误删的行为约束（不得据此拒绝任务/按风险/执行）并与 en 对齐（4481/4500、9464/9500）；`kix-settle` ②③ 编号对齐头部；`incentive-lessons` 求助索引补 ⑨⑩㉑；根 README 与 `dsh/README-DSH.md` 事实纠正。
+- **验收路径**：两路独立审查（单源 lens / 规则是负债 lens）→ 修复 → 独立 reviewer 攻击修复本身（3🔴：裁剪越界、proof 自指、指针未入库）→ 再修 → 独立 QA 复验 FAIL（指针未入版本控制、货架不自裁剪）→ 三修 → 复验 PASS（11/11，含 6 个负向探针）。门禁：`npm test` 25/25、`check-dsh-consistency` OK、registry `--check` exit 0、`test:pressures` 24/24、`install-lib` 20/20、安装副本 `kix-consistency` 168/0、四变体断链 0。
+
 ## v1.3.12（2026-09-03）skill 增量瘦身 + 运行层回仓 + 提交前语言 lint 回补
 
 - **kixparadigm skill 279→126 行 / 24.7→10.1KB（字节 -59%）**：删除全部有替代承载的内容（VS Code 机制对齐→`DSH-ADAPTATION.md` 权威；机械保障复述→插件地图；认知本体→persona 锚点），保留 skill 独有增量（盲点图谱唯一展开版、三通道 prompt 模板、review epoch 冻结模板、跨厂商判据、碰撞方式、例外条款、留痕梯子、验证方法增量）。双通道逐条对比（执行方+跨厂商观察者）后修复 3 处 + 回补 8 项：修复 kix-settle 陈旧指针（classic 组成无此插件，标注"仅激励面"）、「阶段二相性」命名漂移断链（对齐 persona 实际标题「二相性与 review epoch」）、删除「测行为不测实现」三重注入；回补零载体误删（结算权与证据源分离/不加改变语义的安全网/silent_failure 检测/项目独有门禁/能失败的检查/tool_failure 两半句/Skill 渐进披露机制事实/盲点两处同步义务）。真源 `dsh/preset-classic/skills/kixparadigm/SKILL.md` 经目录指针共享默认档，三处部署 md5 一致。经验库卫生纪律经 memories grep 反证不补（`ai-agent-practices.md` 已承载）。

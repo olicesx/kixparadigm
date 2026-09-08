@@ -11,9 +11,9 @@
 //   - 阶段二相性：创造阶段（编辑中）只提醒一次（remindOnce），不反复打断；
 //     验证阶段（回合结束 turn-stopping）检查"有实现 edit 但无测试运行"。
 //   - 规则是负债：任何 gate 若 2 轮内无真实拦截记录（remind 从未触发），降级 opt-in
-//     或删除（见 PLUGINIZATION-ROADMAP.md §7）。
+//     或删除（见 PLUGINIZATION-ROADMAP.md（classic 档）§7）。
 //
-// 机制（对照 DSH-ADAPTATION.md §2 的 hook 等价物表）：
+// 机制（对照 DSH-ADAPTATION.md（classic 档）§2 的 hook 等价物表）：
 //   - tools/pre-execute waterfall：edit/write 前检查 spec 契约在档。
 //       * 无 spec + 首次实现编辑 → intensity 决定 remind（放行+注入提醒）/
 //         ask（聊天内提问 ctx.userQuestions.ask，同 kix-guards v5）/
@@ -44,7 +44,7 @@
 //   - 「模糊任务」判定为保守启发式：无 spec 的首次实现编辑即提醒一次。不做
 //     任务文本语义分析（那是模型判断，机制不越界）；ask/block 档需显式配置。
 //   - gate 按 agent scope 挂载，不覆盖子代理会话（与 kix-guards 同款边界，
-//     见 DSH-ADAPTATION.md §9 已知限制①）。
+//     见 DSH-ADAPTATION.md（classic 档）§9 已知限制①）。
 //   - spec 文件写入工作区 kix-discipline/ 目录，遵循 fs 沙箱策略。
 //
 // 挂载：preset agent.cordis.yml 一行（与 kix-guards 同款相对路径）：

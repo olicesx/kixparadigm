@@ -270,7 +270,7 @@
     # ── 低成本例行子代理（v5.8 成本分层 = DSH 精简模式）─────────────────
     # 机械读码/格式检查/简单检索 → `subagent_lite`（精简组合）：
     #   persona 字段把 17k token 的 kix 常驻人格替换为 ~60 token 的机械人格
-    #   （per-child persona shadowing）；toolFilter 把 82 个工具（17.2k token）
+    #   （per-child persona shadowing）；toolFilter 把全部工具 schema
     #   裁剪到 read/grep/glob + 平台 shell 四个（1.6k token）——每步固定开销从
     #   ~34.3k 降到 ~5.9k（实测数据，↓83%）。2026-08-17 WSL2 E2E 修复：原
     #   硬编码 pwsh（Windows 工具）在 Linux 部署 tools.restrict() 报 unknown
@@ -669,13 +669,13 @@
 # v8：终端 SQL 命令位判定 + 控制平面只拦写意图（grep/cat/ls 放行）+ GitHub 前缀
 # 可配置（githubToolPrefix，默认 mcp__github__）。
 # v9：发布/评论/普通 push 等确认类门禁降为软约束，不再提问；硬 deny 仅保留
-# 不可逆破坏性操作。单元测试 210 断言。
+# 不可逆破坏性操作。单元测试见 plugins/kix-guards.test.js。
 # v13（v1.2.15，少即是多）：控制平面 = 安装面，唯此一条定义；v3 的裸
 # agent.cordis.yml 兜底分支删除——它误伤源仓库（v11/v13 两轮豁免补丁皆是
 # 给它打的），而「源 vs 安装副本」本是「该相同的数份」的领域：源/外仓
 # preset 写归 kix-consistency（身份组 + parity hint）管，guards 只管安装面。
 # 无豁免、无谓词、无逐路径规则。诚实边界：cwd 在安装目录内的相对路径写
-# 不提醒——那本就是用户显式自迭代（v12 已决策放行）。单元测试 243 断言。
+# 不提醒——那本就是用户显式自迭代（v12 已决策放行）。单元测试见 plugins/kix-guards.test.js。
 # 相对路径插件由 loader 以 baseUrl 解析（name 以 "." 开头 → new URL(name, baseUrl)）。
 - id: kix-guards
   name: ./plugins/kix-guards.js
@@ -692,7 +692,7 @@
 #    - /kix-discipline 命令：status/report/on|off。
 #    强度默认 remind（限制越少越好；字面明确低风险可逆任务可忽略提醒直接做，
 #    与 kix 需求三检"仅信号命中触发"一致）；block 需显式配置。
-#    单元测试：node plugins/kix-discipline.test.js（68 断言，含 mode 编曲留痕）。
+#    单元测试：node plugins/kix-discipline.test.js（含 mode 编曲留痕）。
 - id: kix-discipline
   name: ./plugins/kix-discipline.js
 
@@ -726,7 +726,7 @@
 # memories 计数 / README 表述 / 版本对 / vision-bridge / 单文件语法）由仓库
 # 自带 scripts 入口自声明触发，外仓不硬套。强度默认 remind（只做启发引导）；
 # ask/block 需显式配置。remindOnce：每会话每类别一次。
-# 单元测试：node plugins/kix-consistency.test.js（111 断言）。
+# 单元测试：node plugins/kix-consistency.test.js。
 - id: kix-consistency
   name: ./plugins/kix-consistency.js
 
@@ -753,7 +753,7 @@
 # 顺序无关协作（effort 规则同源复用）。见 plugins/kix-route.js 头部注释；
 # v8：cross 偏好表候选先过滤未注册 provider，目录探测失败不再放大为 cross 失败。
 # v13：cross provider 可用性失败时同一 child 最多换 2 家健康异厂商；耗尽才零证据终止。
-# 单元测试：node plugins/kix-route.test.js（91 断言）。
+# 单元测试：node plugins/kix-route.test.js。
 - id: kix-route
   name: ./plugins/kix-route.js
   config:
@@ -784,10 +784,10 @@
   name: ./plugins/kix-commands.js
 
 # ── kix-focus（极简 + 渐进披露 + PTC 协同，2026-08-16，三层递进）─────────
-# 背景：kix 会话每轮向模型发送 85 个工具 schema（~108KB），极简模式证明
+# 背景：kix 会话每轮向模型发送全部工具 schema（约百 KB），极简模式证明
 # 裁剪工具面可显著降本增效（dsh-mcp-lens 实测输入 token ↓89%、成本 ↓89%）。
-# 三层递进（设计见 PLUGINIZATION-ROADMAP.md §8）：
-#   Phase 1 — tools.restrict 裁剪到常驻核心集（~18 个：三通道执行/观察/
+# 三层递进（设计见 classic 档 PLUGINIZATION-ROADMAP.md §8）：
+#   Phase 1 — tools.restrict 裁剪到常驻核心集（三通道执行/观察/
 #     交互 + 发现入口），MCP（GitHub/Playwright/Context7/Semgrep）与
 #     cordis_* 等宿主全局工具按需；tools/change 事件重试。
 #   Phase 2 — kix_capability_search（按需目录查询，返回分组元数据不含全
@@ -799,7 +799,7 @@
 #     机械多步），kix 红线「验证/观察用 native 直呼（证据可回放）」不变；
 #     capability_call 亦可被 run_code SDK 子分派调用（子分派过门禁）。
 # 关闭裁剪（仅保留 search/call）：config: { enableRestrict: false }。
-# 单元测试：node plugins/kix-focus.test.js（123 断言，含常驻成员/枚举回归防线 +
+# 单元测试：node plugins/kix-focus.test.js（含常驻成员/枚举回归防线 +
 #   symlink 部署跨平台解析：候选根链 argv[1]→realpath→插件文件，2026-08-17
 #   WSL2 E2E 发现修复；jobs 常驻化 + 首次使用自动激活；v1.2.13 lite 平台
 #   条件化 shell + 编曲成员 current_sprint 机械注入用例）。
@@ -808,8 +808,8 @@
 
 # ── kix-stalled（L3 档 A：stalled 机械检测，2026-08-15；2026-08-20 用户全开裁决启用）──
 # 只读、无状态、无常驻：/kixst-check <项目根> 命令（零 token）+ kix_stalled_check
-# 模型工具。candidate 状态（1 次夹具 E2E）——按用户「插件全开」裁决默认启用；
-# 真实项目证据后评估是否维持（晋级/退役条件不变）。
+# 模型工具。candidate keep（2026-09-08 结算）：kix-bundle 主会话调用 5 次，
+# 无外部 sprint 资产，不晋级；真实 sprint 仓再评。08-20 全开不再当出生证明。
 - id: kix-stalled
   name: ./plugins/kix-stalled.js
 

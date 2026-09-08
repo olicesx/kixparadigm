@@ -1,4 +1,4 @@
-// kix-consistency — 一致性守护写时拦截（2026-08-17，PLUGINIZATION-ROADMAP P5 落地）
+// kix-consistency — 一致性守护写时拦截（2026-08-17，PLUGINIZATION-ROADMAP（classic 档）P5 落地）
 //
 // 背景：check-dsh-consistency.cjs 只在 CI/npm test 期校验——改 dsh/preset/ 文件时
 // 不实时拦截，drift（zh/en 不同步、persona 超预算、分发镜像漂移）要等下次测试才暴露。

@@ -1,6 +1,6 @@
 // kix-focus — kixparadigm 极简 + 渐进披露 + PTC 协同（2026-08-16）
 //
-// 三层递进架构的实现载体（设计见 PLUGINIZATION-ROADMAP.md §8）：
+// 三层递进架构的实现载体（设计见 PLUGINIZATION-ROADMAP.md（classic 档）§8）：
 //
 //   Phase 1 — 常驻裁剪：tools.restrict 把模型每轮可见的工具从 85 个（~108KB
 //     schema JSON）裁到常驻核心集。裁剪只影响"模型可见/可直呼"的继承全局
@@ -42,7 +42,7 @@
 //       * lite/thinker/vision/fork 与 goal 默认 disabled + 首用自动激活。
 //       * 2026-09-03 role drought 反例：reviewer/qa/dev 改为常驻，职责命中
 //         优先专用成员；generic subagent 仅无归属 Explore。重大审查动态
-//         2–4 reviewer、每路不同 lens，不设固定人数。
+//         观察路数与并发由模型自定（信息缺口/正交视角/承载能力），不预设人数。
 //
 // 挂载：agent.cordis.yml 一行（同款相对路径）：
 //   - id: kix-focus
@@ -154,7 +154,7 @@ const CAPABILITY_GROUPS = [
   {
     id: 'subagent-tiers',
     title: '子代理成员与档位（resident reviewer/qa/dev；on-demand lite/thinker/vision/fork）',
-    hint: 'reviewer/dev/qa 常驻可直接调用；职责命中优先专用成员，generic subagent 仅无归属 Explore。重大审查按风险并发 2–4 个 reviewer、每路不同 lens；cross 是厂商独立维度。lite/thinker/vision/fork 首用由 kix_capability_call 自动激活，或 kix_tool_activate 预激活。组合留痕写 kix_discipline_spec mode',
+    hint: 'reviewer/dev/qa 常驻可直接调用；职责命中优先专用成员，generic subagent 仅无归属 Explore。审查观察路数与并发由信息缺口自定（不预设人数，多≠好）；每路不同 lens；cross 是厂商独立维度。lite/thinker/vision/fork 首用由 kix_capability_call 自动激活，或 kix_tool_activate 预激活。组合留痕写 kix_discipline_spec mode',
     tools: ['subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork', 'subagent_reviewer', 'subagent_qa', 'subagent_dev'],
   },
   {

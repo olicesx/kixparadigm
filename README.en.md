@@ -8,11 +8,11 @@
 
 > **🌍 English:** this file · **中文:** [README.md](README.md)
 >
-> This document practices the repo's own paradigm: **resident minimum, progressive disclosure, no dual-sourced volatile numbers** — version history lives in [CHANGELOG.md](CHANGELOG.md), mechanism mapping in [dsh/preset/DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md); details are not duplicated here.
+> This document practices the repo's own paradigm: **resident minimum, progressive disclosure, no dual-sourced volatile numbers** — version history lives in [CHANGELOG.md](CHANGELOG.md), mechanism mapping in [dsh/preset-classic/DSH-ADAPTATION.md](dsh/preset-classic/DSH-ADAPTATION.md) (not deployed at the default preset root); details are not duplicated here.
 
 ## Why
 
-The kix paradigm began as a VS Code Copilot customization pack. Studying DeepSeek Harness (DSH) revealed a **natural mechanism fit**: resident cognition = preset persona, guard hooks = `tools/pre-execute` plugins, team agents = subagent dispatch, slash commands = native DSH commands, vision top-up = vision-bridge. Full mapping: [DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md) and [DSH-FUSION-MATRIX.md](dsh/preset/DSH-FUSION-MATRIX.md).
+The kix paradigm began as a VS Code Copilot customization pack. Studying DeepSeek Harness (DSH) revealed a **natural mechanism fit**: resident cognition = preset persona, guard hooks = `tools/pre-execute` plugins, team agents = subagent dispatch, slash commands = native DSH commands, vision top-up = vision-bridge. Full mapping: [DSH-ADAPTATION.md](dsh/preset-classic/DSH-ADAPTATION.md) and [DSH-FUSION-MATRIX.md](dsh/preset-classic/DSH-FUSION-MATRIX.md).
 
 The fit turns the paradigm from "one person's local Copilot customization" into "a reproducible public asset installable in one command" — that is why this repo is open source.
 
@@ -52,17 +52,17 @@ The table is the paradigm's capability surface. **The default incentive preset i
 | Mechanical guards | `kix-guards` · `kix-consistency` | Commit budget, feature branch, force push, dangerous SQL, control-plane protection (hard deny only for irreversible damage); preset consistency write-time guard (prevents zh/en drift) |
 | Handoff discipline | `kix-orchestration` · `kix-discipline` | Subagent handoff evidence-chain checks; spec contract gate + verification gate |
 | Focus | `kix-focus` | Tool surface 85→18 resident cut + on-demand catalog & proxied execution — progressive disclosure at runtime |
-| Browser | `kix-browser` (on-demand) | Native `browser{action}` with 17 actions (open/snapshot/click/type/press/select/hover/navigate/wait/screenshot/upload/tabs/dialog) — direct playwright-core, CDP attach takes over your real browser (login state preserved), session persists across calls; zero resident-schema tax (capability_call auto-mounts on first use); replaces the MCP five-hop chain |
+| Browser | `kix-browser` (resident on the default incentive face; not mounted on classic) | Native `browser{action}` with 17 actions (open/snapshot/click/type/press/select/hover/navigate/wait/screenshot/upload/tabs/dialog) — direct playwright-core, CDP attach takes over your real browser (login state preserved), session persists across calls; replaces the MCP five-hop chain. Death clause: comment the row back to on-demand if real sessions use it <2 times in a month |
 | Cost & routing | `kix-cost` · `kix-route` | Subagent thinking-effort normalization; sentinel model names → runtime-available routes |
-| Top-up | `kix-commands` · `dsh-vision-bridge` · `kix-stalled` (opt-in) | `/kixpower-*` native commands; vision for blind lead models; stalled-Sprint detection |
+| Top-up | `kix-commands` · `dsh-vision-bridge` · `kix-stalled` | `/kixpower-*` native commands; vision for blind lead models; stalled-Sprint detection (enabled on the default incentive face, candidate keep; classic yml still commented = opt-in) |
 
-The default incentive preset includes compressed thinking anchors + utility criteria + on-demand skills + probe/settle/experience. Classic additionally ships full orchestration manuals, agent templates, and instructions. Directories are authoritative. Per-plugin mechanics and evolution: [DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md), [CHANGELOG.md](CHANGELOG.md).
+The default incentive preset includes compressed thinking anchors + utility criteria + on-demand skills + probe/settle/experience. Classic additionally ships full orchestration manuals, agent templates, and instructions. Directories are authoritative. Per-plugin mechanics and evolution: [DSH-ADAPTATION.md](dsh/preset-classic/DSH-ADAPTATION.md), [CHANGELOG.md](CHANGELOG.md).
 
 ## Repo layout
 
 ```
 kixparadigm/
-├── dsh/preset/        ← DSH preset source of truth: persona/skills/roles/plugin sources+tests/adaptation docs
+├── dsh/preset/        ← default incentive face: persona/plugins/skills pointer; adaptation docs and agents live in classic
 ├── en/                ← English edition (separate npm package kixparadigm-en, released in sync with CN)
 ├── skills/ agents/ prompts/ memories/ instructions/   ← VS Code Copilot distribution (7-skill subset)
 ├── bin/ scripts/      ← CLI and install/verify/consistency-guard scripts

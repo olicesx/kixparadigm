@@ -4,7 +4,7 @@ user-invocable: false
 description: "Kixpower — AI 多智能体协作编排（v5.7）。采用 DAG 动态拓扑与跨 Sprint 演进。4 个 slash command 触发：/kixpower-new（新项目）/kixpower-import（导入）/kixpower-continue（继续）/kixpower-review（PR 审查）。本文件为路由入口，完整规则见 TEAM_CONVENTIONS.md / USAGE_MANUAL.md。"
 ---
 
-> **DSH 适配注记**：本文件从 VS Code Copilot 导入。工具名/机制映射（runSubagent→subagent、run_in_terminal→pwsh、vscode_askQuestions→ask_user_question、hooks 不自动触发（已由 kix-guards 原生替代）、跨厂商模型字符串不适用（用 `subagent_cross` 工具行）、slash command 已注册为 DSH 原生命令）见 preset 根 `DSH-ADAPTATION.md`，冲突时以该文件为准。
+> **DSH 适配注记**：本文件从 VS Code Copilot 导入。工具名/机制映射（runSubagent→subagent、run_in_terminal→pwsh、vscode_askQuestions→ask_user_question、hooks 不自动触发（已由 kix-guards 原生替代）、跨厂商模型字符串不适用（用 `subagent_cross` 工具行）、slash command 已注册为 DSH 原生命令）见 classic 档 `DSH-ADAPTATION.md`，冲突时以该文件为准。
 
 # Kixpower — Skill 入口（路由索引）
 

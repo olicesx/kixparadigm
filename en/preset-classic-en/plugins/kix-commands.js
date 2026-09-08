@@ -2,7 +2,7 @@
 //
 // P1-8 落地：把 kix 的 5 个流程命令（kixpower-new / kixpower-import /
 // kixpower-continue / kixpower-review / kixpower）注册为 DSH `ctx.commands`
-// 命令平面的原生命令。收益（对照 P1-8 落地前 DSH-ADAPTATION.md §7 的"无 UI 注册"现状）：
+// 命令平面的原生命令。收益（对照 P1-8 落地前 DSH-ADAPTATION.md（classic 档）§7 的"无 UI 注册"现状）：
 //   - 用户在 UI 输入框敲 / 即可看到命令候选（description 即 UI 帮助）
 //   - 触发零 token：命令解析与簿记（command/run + command/done 日志事件对）
 //     绝不进模型历史，模型只在命令注入的 user 消息出现后才开始工作
