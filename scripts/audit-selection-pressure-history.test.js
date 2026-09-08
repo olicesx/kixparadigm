@@ -324,8 +324,9 @@ test('proof that only matches the registry declaration itself is a failure (self
   // 4/11 条 proof 的 contains 与自己的声明行同文件：删掉真实载体后不得仍判绿。
   const script = fs.readFileSync(path.join(__dirname, 'audit-selection-pressure-history.cjs'), 'utf8')
   const start = script.indexOf('const PRESSURE_REGISTRY = [')
-  const end = script.indexOf('\n]\n', start)
-  assert.ok(start !== -1 && end !== -1, 'registry block located')
+  const close = start === -1 ? null : /^\]\r?$/m.exec(script.slice(start))
+  assert.ok(start !== -1 && close, 'registry block located')
+  const end = start + close.index + close[0].length
   const outside = script.slice(0, start) + script.slice(end)
   for (const probe of [
     'nativeClusters.push({',

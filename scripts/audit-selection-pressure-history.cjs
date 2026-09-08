@@ -255,8 +255,9 @@ function findUnscopedBullets(persona) {
 function registryDeclRange(text) {
   const start = text.indexOf('const PRESSURE_REGISTRY = [')
   if (start === -1) return null
-  const end = text.indexOf('\n]\n', start)
-  return end === -1 ? null : [start, end + 2]
+  // 换行无关：Windows 检出是 CRLF，写死 `\n]\n` 会定位失败（CI windows-latest 实测）。
+  const m = /^\]\r?$/m.exec(text.slice(start))
+  return m ? [start, start + m.index + m[0].length] : null
 }
 
 function validateCarrierProof(entry, root) {
