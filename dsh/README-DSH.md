@@ -65,14 +65,12 @@ pwsh -File .\scripts\sync-dsh-preset.ps1 -Force
 
 - `agent.cordis.yml` — 常驻认知层 persona + 工具/技能/门禁/命令/工作流组成
 - `preset.yml` — roster 显示元数据（name/description）
-- `DSH-ADAPTATION.md` — **权威机制映射**（Copilot 工具名 → DSH、门禁等价物、团队分派、
-  跨厂商、vision、PTC §9）；kix 原始文档冲突时以此为准
-- `skills/` — kixparadigm / kixpower / handoff / write-a-skill / improve-codebase-architecture 与通用方法论
-- `agents/` — kixpower 团队角色（subagent 分派时的 prompt 模板）
+- `skills/` — 目录指针 → `../preset-classic/skills`（kixparadigm / kixpower 等按需技能）
 - `prompts/` — /kixpower-* 流程（kix-commands 插件注入用）
-- `instructions/` — 核心指令原件（persona 已内置同源内容）
-- `memories/` — 方法论记忆（目录清单为准；kix×DSH 任务先查）；Copilot 语境记忆已移出
-- `plugins/` — kix-guards.js（机械门禁监听器）+ kix-cost.js（成本纪律）+ kix-route.js（跨厂商路由）+ kix-commands.js（原生命令注册）+ kix-stalled.js（opt-in）+ 测试
+- `memories/` — 方法论记忆（目录清单为准；含 incentive-lessons）
+- `plugins/` — kix-guards / kix-cost / kix-route / kix-commands / kix-stalled（默认启用、candidate keep）+ 测试
+
+默认档根**不部署** `DSH-ADAPTATION.md`、`DSH-FUSION-MATRIX.md`、`instructions/`；`skills/` 与 `agents/` 在仓库里是指向 classic 的指针，安装时物化为真目录（保证货架内 `../../agents/*.agent.md` 等相对链接可达）。权威机制映射在 [`preset-classic/DSH-ADAPTATION.md`](preset-classic/DSH-ADAPTATION.md) 与 [`preset-classic/DSH-FUSION-MATRIX.md`](preset-classic/DSH-FUSION-MATRIX.md)。
 
 ## 验证
 
@@ -85,3 +83,14 @@ node --test dsh\vision-bridge\test.js           # vision-bridge 纯逻辑回归
 ```
 
 preset 挂载校验（roster `standingKeyFor`）在 DSH 会话内用 cordis 工具集执行。
+
+### 常驻承诺与死亡条款的结算工具（只读，非门禁）
+
+```bash
+node scripts/audit-selection-pressure-history.cjs --check     # registry 门禁：每条常驻承诺的承载物内容必须命中
+node scripts/audit-selection-pressure-history.cjs --deaths    # 死亡条款计数：7 通道 depth-0 调用数 + 首末日期
+node scripts/audit-selection-pressure-history.cjs --deaths --limit=200 --json
+```
+
+- `--deaths` 默认扫 `$KIX_SESSION_ROOTS`（`path.delimiter` 分隔）或 `~/.dsh/sessions` + WSL 下各 Windows 用户家目录的 `.dsh/sessions`；跨项目、无时间窗，**零调用只标候选不自动判死**——「连续一个月」仍需按 `first-seen`/`last-seen` 人工判断。
+- 会话库可能很大（实测 800MB+ / 1.4k 文件），全量扫描约 1–2 分钟；用 `--limit=N` 抽样或传显式根缩小范围。

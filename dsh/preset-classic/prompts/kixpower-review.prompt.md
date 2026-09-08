@@ -3,7 +3,7 @@ description: "🔍 [v5.7] PR 审查模式：独立 worktree deterministic gate +
 agent: "kixpower-orchestrator"
 ---
 
-> **DSH 适配注记**：本流程从 VS Code Copilot 导入，在 DeepSeek Harness 中执行。工具名已按 preset 根 `DSH-ADAPTATION.md` 映射为 DSH 原生（run_in_terminal→`pwsh`、read_file→`read`、grep_search→`grep`、replace_string_in_file→`edit`、create_file→`write`、vscode_askQuestions→`ask_user_question`、runSubagent→`subagent`/`subagent_cross`（prompt 注入 agents/*.agent.md 角色 body）、mcp_github_*→`mcp__github__*` 或 gh CLI、codegraphy_*→`grep`/`read`）；**跨厂商复核不再写死模型字符串，用 `subagent_cross` 工具行（kix-route 自动取反厂商）**。`{{input}}` 即用户输入。`/kixpower-*` 已注册为 DSH 原生命令（kix-commands 插件）：用户敲 `/` 可见候选，触发后本文件正文经剥离 frontmatter 注入为 user 消息，模型按流程执行。
+> **DSH 适配注记**：本流程从 VS Code Copilot 导入，在 DeepSeek Harness 中执行。工具名已按 classic 档 `DSH-ADAPTATION.md` 映射为 DSH 原生（run_in_terminal→`pwsh`、read_file→`read`、grep_search→`grep`、replace_string_in_file→`edit`、create_file→`write`、vscode_askQuestions→`ask_user_question`、runSubagent→`subagent`/`subagent_cross`（prompt 注入 agents/*.agent.md 角色 body）、mcp_github_*→`mcp__github__*` 或 gh CLI、codegraphy_*→`grep`/`read`）；**跨厂商复核不再写死模型字符串，用 `subagent_cross` 工具行（kix-route 自动取反厂商）**。`{{input}}` 即用户输入。`/kixpower-*` 已注册为 DSH 原生命令（kix-commands 插件）：用户敲 `/` 可见候选，触发后本文件正文经剥离 frontmatter 注入为 user 消息，模型按流程执行。
 
 执行 **模式 4：PR 审查**。
 

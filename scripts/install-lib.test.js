@@ -5,7 +5,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
-const { hasOtherPresetOwner, installPreset, installVisionBridge, mergeVisionBridgePatch, uninstall, copyTree, ensureDefaultSkillsShelf } = require('./install-lib.js')
+const { hasOtherPresetOwner, installPreset, installVisionBridge, mergeVisionBridgePatch, uninstall, copyTree, ensureDefaultSkillsShelf, ensureDefaultShelf } = require('./install-lib.js')
 
 const DEFAULT_PATCH = [
   '# Your patch layer for this dsh profile, applied after every bundle layer:',
@@ -211,7 +211,37 @@ test('ensureDefaultSkillsShelf materializes classic shelf when dest has none', (
     const extra = ensureDefaultSkillsShelf(dest, silentLog)
     assert.ok(extra, 'fallback copied files')
     assert.equal(fs.existsSync(path.join(dest, 'skills', 'handoff', 'SKILL.md')), true)
-    assert.equal(ensureDefaultSkillsShelf(dest, silentLog), null, 'second call is a no-op')
+    const second = ensureDefaultSkillsShelf(dest, silentLog)
+    assert.ok(second, 'second call re-syncs instead of early-returning')
+    assert.equal(second.added.length + second.updated.length, 0, 'second call changes nothing when source is unchanged')
+  } finally {
+    fs.rmSync(dest, { recursive: true, force: true })
+  }
+})
+
+test('ensureDefaultShelf materializes agents too (货架内 ../../agents 链接可达)', () => {
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-agents-'))
+  try {
+    assert.equal(fs.existsSync(path.join(dest, 'agents', 'kixparadigm.agent.md')), false)
+    const extra = ensureDefaultShelf('agents', dest, silentLog)
+    assert.ok(extra, 'agents shelf materialized')
+    assert.equal(fs.existsSync(path.join(dest, 'agents', 'kixparadigm.agent.md')), true)
+    const secondAgents = ensureDefaultShelf('agents', dest, silentLog)
+    assert.ok(secondAgents, 'second call re-syncs instead of early-returning')
+    assert.equal(secondAgents.added.length + secondAgents.updated.length, 0, 'second call changes nothing when source is unchanged')
+  } finally {
+    fs.rmSync(dest, { recursive: true, force: true })
+  }
+})
+
+test('ensureDefaultShelf 目标侧残留同名指针文件时先清后建（Windows 检出形态）', () => {
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-stale-'))
+  try {
+    fs.writeFileSync(path.join(dest, 'agents'), '../preset-classic/agents')
+    const extra = ensureDefaultShelf('agents', dest, silentLog)
+    assert.ok(extra, 'stale pointer file replaced by a real tree')
+    assert.equal(fs.lstatSync(path.join(dest, 'agents')).isDirectory(), true)
+    assert.equal(fs.existsSync(path.join(dest, 'agents', 'kixparadigm.agent.md')), true)
   } finally {
     fs.rmSync(dest, { recursive: true, force: true })
   }
@@ -227,11 +257,44 @@ test('copyTree materializes a git-style symlink file (Windows core.symlinks=fals
     fs.writeFileSync(path.join(classic, 'SKILL.md'), 'name: handoff\n')
     fs.mkdirSync(path.join(src, 'preset'), { recursive: true })
     fs.writeFileSync(path.join(src, 'preset', 'skills'), '../classic/skills')
+    fs.mkdirSync(path.join(src, 'preset', 'memories'), { recursive: true })
+    fs.writeFileSync(path.join(src, 'preset', 'memories', 'keep.md'), 'keep\n')
     copyTree(path.join(src, 'preset'), dst, silentLog)
     assert.equal(fs.lstatSync(path.join(dst, 'skills')).isDirectory(), true)
     assert.equal(fs.readFileSync(path.join(dst, 'skills', 'handoff', 'SKILL.md'), 'utf8'), 'name: handoff\n')
+    // 指针目录是镜像：源侧删除的残留必须在目标侧一起清掉（单源在运行时成立）。
+    fs.writeFileSync(path.join(dst, 'skills', 'stale.md'), 'stale\n')
+    fs.mkdirSync(path.join(dst, 'skills', 'staleDir'), { recursive: true })
+    fs.writeFileSync(path.join(dst, 'skills', 'staleDir', 'x.md'), 'x\n')
+    // 普通目录里的用户文件绝不能被裁剪（kix-mem 经验库就写在安装副本 memories/ 下）。
+    fs.mkdirSync(path.join(dst, 'memories'), { recursive: true })
+    fs.writeFileSync(path.join(dst, 'memories', 'user-note.md'), 'mine\n')
+    const r = copyTree(path.join(src, 'preset'), dst, silentLog)
+    assert.equal(fs.existsSync(path.join(dst, 'skills', 'stale.md')), false, 'stale file pruned from mirror')
+    assert.equal(fs.existsSync(path.join(dst, 'skills', 'staleDir')), false, 'stale dir pruned from mirror')
+    assert.equal(fs.existsSync(path.join(dst, 'memories', 'user-note.md')), true, 'plain directory is never pruned')
+    assert.ok(r.pruned.some((p) => p.includes('stale')), 'prune reported separately from target-only')
+    assert.ok(r.pruned.every((p) => !p.startsWith('..')), 'pruned paths are preset-root relative, not ../dst')
+    assert.equal(r.targetOnly.some((p) => p.startsWith('skills/')), false, 'mirror contents are not reported as target-only')
+    assert.ok(r.targetOnly.includes('memories/user-note.md'), 'plain-directory extras stay in targetOnly')
+    assert.equal(r.targetOnly.some((p) => p.includes('stale')), false, 'pruned entries are not reported as kept')
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('ensureDefaultShelf 源侧删除的文件在目标货架被裁剪（货架自身即镜像）', () => {
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-shelf-prune-'))
+  try {
+    const first = ensureDefaultShelf('agents', dest, silentLog)
+    assert.ok(first && first.added.length > 0, 'agents shelf materialized')
+    // 模拟上游删除：目标货架放一个源侧不存在的残留
+    fs.writeFileSync(path.join(dest, 'agents', 'ghost.agent.md'), 'ghost\n')
+    const second = ensureDefaultShelf('agents', dest, silentLog)
+    assert.equal(fs.existsSync(path.join(dest, 'agents', 'ghost.agent.md')), false, 'stale shelf file pruned')
+    assert.ok(second.pruned.some((p) => p.includes('ghost')), 'prune reported')
+  } finally {
+    fs.rmSync(dest, { recursive: true, force: true })
   }
 })
 

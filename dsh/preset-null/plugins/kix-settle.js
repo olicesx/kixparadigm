@@ -308,7 +308,7 @@ module.exports = {
           const notice = currentJobPending ? pendingVerificationText(st.edits) : settleText(st.edits)
           agent.steer(makeUserMessage(notice))
         }
-        // ② 小改动面盲抽样：稳定散列使样本可重放，不把随机波动当行为证据。
+        // ③ 小改动面盲抽样：稳定散列使样本可重放，不把随机波动当行为证据。
         // 已被实现结算提醒过的会话不连续加压；零 finding 不会自动调整路由。
         if (authority && st.edits > 0 && st.executedSinceLastEdit && !st.reminded &&
             !st.freshObserverSeen && !st.calibrationReminded && st.mutationPaths.size > 0 &&
@@ -316,7 +316,7 @@ module.exports = {
           st.calibrationReminded = true
           agent.steer(makeUserMessage(calibrationText(st.mutationPaths.size)))
         }
-        // ③ 高置信提交：仅根 authority；没有编辑、fresh observer 或可复算物证时提醒。
+        // ② 高置信提交：仅根 authority；没有编辑、fresh observer 或可复算物证时提醒。
         if (authority && st.edits === 0 && !st.freshObserverSeen && st.execs === 0 && !st.commitBlindReminded) {
           const sessionQuery = ctx.get && ctx.get('sessionQuery')
           if (sessionQuery && sessionId) {

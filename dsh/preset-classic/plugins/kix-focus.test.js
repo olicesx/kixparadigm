@@ -470,7 +470,7 @@ await ok('动态非 lite 档位携静态 9-name toolFilter deny', (() => {
 await ok('成员发现组明确 role-first、动态 reviewer lens 与 generic Explore 边界', (() => {
   const g = I.CAPABILITY_GROUPS.find((x) => x.id === 'subagent-tiers')
   return !!g && g.hint.includes('常驻可直接调用') && g.hint.includes('generic subagent 仅无归属 Explore')
-    && g.hint.includes('2–4 个 reviewer') && g.hint.includes('每路不同 lens')
+    && g.hint.includes('不预设人数') && g.hint.includes('每路不同 lens')
     && g.hint.includes('cross 是厂商独立维度')
 })())
 await ok('常驻成员不会进入动态激活/卸载枚举', (() => {

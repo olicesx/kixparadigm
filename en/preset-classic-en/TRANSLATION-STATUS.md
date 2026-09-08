@@ -28,6 +28,8 @@ This edition is delivered in **phased translation**. The resident cognition laye
 | `memories/*.md` | 5 | Methodology memories; read on demand |
 | `agents/kixpower-{producer,dev,qa,orchestrator,reviewer}.agent.md` | 5 | Team-role prompt templates for subagent dispatch |
 
+**Known anchor lag (2026-09-08)**: `plugins/kix-stalled.js:8` and `plugins/kix-browser.js:8` are 4-copy byte-identical, so their header comments cite the Chinese section titles of `memories/dsh-capability-map.md` (`「动态 Cordis 插件实测机制事实」` / `「浏览器自动化」`). Those titles exist in the CN maps but not yet in this EN map (whose equivalent row reads `Browser automation`, and which has no Cordis-facts section). The anchors resolve once `memories/*.md` are translated; until then they are a comment-only reference with no runtime or gate impact.
+
 ## Contributing
 
 Translation follows the canonical glossary (`instructions/glossary.md`) so coined terms stay consistent. PRs welcome — see the repository root README. Tracked in the repo as a rolling effort; the goal is full English coverage of `skills/`, `prompts/`, `memories/`, and `agents/`.

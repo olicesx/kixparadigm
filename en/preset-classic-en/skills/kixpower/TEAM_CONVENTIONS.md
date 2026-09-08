@@ -19,7 +19,7 @@
 > 论文可靠性分级与来源见 [AUDIT.md](../kixparadigm/AUDIT.md) §1（复查时读，不自动加载）
 ## 工具使用规范
 
-> **DSH 适配注记**：下表从 Copilot 语境导入。DSH 映射：`execute`/`run_in_terminal`→`pwsh`、`web`→`web_search`、GitHub MCP→`gh` CLI、CodeGraphy MCP→`grep`/`read`、`todo`→`todo_write`、`search`→`grep`。权威映射见 preset 根 `DSH-ADAPTATION.md`。
+> **DSH 适配注记**：下表从 Copilot 语境导入。DSH 映射：`execute`/`run_in_terminal`→`pwsh`、`web`→`web_search`、GitHub MCP→`gh` CLI、CodeGraphy MCP→`grep`/`read`、`todo`→`todo_write`、`search`→`grep`。权威映射见 classic 档 `DSH-ADAPTATION.md`。
 
 | 工具 | 用途 |
 |---|---|

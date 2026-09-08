@@ -8,11 +8,11 @@
 
 > **🌍 English:** [README.en.md](README.en.md) · **中文:** 本文件
 >
-> 本文档实践仓库自身的范式：**常驻最小、渐进披露、易变数字不双源维护** —— 版本史在 [CHANGELOG.md](CHANGELOG.md)，机制映射在 [dsh/preset/DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md)，细节不在此重复。
+> 本文档实践仓库自身的范式：**常驻最小、渐进披露、易变数字不双源维护** —— 版本史在 [CHANGELOG.md](CHANGELOG.md)，机制映射在 [dsh/preset-classic/DSH-ADAPTATION.md](dsh/preset-classic/DSH-ADAPTATION.md)（默认档根不部署该文件），细节不在此重复。
 
 ## 为什么
 
-kix 范式原是 VS Code Copilot 定制包。研究 DeepSeek Harness（DSH）后发现两者**机制天然适配**：常驻认知 = preset persona、门禁 hooks = `tools/pre-execute` 插件、团队 Agent = subagent 分派、slash 命令 = DSH 原生命令、识图补足 = vision-bridge。完整映射见 [DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md) 与 [DSH-FUSION-MATRIX.md](dsh/preset/DSH-FUSION-MATRIX.md)。
+kix 范式原是 VS Code Copilot 定制包。研究 DeepSeek Harness（DSH）后发现两者**机制天然适配**：常驻认知 = preset persona、门禁 hooks = `tools/pre-execute` 插件、团队 Agent = subagent 分派、slash 命令 = DSH 原生命令、识图补足 = vision-bridge。完整映射见 [DSH-ADAPTATION.md](dsh/preset-classic/DSH-ADAPTATION.md) 与 [DSH-FUSION-MATRIX.md](dsh/preset-classic/DSH-FUSION-MATRIX.md)。
 
 适配带来一个现实转变：范式从「一个人本机的 Copilot 定制」变成「一条命令可复现的公开资产」——这是本仓库开源的契机。
 
@@ -26,7 +26,7 @@ npm i -g kixparadigm-en  # 英文经典模式 kixparadigm-classic-en（独立包
 
 > v1.3.4 起 `npm i -g kixparadigm` 会把两个变体都装进 `~/.dsh/.agent-presets/`。消融对照 `kixparadigm-null` 不随 npm 安装。
 >
-> **先选对模式**：默认 `kixparadigm` 是激励面（压缩思考锚点 + 效用准则 + 按需技能货架；无仪式流水线、无 agents 目录）。`kixparadigm-classic` 是全文编曲配套（思考锚点全文 + kixpower 说明书 + agents/instructions）。复杂协作 / 研究范式仍可用 classic；默认档不再把核心哲学砍掉。选择器是任务属性，不是「半价 = 没有脑子」。
+> **先选对模式**：默认 `kixparadigm` 是激励面（压缩思考锚点 + 效用准则 + 按需技能货架；无仪式流水线；agents/skills 货架经指针共享 classic（安装时物化））。`kixparadigm-classic` 是全文编曲配套（思考锚点全文 + kixpower 说明书 + agents/instructions）。复杂协作 / 研究范式仍可用 classic；默认档不再把核心哲学砍掉。选择器是任务属性，不是「半价 = 没有脑子」。
 
 自定义 DSH 目录（`DSH_HOME`）、`--preset-only`、运维命令（`doctor` / `uninstall` / `copilot`）见 [dsh/README-DSH.md](dsh/README-DSH.md)。
 
@@ -52,17 +52,17 @@ chmod +x install.sh && ./install.sh
 | 机械门禁 | `kix-guards` · `kix-consistency` | commit 预算、feature branch、force push、危险 SQL、控制面保护（硬 deny 仅不可逆破坏）；preset 一致性写时拦截（防 zh/en 漂移） |
 | 交接纪律 | `kix-orchestration` · `kix-discipline` | subagent 交接证据链校验；spec 契约 gate + 验证 gate |
 | 聚焦 | `kix-focus` | 工具面 85→18 常驻裁剪 + 按需目录与代理执行——渐进披露的运行时形态 |
-| 浏览器 | `kix-browser`（按需激活） | 原生 `browser{action}` 17 动作（open/snapshot/click/type/press/select/hover/导航/等待/截图/上传/多标签/弹窗）——playwright-core 直驱、CDP attach 接管真实浏览器（登录态保留）、会话跨调用持久；零常驻 schema 税（capability_call 首用自动挂载）；替代 MCP 五跳链路 |
+| 浏览器 | `kix-browser`（默认激励面常驻；classic 未挂载） | 原生 `browser{action}` 17 动作（open/snapshot/click/type/press/select/hover/导航/等待/截图/上传/多标签/弹窗）——playwright-core 直驱、CDP attach 接管真实浏览器（登录态保留）、会话跨调用持久；替代 MCP 五跳链路。死亡条款：连续一个月真实会话 <2 次则回退按需 |
 | 成本路由 | `kix-cost` · `kix-route` | 子代理思考强度归一化；哨兵模型名 → 运行时可用路由 |
-| 补足 | `kix-commands` · `dsh-vision-bridge` · `kix-stalled`（opt-in） | `/kixpower-*` 原生命令；无视觉主模型识图；停滞 Sprint 检测 |
+| 补足 | `kix-commands` · `dsh-vision-bridge` · `kix-stalled` | `/kixpower-*` 原生命令；无视觉主模型识图；停滞 Sprint 检测（默认激励面已启用、candidate keep；classic yml 仍注释 = opt-in） |
 
-默认激励面提供压缩思考锚点 + 效用准则 + 按需技能 + probe/settle/experience。classic 另提供全文编曲说明书、agents 模板与 instructions。清单以各目录为准。各插件机制与版本演进见 [DSH-ADAPTATION.md](dsh/preset/DSH-ADAPTATION.md) 与 [CHANGELOG.md](CHANGELOG.md)。
+默认激励面提供压缩思考锚点 + 效用准则 + 按需技能 + probe/settle/experience。classic 另提供全文编曲说明书、agents 模板与 instructions。清单以各目录为准。各插件机制与版本演进见 [DSH-ADAPTATION.md](dsh/preset-classic/DSH-ADAPTATION.md) 与 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 仓库结构
 
 ```
 kixparadigm/
-├── dsh/preset/        ← DSH preset 唯一事实源：persona/技能/角色/插件源码+测试/适配文档
+├── dsh/preset/        ← 默认激励面：persona/插件 + skills/agents 目录指针（安装时物化）；适配文档在 classic
 ├── en/                ← 英文版（独立 npm 包 kixparadigm-en，与中文包同步发版）
 ├── skills/ agents/ prompts/ memories/ instructions/   ← VS Code Copilot 分发版（7 技能子集）
 ├── bin/ scripts/      ← CLI 与安装/验证/一致性守护脚本

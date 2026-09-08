@@ -1,8 +1,8 @@
 # DSH Capability Map — DeepSeek Harness 机制事实地图
 
-> **定位**：机制事实层索引（对照 `DSH-ADAPTATION.md` 的工具名映射，本文件是能力面全景）。**不是规则**——不写「kix 应集成 X」这类结论，只记机制事实 + 标注过的判断。后续任何 kix×DSH 任务（改 preset、注册命令、集成矩阵、写 guards）先查本文件，避免重翻 172 个包。
+> **定位**：机制事实层索引（对照 classic 档 `DSH-ADAPTATION.md` 的工具名映射，本文件是能力面全景）。**不是规则**——不写「kix 应集成 X」这类结论，只记机制事实 + 标注过的判断。后续任何 kix×DSH 任务（改 preset、注册命令、集成矩阵、写 guards）先查本文件，避免重翻 172 个包。
 >
-> **来源**：DSH 安装包内 `node_modules/@deepseek-ai/dsh-*` 共 172 包的 README（优先 zh）。
+> **来源**：DSH 安装包内 `node_modules/@deepseek-ai/dsh-*` 全部包的 README（优先 zh）。
 > **方法**：12 组并行梳理（8 组 DeepSeek + 4 组 GLM 跨厂商），组级机制无跨厂商分歧。
 > **更新条件**：DSH 版本升级或机制被实际任务验证/推翻时复核。已落地的状态史（各插件逐版验收记录）不在此维护——机制事实层与状态史分层，状态史看 CHANGELOG。
 
@@ -48,7 +48,7 @@
 
 ### 档一：地基级契合——kix 纪律的机械底座已就位，直接依赖零改造
 1. **事件溯源 + model-visible ⟺ logged** → kix 三通道「观察独立可回放」从自觉变可审计。
-2. **工具门禁链**（pre-execute/guard/execute/post-execute/result）→ kix「机械门禁常驻、规则是负债」的架构化形态；kix-guards 参考 hooks 可重写为原生监听器（DSH-ADAPTATION §机械门禁已预留）。
+2. **工具门禁链**（pre-execute/guard/execute/post-execute/result）→ kix「机械门禁常驻、规则是负债」的架构化形态；kix-guards 参考 hooks 可重写为原生监听器（classic 档 DSH-ADAPTATION §机械门禁已预留）。
 3. **沙箱三档 fail-closed + 诚实降级报告**（Windows partial）→ 与 kix 反自信偏差同构，连自己边界都标注 partial。
 4. **委派边界权限固定**（快照+钉 never+日志可重建+单调深度）→ kix「子 agent 只能在继承范围行动、升权确定性拒绝」的原生实现。
 5. **统一升权语义**（严格更宽+justification+一次性授权+同轮次仅一次重试）→ kix「破坏性操作前 ask_user_question」的机械对偶。
@@ -72,7 +72,7 @@
 
 - `resolveModelInfo()`（llm 服务）向拥有精确 provider/model 路由的适配器查询一次：返回 contextWindow / defaultMaxTokens / reasoning 档位。catalog 只是建议非白名单——未列出模型 id 原样透传。
 - kix 用法：分派子代理前可用它校验「prompt ≤ 5K tokens」假设（对照 contextWindow 而非猜）；compaction 阈值由 harness 管，不重复测量。
-- 新增厂商两步法（DSH-ADAPTATION §3 已写）：settings.yaml `llm-pi-ai.providers` 加 profile（apiKeyEnv 引用密钥，绝不写明文）+ preset agent.cordis.yml 加对应 subagent 工具行（agentOptions.provider/model 覆盖路由，已实证）。
+- 新增厂商两步法（classic 档 DSH-ADAPTATION §3 已写）：settings.yaml `llm-pi-ai.providers` 加 profile（apiKeyEnv 引用密钥，绝不写明文）+ preset agent.cordis.yml 加对应 subagent 工具行（agentOptions.provider/model 覆盖路由，已实证）。
 
 ### §2.2 cordis preset 原型切换（档三-16 的操作形态）
 
