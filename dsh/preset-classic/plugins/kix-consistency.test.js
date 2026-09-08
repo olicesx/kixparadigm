@@ -291,6 +291,32 @@ function makePostExec(callId) {
     fs.mkdirSync(path.dirname(p), { recursive: true })
     fs.writeFileSync(p, body, 'utf8')
   }
+  const shelfRoot = mkdtemp('kix-cons-test-shelfptr-')
+  fs.mkdirSync(path.join(shelfRoot, 'dsh/preset'), { recursive: true })
+  fs.mkdirSync(path.join(shelfRoot, 'dsh/preset-classic/skills'), { recursive: true })
+  fs.mkdirSync(path.join(shelfRoot, 'dsh/preset-classic/agents'), { recursive: true })
+  fs.writeFileSync(path.join(shelfRoot, 'dsh/preset/skills'), '../preset-classic/skills')
+  const shelfMissing = lib.checkDefaultShelfPointers({ root: shelfRoot })
+  await ok('共享货架指针缺失 → failure 点名', shelfMissing.failures.length === 1 && shelfMissing.failures[0].includes('agents'))
+  fs.writeFileSync(path.join(shelfRoot, 'dsh/preset/agents'), '../preset-classic/agents')
+  const shelfOk = lib.checkDefaultShelfPointers({ root: shelfRoot })
+  await ok('两个文本指针均可解析 → 0 failure', shelfOk.failures.length === 0)
+
+  const INSTALL_ROOTS = ['kixparadigm', 'kixparadigm-classic', 'kixparadigm-null', 'kixparadigm-classic-en']
+  await ok('安装布局（目录名=变体名）同样分成两簇',
+    JSON.stringify(lib.pluginIdentityGroups('kix-budget.js', INSTALL_ROOTS)) === JSON.stringify([
+      ['kixparadigm', 'kixparadigm-null'],
+      ['kixparadigm-classic', 'kixparadigm-classic-en'],
+    ]))
+  await ok('安装布局 settle 只绑 incentive 簇',
+    JSON.stringify(lib.pluginIdentityGroups('kix-settle.js', INSTALL_ROOTS)) === JSON.stringify([
+      ['kixparadigm', 'kixparadigm-null'],
+    ]))
+  await ok('外仓同名目录 preset/ 不并入本仓变体簇',
+    JSON.stringify(lib.pluginIdentityGroups('kix-budget.js', ['dsh/preset', 'dsh/preset-classic', 'vendor/preset'])) === JSON.stringify([
+      ['dsh/preset'],
+      ['dsh/preset-classic'],
+    ]))
   await ok('未点名插件仍走全根一组',
     JSON.stringify(lib.pluginIdentityGroups('kix-guards.js', CURRENT_ROOTS)) === JSON.stringify([CURRENT_ROOTS]))
   await ok('budget 分成 incentive / classic 两簇',
@@ -352,11 +378,22 @@ function makePostExec(callId) {
   // npm test 会 cd 进 plugins/ 再跑 node --test；live 路径必须从本文件位置
   // 找回仓库根，不能绑 process.cwd()（cwd 在 CI 下是 plugins 目录）。
   let liveRoot = __dirname
+  let liveDefault = null
   for (let i = 0; i < 6; i++) {
     if (
       fs.existsSync(path.join(liveRoot, 'dsh', 'preset', 'agent.cordis.yml')) &&
       fs.existsSync(path.join(liveRoot, 'en', 'preset-classic-en', 'agent.cordis.yml'))
-    ) break
+    ) {
+      liveDefault = 'dsh/preset'
+      break
+    }
+    if (
+      fs.existsSync(path.join(liveRoot, 'kixparadigm', 'agent.cordis.yml')) &&
+      fs.existsSync(path.join(liveRoot, 'kixparadigm', 'preset.yml'))
+    ) {
+      liveDefault = 'kixparadigm'
+      break
+    }
     liveRoot = path.join(liveRoot, '..')
   }
   const liveSettle = lib.checkPluginPair({ root: liveRoot, name: 'kix-settle.js' })
@@ -366,7 +403,7 @@ function makePostExec(callId) {
   await ok('真实仓库 budget 按两簇通过', liveBudget.failures.length === 0)
   await ok('真实仓库语言中立插件仍 4 copies identical',
     liveGuards.failures.length === 0 && liveGuards.notes.some((n) => n.includes('4 copies byte-identical')))
-  const liveKix4Checks = I.pickChecks(liveRoot, 'dsh/preset/plugins/kix4.test.js')
+  const liveKix4Checks = I.pickChecks(liveRoot, liveDefault + '/plugins/kix4.test.js')
   const liveKix4Fails = []
   for (const c of liveKix4Checks) {
     const r = c()
@@ -374,7 +411,7 @@ function makePostExec(callId) {
   }
   await ok('写已存在独立 kix4.test.js → 仅 pair，且 0× kix4.js missing',
     liveKix4Checks.length === 1 && !liveKix4Fails.some((f) => f.includes('kix4.js missing')))
-  const liveSettleTestChecks = I.pickChecks(liveRoot, 'dsh/preset/plugins/kix-settle.test.js')
+  const liveSettleTestChecks = I.pickChecks(liveRoot, liveDefault + '/plugins/kix-settle.test.js')
   await ok('写已存在伴侣测试 → 仅 pair 1 检查', liveSettleTestChecks.length === 1)
   const libSrcNow = fs.readFileSync(path.join(__dirname, 'consistency-lib.cjs'), 'utf8')
   await ok('runAllZh 不再硬编码身分组豁免名单',

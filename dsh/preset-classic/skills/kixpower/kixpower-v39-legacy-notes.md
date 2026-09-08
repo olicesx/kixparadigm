@@ -35,7 +35,7 @@
 
 > **2026-08-15 落地进展**：档 A（stalled 检测）已在 DSH 落地为 kixst 动态插件——命令形态
 > `/kixst-check|enable|disable` + frontmatter 持久化 + 惰性定时器 + workflow preflight 融入，
-> E2E 验证通过（详见 `dsh-capability-map.md` §6）。L3 从「GitHub Actions 上不可行的设计」
+> E2E 验证通过（详见 `../../memories/dsh-capability-map.md`「动态 Cordis 插件实测机制事实」）。L3 从「GitHub Actions 上不可行的设计」
 > 变成「DSH 上可选启用的本地能力」。
 
 - 旧版把「从 GitHub Actions 调 Copilot CLI/API」写成**已实现 v3.4**，实际从未验证可用

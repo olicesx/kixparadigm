@@ -2,7 +2,7 @@
 
 > **定位**：机制事实层索引（对照 `DSH-ADAPTATION.md` 的工具名映射，本文件是能力面全景）。**不是规则**——不写「kix 应集成 X」这类结论，只记机制事实 + 标注过的判断。后续任何 kix×DSH 任务（改 preset、注册命令、集成矩阵、写 guards）先查本文件，避免重翻 172 个包。
 >
-> **来源**：DSH 安装包内 `node_modules/@deepseek-ai/dsh-*` 共 172 包的 README（优先 zh）。
+> **来源**：DSH 安装包内 `node_modules/@deepseek-ai/dsh-*` 全部包的 README（优先 zh）。
 > **方法**：12 组并行梳理（8 组 DeepSeek + 4 组 GLM 跨厂商），组级机制无跨厂商分歧。
 > **更新条件**：DSH 版本升级或机制被实际任务验证/推翻时复核。
 

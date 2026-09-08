@@ -5,14 +5,18 @@
 //     判定停滞 Sprint（status 进行中且 last_updated 超 24h）
 //   - kix_stalled_check 模型工具：模型侧按需检查（workflow preflight 双保险等）
 //
-// 设计纪律（对照 dsh-capability-map.md §6）：
+// 设计纪律（对照 dsh-capability-map.md「动态 Cordis 插件实测机制事实」节）：
 //   - 未验证不承诺：仅 status ∈ {in-progress,in_progress,active} 且时间戳可解析
 //     且超阈值才判 stalled；done / 缺时间戳不误报
 //   - 规则是负债：不做常驻定时器、不写 frontmatter、不注入提醒（enable/disable
 //     形态在原型历史 pkg-14 保留，真实项目证据需要后再恢复）
 //   - 阈值固定 24h：是否参数化待真实项目定夺，不提前铺参数面
 //
-// 挂载：agent.cordis.yml 一行（默认注释 = opt-in，启用见 scripts/install-kix-stalled.ps1）
+// 挂载：agent.cordis.yml 一行（不是「默认注释 = opt-in」）。
+//   默认激励面 / null：2026-08-20 用户全开裁决已启用。
+//   classic / en：yml 仍注释，保持 opt-in。
+// 结算（2026-09-08）：kix-bundle 主会话 kix_stalled_check=5，无外部 sprint
+//   资产 → keep，不晋级。真实 sprint 仓再评；两轮无真实 stalled 命中可注释回退。
 //   - id: kix-stalled
 //     name: ./plugins/kix-stalled.js
 

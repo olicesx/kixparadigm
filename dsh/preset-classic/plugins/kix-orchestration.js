@@ -11,7 +11,7 @@
 //   只融合跨环境通用、失败代价高、可机械枚举的交接纪律；不移植 Copilot 特有流程
 //   （worktree 登记 / plan_snapshot_sha / l2_gate_manifest_sha256 / stash 基线 /
 //   reverify marker 等深度校验——那些绑定 Copilot 的 runSubagent+agentName 分派
-//   格式，DSH 的 subagent 是 prompt 注入，过度移植 = 负债，见 PLUGINIZATION-ROADMAP.md）。
+//   格式，DSH 的 subagent 是 prompt 注入，过度移植 = 负债，见 PLUGINIZATION-ROADMAP.md（classic 档））。
 //
 // 机制（DSH 原生事件，与 kix-discipline 同构）：
 //   - tools/pre-execute：对 subagent* 工具的分派，从 prompt 提取交接元数据，
@@ -27,7 +27,7 @@
 //     VS Code 的 subagentStop 可在子代理返回后校验；DSH 原生等价是 subagent/end
 //     emit（带 lastAssistantMessage）。返回含完成声明但 progress.md 未同步 →
 //     agent.steer() 注入提醒（remindOnce；提醒层不 block，0% 误报）。详见
-//     dsh/preset/DSH-FUSION-MATRIX.md §2。
+//     dsh/preset-classic/DSH-FUSION-MATRIX.md §2。
 //   - producer_closeout 收尾证据链（v3，2026-08-16）：Copilot 侧 validate-qa-signoff
 //     （qa-signoff 文件/L2 SHA 绑定/manifest digest/reverify marker/stash 基线）
 //     绑定 Copilot 特有流程不移植；DSH 原生补「防假完成」三件事：
@@ -715,7 +715,7 @@ function lastAssistantText(blocks) {
 //   qa-signoff 文件 status=PASS/CONDITIONAL、L2 SHA 绑定 HEAD、gate manifest
 //   digest 一致、reverify marker、stash 基线、签署后变更拦截。
 // DSH 侧按 kix 哲学做**有界融合**（不搬 worktree/SHA 数学/stash——绑定 Copilot
-// 特有流程 = 负债，见 DSH-ADAPTATION §2）；用 DSH 原生机制补「防假完成」三件事：
+// 特有流程 = 负债，见 DSH-ADAPTATION（classic 档）§2）；用 DSH 原生机制补「防假完成」三件事：
 //   1. spec 契约（kix-discipline/spec.md 的 acceptance）在档——"完成定义可验证"；
 //   2. progress.md 的 completed==total——"任务全完成"（复用 parseProgressState）；
 //   3. 测试文件自 progress 记录的基础 SHA 后无变更——"QA 改过测试必须重验"
