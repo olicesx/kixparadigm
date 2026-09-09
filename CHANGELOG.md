@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.3.14（2026-09-09）DSH 0.1.2 对接：web_fetch 打开、webhook→会话桥、原生模型选型留档
+
+- **`web_fetch` 打开（`tool-web.config.fetch: true`）**：DSH 0.1.2 起宿主默认挂载 SSRF 加固的 `dsh-web-fetch-http` 提供方（公网地址校验 / 连接固定 / 同源重定向 / 字节上限），0.1.1 时代关闭的理由（无提供方 → SSRF 防护后移、目标由模型选）已消失。给 kix 的「外部语义密集 claim 至少一条可重放物证通道」补上原文取证面。实测：0.1.2 上 `web_fetch https://example.com` 返回 HTTP 200 + 解码正文；0.1.1 上同配置启动正常（无提供方时仅调用报错）。
+- **`kix-webhook`：外部事件 → kix 会话（默认关）**：新增规则层插件（事件匹配 / 机器人忽略 / `maxSessions` fuse / prompt 模板插值），把一条已验证投递翻成宿主 `ctx.webhookRuntime` 的会话请求。默认档与 null 档均 `enabled: false`（发布默认关）；HTTP 入口与签名密钥属部署面，参考行在 `dsh/preset/patches/kix-webhook.reference.yml` + 覆盖层 `kix-webhook.runtime-overlay.yml`。激励面两副本字节一致，身份组登记只比两副本（classic/en 不部署——其组成不挂 webhookRuntime，多副本只会成悬空行）。实测（隔离 DSH_HOME + 真实 home 各一轮）：签名 POST → 202 → 新建 `webhook-*` 会话（preset=kixparadigm、system prompt 含 kixParadigm、prompt 由模板生成）→ 会话真实执行。
+- **两条新机制事实（写进插件头与参考文件）**：①**profile 的 patch 覆盖不到 preset 组成内部的行**（配置面探针：预设 `disabled:true` + patch 只覆盖 `config` → 插件仍不加载），启用必须改预设文件；②**预设是 lazy mount**——冷启动后、任何会话之前的投递只回 202、不起会话；③**202 ≠ 处理成功**：入口校验失败才回 4xx/5xx，规则/建会话失败只写宿主日志。
+- **原生子代理模型选型：验证可用、不默认开**：`dsh-tool-subagent.modelSelectionSettings`（0.1.1 无此字段）实测在 kix 组成下可用——schema 多出 `provider`/`model`/`reasoning_effort`、`subagent/model-selection-policy` 事件写入会话、`list_subagent_models` 返回白名单路由。未默认开的两条机械理由：宿主缺 `model-selection-settings` 行时**挂载即抛错**（非降级，会拖垮整个 preset）；白名单只认已注册 provider，写死等于把预设绑到某台机器的模型目录。步骤与实测边界见 `dsh/README-DSH.md`。
+- **门禁**：`npm test` 50 pass / 0 fail / 1 skip（含 kix-webhook 单测 13 条）· `check-dsh-consistency` CONSISTENCY OK（`kix-webhook.js/.test.js: 2 copies byte-identical`）· `kix4.test.js` composition parity PASS（default/null 均 33 行）· `audit-selection-pressure-history --check` exit 0 · 0.1.2-rc.1 上端到端复验（web_fetch + webhook→会话）· 独立观察者只读复核（4 findings 全部修复：null parity、启用指引、202 语义、缺服务测试覆盖）。
+
 ## v1.3.13（2026-09-08）自举审计闭环：单源、悬空引用、守护布局无关
 
 - **能力地图单源**：`skills/kixpower/dsh-capability-map.md` 经 diff 确认是 `memories/dsh-capability-map.md` 的旧子集（140 vs 202 行，无独有内容），删除重复副本。全部锚点由 `§数字` 改标题——classic 是 §6、默认档是 §4，只有标题「动态 Cordis 插件实测机制事实」两档都能命中；引用方 `kix-stalled.js`/`kixpower-v39-legacy-notes.md`/`kixpower-workflow.template.md` 同步改标题锚点。
