@@ -315,6 +315,10 @@ const PLUGIN_IDENTITY_GROUPS = {
   'kix-probe.js': [['kixparadigm', 'kixparadigm-null']],
   'kix-settle.js': [['kixparadigm', 'kixparadigm-null']],
   'kix-mem.js': [['kixparadigm', 'kixparadigm-null']],
+  // 2026-09-09：webhook 桥是部署面规则层（GitHub 适配器 → webhookRuntime → kix 会话），
+  // 不属范式认知面 → 只比激励面两副本。classic/en 档不部署（其 composition 不挂
+  // webhookRuntime，多一份副本只会变成悬空行）。
+  'kix-webhook.js': [['kixparadigm', 'kixparadigm-null']],
 }
 
 function pluginSourceName(name) {

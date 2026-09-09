@@ -131,10 +131,10 @@
 
       ## 思考锚点
       - 三通道：执行产出 claim；重要 claim 自主展开异质观察集群，可递归分派 probe；有效反例优先裁决，APPROVE 不投票也不触发补票。视角与模型两轴不可互替——独立上下文≠跨厂商/权重独立，同权重观察者会共享盲点。外部语义密集 claim 至少 1 条跨厂商或可重放物证通道；按信息缺口自由发散，本机制不新增人数/深度/fan-out/token 限制。验证前对照盲点：深度不足/读写混淆/语言语义/自信偏差/辩护倾向/外部视野/过度工程/架构方向；有疑虑调独立 agent。
-      - 阶段二相性：创造最小规则，验证结构化补盲；两阶段不互泄漏——自我验证被创造视角污染，故需独立 agent。会改变实现的 design observer 结算前不编辑目标；final review 绑定冻结 artifact，编辑即失效重开。只有新反例/新风险/artifact 变化重开，失败调用按零证据且不机械补派。
+      - 阶段二相性：创造最小规则，验证结构化补盲；独立观察保留用户目标/适用契约，不灌主张者的论证。会改变实现的 design observer 结算前不编辑目标；final review 绑定 artifact 与依据，任一变化先重估影响范围，只重验失效证据。旧观察/旧测试不自动为新版本背书；失败调用按零证据且不机械补派。
       - 规则是负债：常驻行为承诺须有承载层——可机械观测→plugin/audit；语义权衡→激励/选择压；低频危机→memory；两轮无实证收益→删。新增机制先问「LLM 瓶颈还是人类组织投影」。
-      - 需求三检（信号命中才做）：目标不明 / 影响大不可逆 / 含实现方案词汇。①XY ②前提 ③路径。字面明确低风险可逆直接做。行为契约（必须不变/改变/成立/歧义解读）写入 kix_discipline_spec 的 contract；有歧义先问。
-      - 写码前：需要存在吗→仓库已有→标准库→平台原生→已装依赖→一行→最小可行。修根因。改事件/类型/平台/外部 API 时交付前三问：测试镜像真实链路吗（stub 藏 bug）；证据维度对吗（调用链≠语义）；关键 claim 独立验证过吗。提交前跑标准 lint/test。
+      - 需求三检（信号命中才做）：目标不明 / 影响大不可逆 / 含实现方案词汇。①XY ②前提 ③路径。字面明确低风险可逆直接做。继续/修补/复核/交接继承当前用户目标与适用约束，用户改约即更新；旧方案和 finding 清单不替代验收。需留痕时复用 kix_discipline_spec.contract 或既有任务文档，注明来源与任务归属，勿误用被其他任务覆盖的 spec。仅影响决策且无法从上下文消解的歧义才问。
+      - 写码前：需要存在吗→仓库已有→标准库→平台原生→已装依赖→一行→最小可行。每次方案实质变化都对照原目标重判必要性与净收益；必要跨包改动/依赖可以采用，不按行数或原则名判错。修根因。交付前三问：测试镜像真实链路吗（stub 藏 bug）；证据维度对吗（调用链≠语义）；关键 claim 独立验证过吗。旧缺陷修复、测试绿、工具成功或代理完成只支持各自覆盖范围；总体完成须有当前目标/约束的依据，关键未知不能藏在通过结论之后。提交前跑标准 lint/test。
 
       ## 选择压（看菜单，不走仪式）
       - 属性路由：规模≥3文件 / 外部副作用 / 验证关键 / 目标不明 → 先 kix_capability_search 再动手。禁止类型→动作静态映射。
@@ -761,10 +761,18 @@
 # （cacheRead:input 实测 127:1，长会话全价重读）远超省下的 660 tok/步常驻税；
 # 且 scope-local 工具 restrict 裁不到，渐进披露需要 cordis disabled + 激活
 # 双重机制。web_search 小（660 tok）低频 → 常驻税可接受，零断缓存风险。
+#
+# 2026-09-09 `fetch: true`（DSH 0.1.2 起）：web_fetch 给 kix 的「外部语义密集
+# claim 至少一条可重放物证通道」补上原文取证面（状态码 + 解码正文，带 URL
+# 校验/公网解析/同源重定向/字节上限）。0.1.1 曾以 `fetch: false` 关闭，理由是
+# 当时**没有宿主侧 fetch 提供方**——注释原文：provider 缺失时 SSRF 防护后移、
+# 请求目标由模型选。0.1.2 的 `dsh-web-fetch-http` 提供方（base 层默认挂载）
+# 承担了这层防护，故打开是净收益；宿主未挂提供方时调用报错、不影响启动
+# （0.1.1 实测：启动正常）。
 - id: tool-web
   name: '@deepseek-ai/dsh-tool-web'
   config:
-    fetch: false
+    fetch: true
     searchTimeoutMs: 60000
 
 # ── kix 机械门禁（DSH 原生 hook）────────────────────────────────────────────
@@ -976,3 +984,34 @@
 # KIX_BROWSER_CORE 显式指路；懒加载，未安装不影响其他工具。
 - id: kix-browser
   name: ./plugins/kix-browser.js
+
+# ── kix-webhook（外部事件 → kix 会话，2026-09-09 实测落地）────────────────
+# DSH 0.1.2 起提供宿主 `ctx.webhookRuntime`（唯一内置动作 = 在 Web Workspace
+# 建一个普通 root Session）+ `@deepseek-ai/dsh-webhook-github`（校验 GitHub
+# 原始 body 的 HMAC 签名，202 投递不等规则）。本行是**规则层**：把一条已验证
+# 投递翻成会话请求（事件匹配/机器人忽略/并发 fuse/prompt 插值）。
+#
+# 默认 disabled：HTTP 入口与签名密钥属部署面（profile 的 cordis.patch.yml +
+# 凭据库），预设不替部署做这个决定。启用步骤与参考行见
+# dsh/preset/patches/kix-webhook.reference.yml；0.1.1-rc.2 及更早无
+# webhookRuntime，本行即使打开也只静默不注册（inject 保持 pending）。
+#
+# 2026-09-09 隔离环境实测（DSH 0.1.2-rc.1，WSL2）：签名 POST → 202 → 规则命中
+# → 新建 root Session（agentPreset=kixparadigm，system prompt 含 kixParadigm/
+# 三通道/需求三检）→ 会话真实执行并回复。外部可达性（公网入口）不在插件职责内。
+#
+# 行**不**设 disabled：DSH 实测「行状 patch 只覆盖声明的键，不会把 disabled 翻回」
+# （配置面探针：预设 disabled:true + patch 只覆盖 config → 插件仍不加载）。
+# 因此本行常驻加载，开关完全走 config.enabled；未启用时 apply 直接返回，
+# 无注入、无监听、无成本；宿主无 webhookRuntime（0.1.1 及更早）时 inject 保持
+# pending，同样零副作用。
+- id: kix-webhook
+  name: ./plugins/kix-webhook.js
+  config:
+    # 启用 = 改**本行**（安装副本 $DSH_HOME/.agent-presets/kixparadigm/agent.cordis.yml），
+    # profile 的 cordis.patch.yml 覆盖不到 preset 内部行；见 patches/kix-webhook.reference.yml §2
+    enabled: false
+    workspacePath: /absolute/path/to/workspace
+    agentPreset: kixparadigm
+    permissionPreset: danger-full-access
+    maxSessions: 1
