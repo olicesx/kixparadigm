@@ -54,7 +54,7 @@ The table is the paradigm's capability surface. **The default incentive preset i
 | Focus | `kix-focus` | Tool surface 85→18 resident cut + on-demand catalog & proxied execution — progressive disclosure at runtime |
 | Browser | `kix-browser` (resident on the default incentive face; not mounted on classic) | Native `browser{action}` with 17 actions (open/snapshot/click/type/press/select/hover/navigate/wait/screenshot/upload/tabs/dialog) — direct playwright-core, CDP attach takes over your real browser (login state preserved), session persists across calls; replaces the MCP five-hop chain. Death clause: comment the row back to on-demand if real sessions use it <2 times in a month |
 | Cost & routing | `kix-cost` · `kix-route` | Subagent thinking-effort normalization; sentinel model names → runtime-available routes |
-| Top-up | `kix-commands` · `dsh-vision-bridge` · `kix-stalled` | `/kixpower-*` native commands; vision for blind lead models; stalled-Sprint detection (enabled on the default incentive face, candidate keep; classic yml still commented = opt-in) |
+| Top-up | `kix-commands` · `dsh-vision-bridge` · `kix-stalled` | `/kixpower-*` native commands; image descriptions only for confirmed text-only models, native images for multimodal models; stalled-Sprint detection (enabled on the default incentive face, candidate keep; classic yml still commented = opt-in) |
 
 The default incentive preset includes compressed thinking anchors + utility criteria + on-demand skills + probe/settle/experience. Classic additionally ships full orchestration manuals, agent templates, and instructions. Directories are authoritative. Per-plugin mechanics and evolution: [DSH-ADAPTATION.md](dsh/preset-classic/DSH-ADAPTATION.md), [CHANGELOG.md](CHANGELOG.md).
 

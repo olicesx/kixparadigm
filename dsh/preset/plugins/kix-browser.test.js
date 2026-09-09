@@ -1,14 +1,121 @@
 'use strict'
-// kix-browser.test.js — 单测：URL 门禁/action 校验/文本截断/插件形状/串行队列语义。
-// 不依赖真浏览器（playwright-core 懒加载，注册路径零 require）。E2E 探针另跑。
+// kix-browser.test.js — 单测：URL 门禁/action 校验/文本截断/插件形状/串行队列语义
+//   + 会话隔离回归（2026-09-09：不同 agent/apply 互不导航/关闭）。
+// 默认不依赖真浏览器：隔离测试用 KIX_BROWSER_CORE 指向本文件生成的 fake
+// playwright-core（launch/connectOverCDP 语义镜像：CDP 断连不关真实页面）。
+// 真浏览器 smoke 为 opt-in：KIX_BROWSER_SMOKE=1 node --test kix-browser.test.js。
 
 const test = require('node:test')
 const assert = require('node:assert')
 const path = require('node:path')
 const fs = require('node:fs')
+const os = require('node:os')
+const { spawnSync } = require('node:child_process')
 
 const pluginPath = path.join(__dirname, 'kix-browser.js')
+
+// ── fake playwright-core（隔离测试的确定性 seam）────────────────────────
+// 写入临时目录，经 KIX_BROWSER_CORE 注入；plugin 的 resolveCore 优先读它。
+const fakeCoreDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kix-browser-fake-core-'))
+const fakeCorePath = path.join(fakeCoreDir, 'playwright-core', 'index.js')
+fs.mkdirSync(path.dirname(fakeCorePath), { recursive: true })
+fs.writeFileSync(fakeCorePath, `'use strict'
+const state = {
+  launchCalls: 0,
+  connectCalls: 0,
+  browsers: [],
+  connections: [],
+  realPages: [],      // 共享“真实浏览器”已有 tab（CDP 借用面）
+  hangNextGoto: false,
+  releaseHang: null,
+}
+let pageSeq = 0
+function makePage(url0) {
+  return {
+    __id: ++pageSeq,
+    __url: url0 || 'about:blank',
+    __closed: false,
+    __handlers: {},
+    url() { return this.__url },
+    async title() { return 'fake:' + this.__id },
+    async goto(u) {
+      if (state.hangNextGoto) {
+        state.hangNextGoto = false
+        await new Promise((r) => { state.releaseHang = r })
+      }
+      this.__url = u
+      return { status: () => 200 }
+    },
+    async evaluate() { return 'body ' + this.__id },
+    async $$eval(_sel, fn) {
+      const node = { id: 'fake-root', tagName: 'BUTTON', innerText: 'ok', value: '', getAttribute: () => null, previousElementSibling: null }
+      return fn([node])
+    },
+    locator() { return { first: () => ({ click: async () => {}, fill: async () => {}, hover: async () => {}, selectOption: async () => {}, setInputFiles: async () => {}, waitFor: async () => {} }) } },
+    getByText() { return { first: () => ({ waitFor: async () => {} }) } },
+    async waitForSelector() {},
+    keyboard: { async press() {} },
+    async goBack() { return { status: () => 200 } },
+    async goForward() { return { status: () => 200 } },
+    async reload() { return { status: () => 200 } },
+    async screenshot() {},
+    async bringToFront() {},
+    on(ev, h) { this.__handlers[ev] = h },
+    async close() { this.__closed = true },
+  }
+}
+const realCtx = {
+  pages: () => state.realPages,
+  newPage: async () => { const p = makePage('about:blank'); state.realPages.push(p); return p },
+}
+async function launch() {
+  state.launchCalls++
+  const pages = []
+  const ctx = { pages: () => pages, newPage: async () => { const p = makePage(); pages.push(p); return p } }
+  const browser = {
+    __kind: 'launch', __pages: pages, __closed: false,
+    contexts: () => [ctx],
+    newPage: async () => ctx.newPage(),
+    async close() { this.__closed = true; for (const p of pages) p.__closed = true },
+  }
+  state.browsers.push(browser)
+  return browser
+}
+async function connectOverCDP() {
+  state.connectCalls++
+  const conn = {
+    __kind: 'cdp', __closed: false,
+    contexts: () => [realCtx],
+    newPage: () => realCtx.newPage(),
+    async close() { this.__closed = true },
+  }
+  state.connections.push(conn)
+  return conn
+}
+module.exports = { chromium: { launch, connectOverCDP }, __state: state, __makePage: makePage }
+`, 'utf8')
+process.env.KIX_BROWSER_CORE = fakeCorePath
+process.env.KIX_BROWSER_CDP = ''
+const fake = require(fakeCorePath)
+
 const plugin = require(pluginPath)
+process.on('exit', () => { try { fs.rmSync(fakeCoreDir, { recursive: true, force: true }) } catch { /* 忽略 */ } })
+
+/** 调用上下文：agent + session（owner key 优先 session.id）。 */
+function execOf(agentId, sessionId) {
+  return { agent: { id: agentId, ...(sessionId ? { session: { id: sessionId } } : {}) } }
+}
+/** 一个独立 apply 实例（镜像 cordis effect 语义：回调立即执行，返回值是卸载钩子）。 */
+function applyInstance(p, config) {
+  let def = null
+  const teardowns = []
+  p.apply({
+    tools: { register: (d) => { def = d; return () => {} } },
+    effect: (fn) => teardowns.push(fn()),
+    logger: { info: () => {} },
+  }, config)
+  return { def, teardown: () => teardowns.forEach((fn) => fn()) }
+}
 
 // ── 形状：module.exports 契约 ─────────────────────────────────────────
 test('plugin exports shape (name/inject/apply/_test)', () => {
@@ -211,3 +318,190 @@ function captureRegister(p) {
   })
   return def
 }
+
+// ══ 会话隔离回归（2026-09-09）══════════════════════════════════════════
+// 真实症状：主线程 browser.open 当前 GUI + snapshot 成功后，另一会话审计
+// browser 时 type 报「无活动页面」——browser/page/queue/dialog 全是模块级
+// 单例，execute 忽略 exec 上下文，任一会话 close 关掉所有人的浏览器。
+// 以下用 fake core 钉死：owner = session.id || agent.id；无 agent → 每 apply
+// 私有 fallback；卸载只清自己。
+const openA = (def, exec, url = 'about:blank') => def.execute({ action: 'open', url }, exec)
+
+test('isolation: two agents in one apply get separate browsers and pages', async () => {
+  const { def } = applyInstance(plugin)
+  const before = fake.__state.launchCalls
+  const a = await openA(def, execOf('agent-a'))
+  const b = await openA(def, execOf('agent-b'))
+  assert.equal(a.ok, true, a.error)
+  assert.equal(b.ok, true, b.error)
+  assert.equal(fake.__state.launchCalls - before, 2, '每个 owner 各自建立会话（不得复用同一 browser）')
+  const sa = await def.execute({ action: 'snapshot' }, execOf('agent-a'))
+  const sb = await def.execute({ action: 'snapshot' }, execOf('agent-b'))
+  assert.equal(sa.ok, true, sa.error)
+  assert.equal(sb.ok, true, sb.error)
+  await def.execute({ action: 'close' }, execOf('agent-a'))
+  const sb2 = await def.execute({ action: 'snapshot' }, execOf('agent-b'))
+  assert.equal(sb2.ok, true, 'A 的 close 不得影响 B（原症状：无活动页面）')
+  const sa2 = await def.execute({ action: 'snapshot' }, execOf('agent-a'))
+  assert.equal(sa2.ok, false, 'A 自己 close 后应无活动页面')
+  await def.execute({ action: 'close' }, execOf('agent-b'))
+})
+
+test('isolation: same session id shares one owner session across agents', async () => {
+  const { def } = applyInstance(plugin)
+  const before = fake.__state.launchCalls
+  const a = await openA(def, execOf('agent-x', 'shared-session'))
+  const b = await openA(def, execOf('agent-y', 'shared-session'))
+  assert.equal(a.ok, true, a.error)
+  assert.equal(b.ok, true, b.error)
+  assert.equal(fake.__state.launchCalls - before, 1, '同一 session 复用同一会话')
+  await def.execute({ action: 'close' }, execOf('agent-x', 'shared-session'))
+  assert.equal((await def.execute({ action: 'snapshot' }, execOf('agent-y', 'shared-session'))).ok, false)
+})
+
+test('isolation: two apply instances of the same module do not share sessions', async () => {
+  const a = applyInstance(plugin)
+  const b = applyInstance(plugin)
+  assert.equal((await openA(a.def, execOf('preset-owner'))).ok, true)
+  assert.equal((await openA(b.def, execOf('preset-owner'))).ok, true)
+  await a.def.execute({ action: 'close' }, execOf('preset-owner'))
+  const sb = await b.def.execute({ action: 'snapshot' }, execOf('preset-owner'))
+  assert.equal(sb.ok, true, 'A 实例的 close 不得影响 B 实例')
+  await b.def.execute({ action: 'close' }, execOf('preset-owner'))
+})
+
+test('isolation: no-agent calls use a per-apply private fallback session', async () => {
+  const a = applyInstance(plugin)
+  const b = applyInstance(plugin)
+  assert.equal((await openA(a.def, undefined)).ok, true)
+  assert.equal((await openA(b.def, undefined)).ok, true)
+  await a.def.execute({ action: 'close' })
+  const sb = await b.def.execute({ action: 'snapshot' })
+  assert.equal(sb.ok, true, '无 agent 的 fallback 也必须每 apply 私有')
+  await b.def.execute({ action: 'close' })
+})
+
+test('isolation: dialog policy and lastDialog are per owner', async () => {
+  const { def } = applyInstance(plugin)
+  assert.equal((await def.execute({ action: 'dialog', auto: 'accept' }, execOf('dlg-a'))).ok, true)
+  const b = await def.execute({ action: 'dialog' }, execOf('dlg-b'))
+  assert.equal(b.auto, 'dismiss', 'B 的弹窗策略不得被 A 改')
+  const a = await def.execute({ action: 'dialog' }, execOf('dlg-a'))
+  assert.equal(a.auto, 'accept')
+  assert.equal(a.lastDialog, null)
+})
+
+test('isolation: a hung owner does not block another owner (per-owner queue)', async () => {
+  const { def } = applyInstance(plugin)
+  fake.__state.hangNextGoto = true
+  const hung = openA(def, execOf('queue-a'))
+  try {
+    await new Promise((r) => setTimeout(r, 20)) // 让 A 的调用进入队列并挂住
+    const raced = await Promise.race([
+      openA(def, execOf('queue-b')),
+      new Promise((r) => setTimeout(() => r({ ok: false, error: 'blocked-by-other-owner' }), 2000)),
+    ])
+    assert.equal(raced.ok, true, `B 不得被 A 的挂起调用阻塞：${raced.error}`)
+  } finally {
+    if (fake.__state.releaseHang) fake.__state.releaseHang()
+    await hung.catch(() => {})
+    await def.execute({ action: 'close' }, execOf('queue-a'))
+    await def.execute({ action: 'close' }, execOf('queue-b'))
+  }
+})
+
+test('isolation: unmount closes only that apply instance sessions', async () => {
+  const a = applyInstance(plugin)
+  const b = applyInstance(plugin)
+  assert.equal((await openA(a.def, execOf('unmount-owner'))).ok, true)
+  assert.equal((await openA(b.def, execOf('unmount-owner'))).ok, true)
+  a.teardown()
+  await new Promise((r) => setTimeout(r, 10))
+  const sb = await b.def.execute({ action: 'snapshot' }, execOf('unmount-owner'))
+  assert.equal(sb.ok, true, 'A 卸载不得关掉 B 的会话')
+  const sa = await a.def.execute({ action: 'snapshot' }, execOf('unmount-owner'))
+  assert.equal(sa.ok, false, 'A 卸载后自己不再有会话')
+  await b.def.execute({ action: 'close' }, execOf('unmount-owner'))
+})
+
+// ── CDP：独立会话各自开 tab（保留同 context 登录态），借用页生命周期只读 ──
+test('CDP: each owner opens its own tab and never auto-borrows an existing one', async () => {
+  process.env.KIX_BROWSER_CDP = 'http://127.0.0.1:9222'
+  try {
+    const borrowed = fake.__makePage('https://user.example.test/keep')
+    fake.__state.realPages.push(borrowed) // 真实浏览器里已有页面（主线程/用户）
+    const { def } = applyInstance(plugin)
+    const connBefore = fake.__state.connectCalls
+    const a = await openA(def, execOf('cdp-a'))
+    const b = await openA(def, execOf('cdp-b'))
+    assert.equal(a.ok, true, a.error)
+    assert.equal(b.ok, true, b.error)
+    assert.equal(a.mode, 'cdp')
+    assert.equal(b.mode, 'cdp')
+    assert.equal(fake.__state.connectCalls - connBefore, 2, '每个 owner 各自连接（close 只断自己）')
+    const own = fake.__state.realPages.filter((p) => p !== borrowed)
+    assert.equal(own.length, 2, '每个 owner 各自新建 tab（不得自动共享同一 tab）')
+    assert.notEqual(own[0], own[1])
+    assert.equal(borrowed.__url, 'https://user.example.test/keep', '已有页面不得被导航')
+
+    const list = await def.execute({ action: 'tabs' }, execOf('cdp-a'))
+    assert.equal(list.ok, true, list.error)
+    assert.equal(list.tabs[0].owned, false, '借用页标记为 not owned')
+    assert.ok(list.tabs.some((t) => t.owned === true), '自有 tab 标记为 owned')
+    assert.equal(list.tabs[0].url, 'https://user.example.test/keep')
+
+    const sw = await def.execute({ action: 'tabs', switch: 0 }, execOf('cdp-a'))
+    assert.equal(sw.ok, true, sw.error)
+    assert.equal(sw.owned, false)
+    assert.equal(sw.url, 'https://user.example.test/keep')
+
+    await def.execute({ action: 'close' }, execOf('cdp-a'))
+    assert.equal(borrowed.__closed, false, 'close 不得关闭借用页（别人的 tab）')
+    assert.equal(own[0].__closed || own[1].__closed, true, 'close 回收本会话自有 tab')
+    assert.equal(fake.__state.connections.filter((c) => c.__closed).length >= 1, true, '只断开自己的连接')
+
+    const listB = await def.execute({ action: 'tabs' }, execOf('cdp-b'))
+    assert.equal(listB.ok, true, 'B 的会话不受 A 的 close 影响')
+    await def.execute({ action: 'close' }, execOf('cdp-b'))
+    assert.equal(borrowed.__closed, false)
+  } finally {
+    process.env.KIX_BROWSER_CDP = ''
+  }
+})
+
+// ── 真浏览器 smoke（opt-in）：两个 owner 各自 launch，close 互不影响 ─────
+test('real smoke: two owners isolated with real chromium (KIX_BROWSER_SMOKE=1)', { skip: process.env.KIX_BROWSER_SMOKE !== '1' }, () => {
+  const core = process.env.KIX_BROWSER_REAL_CORE || '/root/.dsh/node_modules/playwright-core'
+  const script = `
+const assert = require('node:assert')
+const plugin = require(${JSON.stringify(pluginPath)})
+let def = null
+plugin.apply({ tools: { register: (d) => ((def = d), () => {}) }, effect: () => {}, logger: { info: () => {} } })
+const execOf = (id) => ({ agent: { id } })
+;(async () => {
+  const a = await def.execute({ action: 'open', url: 'about:blank' }, execOf('smoke-a'))
+  assert.equal(a.ok, true, 'A open: ' + a.error)
+  const b = await def.execute({ action: 'open', url: 'about:blank' }, execOf('smoke-b'))
+  assert.equal(b.ok, true, 'B open: ' + b.error)
+  assert.equal(a.mode, 'launch')
+  assert.equal((await def.execute({ action: 'snapshot' }, execOf('smoke-a'))).ok, true)
+  assert.equal((await def.execute({ action: 'snapshot' }, execOf('smoke-b'))).ok, true)
+  await def.execute({ action: 'close' }, execOf('smoke-a'))
+  const sb = await def.execute({ action: 'snapshot' }, execOf('smoke-b'))
+  assert.equal(sb.ok, true, 'B 被 A 的 close 影响：' + sb.error)
+  const sa = await def.execute({ action: 'snapshot' }, execOf('smoke-a'))
+  assert.equal(sa.ok, false)
+  const tabsB = await def.execute({ action: 'tabs' }, execOf('smoke-b'))
+  assert.equal(tabsB.ok, true, 'B tabs: ' + tabsB.error)
+  await def.execute({ action: 'close' }, execOf('smoke-b'))
+  console.log(JSON.stringify({ ok: true, aMode: a.mode, bMode: b.mode, bTabs: tabsB.tabs.length, aErrorAfterClose: sa.error }))
+})().catch((e) => { console.error(e && e.stack || e); process.exit(1) })
+`
+  const r = spawnSync(process.execPath, ['-e', script], {
+    encoding: 'utf8',
+    timeout: 180000,
+    env: { ...process.env, KIX_BROWSER_CORE: core, KIX_BROWSER_CDP: '', KIX_BROWSER_HEADLESS: 'true' },
+  })
+  assert.equal(r.status, 0, `real smoke failed:\n${r.stdout}\n${r.stderr}`)
+  assert.match(r.stdout, /"ok":true/)
+})

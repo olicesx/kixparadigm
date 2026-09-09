@@ -28,7 +28,9 @@ const ctx = {
   on(event, cb) {
     ;(listeners[event] ||= []).push(cb)
   },
-  effect(fn) { this.cleanup = fn },
+  // 镜像 cordis：回调注册即执行，其返回值才是卸载钩子（旧 mock 把回调当
+  // cleanup，语义失真 → 花括号体 effect 缺陷不可能被发现，2026-09-08 取证 P4）
+  effect(fn) { this.cleanup = fn() },
   get(name) {
     return services[name]
   },
@@ -389,9 +391,33 @@ async function main() {
   await preStep(missingWindowAgent, 41)
   check('成功但缺窗口信息不永久缓存', missingWindowCalls === 3)
   check('usage 存在但窗口缺失时 step 41 仍作 fallback', (await preGate(missingWindowAgent, 'read', {})).kind === 'deny')
-  const cleanup = ctx.cleanup
-  if (typeof cleanup === 'function') cleanup()
-  check('effect 注册了可调用 cleanup', typeof cleanup === 'function')
+
+  // ── v7.1（2026-09-08）：effect 生命周期（注册即执行 + 返回值才是 disposer）──
+  // 出生证明（独立 QA 取证 P4）：旧实现 `ctx.effect(() => { states.clear(); … })`
+  // 是花括号体 → cordis 语义下回调注册即执行、返回 undefined → **没有注册任何
+  // 卸载钩子**（会话 Map 泄漏）；旧 mock `effect(fn){ this.cleanup = fn }` 把回调
+  // 当 cleanup，语义失真使该缺陷在 118 断言全绿下不可能被发现。
+  console.log('== effect 生命周期（v7.1）==')
+  check('effect 注册返回函数型 disposer（旧花括号体返回 undefined）', typeof ctx.cleanup === 'function')
+  {
+    const agent = makeAgent('s-cleanup', 'zai-coding-cn', 'glm-5.3')
+    listeners['session/event'][0](agent.session, { type: 'turn/start', data: { turn: 1 } })
+    let d2 = null
+    for (let i = 1; i <= 8; i++) d2 = await postExec(agent, 'bash', { command: 'cat f' + i })
+    check('cleanup 前：第 8 步只读注入一次建议', typeof appendedText(d2) === 'string')
+    d2 = await postExec(agent, 'bash', { command: 'cat f9' })
+    check('cleanup 前：第 9 步不重复注入（状态生效）', appendedText(d2) === undefined)
+    const cleanup = ctx.cleanup
+    if (typeof cleanup === 'function') cleanup()
+    check('disposer 调用不抛错', true)
+    d2 = await postExec(agent, 'bash', { command: 'cat f1' })
+    for (let i = 2; i <= 8; i++) d2 = await postExec(agent, 'bash', { command: 'cat f' + i })
+    check('disposer 清空会话状态：同一 session 重新计数后再次注入', typeof appendedText(d2) === 'string')
+    check('disposer 重复调用幂等（不抛错）', (() => {
+      try { cleanup(); cleanup(); return true } catch { return false }
+    })())
+  }
+  check('effect 注册了可调用 cleanup', typeof ctx.cleanup === 'function')
 
   console.log(`\n${passed} passed, ${failed} failed`)
   if (failed > 0) process['exit'](1)

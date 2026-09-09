@@ -139,6 +139,7 @@
 
 const { readFile } = require('node:fs/promises')
 const { join } = require('node:path')
+const { homedir } = require('node:os')
 const { randomUUID } = require('node:crypto')
 const { execFile } = require('node:child_process')
 const { promisify } = require('node:util')
@@ -827,7 +828,11 @@ function isSourceRepoPresetPath(low) {
   return /(?:^|\/)(?:dsh|en)\/preset[-\w]*(?:\/|$)/.test(low)
 }
 function isInstallControlPlanePath(low) {
-  const home = (process.env.USERPROFILE || process.env.HOME || '').toLowerCase().replace(/\\/g, '/')
+  // v18.1（2026-09-08，QA 取证 P2）：DSH 宿主进程 environ 可无 HOME/USERPROFILE
+  // （实测 /proc/<pid>/environ 仅 6 个变量）→ 旧实现 home=''，/root/.dsh/... 等
+  // 绝对路径漏判控制平面。补 os.homedir() 兜底（HOME 缺失时走 passwd），
+  // 不放宽既有边界：仍只做「home 下的 .dsh」与安装面/显式 ~ 写法判定。
+  const home = (process.env.USERPROFILE || process.env.HOME || homedir() || '').toLowerCase().replace(/\\/g, '/')
   return (
     low.includes('.agent-presets') ||
     (home !== '' && low.includes(home + '/.dsh')) ||

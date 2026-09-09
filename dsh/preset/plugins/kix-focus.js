@@ -663,10 +663,15 @@ module.exports = {
     let restrictApplied = false
     let restrictError = null
     let restrictDenyCount = 0
+    // 自持重试定时器句柄（disposer 函数）。**不用 ctx.setInterval**：它要求
+    // inject 'timer'，而 timer 在嵌套 plane 不可达时整个插件停在 PENDING——
+    // 比「重试失效」更硬的可用性损失；与 kix-probe.js 的 setTimeout/clearTimeout
+    // 同型（2026-09-08 QA 取证 P1/P1b/P1c：旧实现 ctx.setInterval 未 inject →
+    // `cannot get property "timer" without inject` 穿出 apply，整插件加载失败）。
     let restrictRetry = null
     const denied = new Set() // 已 deny 的全局工具名（增量去重）
     function clearRetry() {
-      if (restrictRetry) { restrictRetry.clear(); restrictRetry = null }
+      if (restrictRetry) { restrictRetry(); restrictRetry = null }
     }
     function applyRestrict() {
       if (!enableRestrict) return
@@ -690,8 +695,13 @@ module.exports = {
         restrictDenyCount = denied.size
         ctx.logger?.warn?.('[kix-focus] restrict 失败（定时重试）: ' + restrictError)
         if (!restrictRetry) {
-          restrictRetry = ctx.setInterval(() => applyRestrict(), 3000)
-          ctx.effect(() => clearRetry())
+          const handle = setInterval(() => applyRestrict(), 3000)
+          handle.unref?.() // 重试定时器不得把宿主/测试进程钉在事件循环里
+          restrictRetry = () => clearInterval(handle)
+          // ⚠️ effect 回调注册即执行（cordis 语义）：表达式体返回 clearRetry 才
+          // 是卸载钩子；花括号体 `() => { clearRetry() }` 会在注册瞬间清掉刚建的
+          // 定时器（2026-09-08 QA 取证 P1：重试永不发生）。
+          ctx.effect(() => clearRetry)
         }
       }
     }

@@ -208,8 +208,10 @@ module.exports = {
       description: '查看 kix-signal spec-draft 草稿信号当前状态',
       // 无参命令：宿主 dsh-commands 契约 input 可选，省略即可（hint 不允许空串——
       // 2026-08-19 Windows 前台全挂根因：input: { hint: '' } 使整个 preset 挂载失败）
-      async handler() {
-        return 'kix-signal: 会话状态请经模型工具 kix_signal_status 查询（用户命令侧无 agent 上下文）。配置: specDraft=' + specDraftOn
+      async handler({ agent }) {
+        const st = agent ? stateFor(agent) : undefined
+        if (!st) return { kind: 'error', text: 'kix-signal: no agent context' }
+        return { kind: 'success', text: `kix-signal: specDraft=${specDraftOn}\nreminded: ${st.specDraftReminded}` }
       },
     })
   },

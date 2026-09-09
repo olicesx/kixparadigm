@@ -13,13 +13,18 @@
 // 设计：
 //   1. 单工具 browser{action,...}，action 枚举 open/snapshot/click/type/screenshot/
 //      text/close——常驻 schema ~1KB（vs MCP 24 份）。
-//   2. 会话持久：browser/page 句柄存插件模块态，跨调用存活；CDP attach 优先
-//      （接管真实浏览器：Edge/Chrome --remote-debugging-port=9222 启动后 attach，
-//      登录态/标签页全保留），launch headless chromium 兜底。
+//   2. 会话持久且按 owner 隔离（2026-09-09）：句柄存「本 apply 实例的会话表」，
+//      owner = session.id 优先，否则 agent.id；无 agent 的调用用本 apply 私有
+//      fallback。CDP attach 优先（接管真实浏览器：Edge/Chrome
+//      --remote-debugging-port=9222 启动后 attach；独立会话各自新建 tab——同
+//      context 保留登录态，不自动共享同一 tab），launch headless chromium 兜底。
 //   3. playwright-core 懒 require：未安装不影响插件装载与其他工具；解析失败
-//      返回精确安装指引。
+//      返回精确安装指引（模块级只共享该加载缓存，不承载会话状态）。
 //   4. 内置门禁：URL 仅放行 http/https/about:blank（拒 file:/javascript:/data:）。
-//   5. 并发串行化：内部 promise 队列，防两个调用争用同一 page。
+//   5. 并发串行化：每个 owner 一条 promise 队列，防两个调用争用同一 page；
+//      owner 之间互不阻塞。
+//   6. 生命周期边界：close/卸载只回收本 owner 自建的 tab 与自己的连接/进程；
+//      tabs 显式 switch 到的借用页（真实浏览器已有 tab）永不关闭，可安全借用。
 //
 // 环境变量：
 //   KIX_BROWSER_CDP       CDP 端点（默认 http://127.0.0.1:9222；设为空串禁用 attach）
@@ -77,23 +82,55 @@ function snapshotElements(nodes) {
   return out
 }
 
-// ── 插件态 ────────────────────────────────────────────────────────────
-let browserHandle = null // playwright Browser
-let pageHandle = null // playwright Page
-let sessionMode = null // 'cdp' | 'launch'
-let coreLib = null // 懒加载的 playwright-core 模块
-let queueTail = Promise.resolve() // 串行化队列
-let dialogAuto = 'dismiss' // 弹窗策略：dismiss | accept（dialog action 可改）
-let lastDialog = null // 最近弹窗 {type,message,defaultValue}（每次 action 结果可查）
+// ── 插件态（2026-09-09 会话隔离）───────────────────────────────────────
+// 出生证明：browser/page/queue/dialog 曾全部是模块级单例，execute 忽略 exec
+// 上下文——主线程 open+snapshot 成功后，另一会话的 close 会把它一起清掉
+// （真实症状：后续 type 报「无活动页面」）；两个会话还会互相导航同一 page。
+// 现在每个 owner（session.id 优先，否则 agent.id）持有一份会话态与队列；
+// 无 agent 的调用（旧适配器/测试）走本 apply 私有的 fallback 会话。模块级
+// 只保留 playwright-core 懒加载缓存（可共享）。
+function createSession() {
+  return {
+    browser: null, // playwright Browser（launch 自有进程 / CDP 自有连接）
+    page: null, // 当前活动 page（自有 tab，或 tabs 显式切换到的借用页）
+    mode: null, // 'cdp' | 'launch'
+    ownPages: new Set(), // 本 owner 创建的 tab：close/卸载时可回收；借用页永不在此
+    queueTail: Promise.resolve(), // 本 owner 的串行队列
+    dialogAuto: 'dismiss', // 弹窗策略：dismiss | accept
+    lastDialog: null, // 最近弹窗（本 owner 可见）
+  }
+}
 
-/** 给 page 挂弹窗监听（幂等）：记录信息并按策略自动处理，防 Playwright 默认静默驳回破坏流程。 */
-function wirePage(p) {
-  if (!p || p.__kixBrowserWired) return p
+/** owner key：session.id 优先（跨 turn 稳定），否则 agent.id；无 agent → null（fallback）。 */
+function ownerKey(exec) {
+  const agent = exec && exec.agent
+  if (!agent) return null
+  const sid = agent.session && agent.session.id
+  if (sid !== undefined && sid !== null && String(sid).length > 0) return 'session:' + String(sid)
+  if (agent.id !== undefined && agent.id !== null && String(agent.id).length > 0) return 'agent:' + String(agent.id)
+  return null
+}
+
+/** 给 page 挂弹窗监听（每 page 一次）：事件路由到「当前驱动该 page 的 owner」，
+ *  借用页被显式切换时归属随之转移；未归属（owner 已卸载）按默认策略驳回。 */
+function wirePage(p, session) {
+  if (!p) return p
+  p.__kixBrowserOwner = session
+  if (p.__kixBrowserWired) return p
   p.__kixBrowserWired = true
   p.on('dialog', (d) => {
-    lastDialog = { type: d.type(), message: clipText(d.message(), 300), defaultValue: d.defaultValue() || null }
+    const owner = p.__kixBrowserOwner
+    if (!owner) {
+      try {
+        d.dismiss().catch(() => {})
+      } catch {
+        /* 同步异常忽略 */
+      }
+      return
+    }
+    owner.lastDialog = { type: d.type(), message: clipText(d.message(), 300), defaultValue: d.defaultValue() || null }
     try {
-      ;(dialogAuto === 'accept' ? d.accept() : d.dismiss()).catch(() => {})
+      ;(owner.dialogAuto === 'accept' ? d.accept() : d.dismiss()).catch(() => {})
     } catch {
       /* 同步异常忽略 */
     }
@@ -105,6 +142,10 @@ function env(name, fallback) {
   const v = process.env[name]
   return v === undefined ? fallback : v
 }
+
+/** playwright-core 懒加载缓存：模块级共享（同一模块对象可服务所有 owner），
+ *  不承载任何会话状态。 */
+let coreLib = null
 
 /** 解析 playwright-core：常规 require → env 显式路径 → ~/.dsh/node_modules 兜底。 */
 function resolveCore() {
@@ -145,45 +186,72 @@ function resolveCore() {
   )
 }
 
-/** 建立会话：CDP attach 优先，失败降级 launch。 */
-async function ensureSession() {
-  if (browserHandle && pageHandle) return
+/** 建立本 owner 的会话：CDP attach 优先（各自新建 tab，保留同 context 登录态），
+ *  失败降级 launch（本 owner 自有浏览器进程）。 */
+async function ensureSession(session) {
+  if (session.browser && session.page) return
   const core = resolveCore()
   const cdp = env('KIX_BROWSER_CDP', 'http://127.0.0.1:9222')
   if (cdp) {
+    let conn = null
     try {
-      browserHandle = await core.chromium.connectOverCDP(cdp, { timeout: 5000 })
-      sessionMode = 'cdp'
-      const ctx0 = browserHandle.contexts()[0]
-      pageHandle = wirePage(ctx0 ? ctx0.pages()[0] || (await ctx0.newPage()) : await browserHandle.newPage())
+      conn = await core.chromium.connectOverCDP(cdp, { timeout: 5000 })
+      // 独立会话不得自动共享同一个 tab（那会让两个会话互相导航）：默认 context 里
+      // 各自 newPage——登录态/cookie 随 context 共享，tab 生命周期归本 owner。
+      const ctx0 = conn.contexts()[0]
+      const p = ctx0 ? await ctx0.newPage() : await conn.newPage()
+      session.browser = conn
+      session.mode = 'cdp'
+      session.page = wirePage(p, session)
+      session.ownPages.add(p)
       return
     } catch {
-      // CDP 不可达（真实浏览器未开调试端口）→ launch 兜底
+      // CDP 不可达或建 tab 失败 → 断开半开连接，launch 兜底
+      if (conn) {
+        try {
+          await conn.close()
+        } catch {
+          /* 断连失败不阻塞 */
+        }
+      }
     }
   }
-  browserHandle = await core.chromium.launch({ headless: env('KIX_BROWSER_HEADLESS', 'true') !== 'false' })
-  sessionMode = 'launch'
-  pageHandle = wirePage(await browserHandle.newPage())
+  const browser = await core.chromium.launch({ headless: env('KIX_BROWSER_HEADLESS', 'true') !== 'false' })
+  session.browser = browser
+  session.mode = 'launch'
+  session.page = wirePage(await browser.newPage(), session)
+  session.ownPages.add(session.page)
 }
 
-async function closeSession() {
-  const b = browserHandle
-  browserHandle = null
-  pageHandle = null
-  sessionMode = null
-  dialogAuto = 'dismiss'
-  lastDialog = null
-  if (b) {
+/** 收尾本 owner 的会话：只回收自有 tab 与自有连接/进程；借用页（真实浏览器
+ *  已有 tab）与别人的会话一律不动。 */
+async function closeSession(session) {
+  const browser = session.browser
+  const own = [...session.ownPages]
+  session.browser = null
+  session.page = null
+  session.mode = null
+  session.ownPages = new Set()
+  session.dialogAuto = 'dismiss'
+  session.lastDialog = null
+  for (const p of own) {
     try {
-      await b.close() // cdp 模式=断开连接（浏览器存活）；launch 模式=结束进程
+      await p.close() // 自有 tab：close/卸载时回收（借用页永不在此集合）
+    } catch {
+      /* 关闭失败不阻塞 */
+    }
+  }
+  if (browser) {
+    try {
+      await browser.close() // launch=结束本 owner 进程；cdp=仅断开本连接（浏览器存活）
     } catch {
       /* 关闭失败不阻塞 */
     }
   }
 }
 
-// ── action 实现（全部在串行队列内执行）───────────────────────────────
-async function runAction(args) {
+// ── action 实现（全部在本 owner 串行队列内执行）───────────────────────
+async function runAction(session, args) {
   const action = args && args.action
   if (!ACTIONS.includes(action)) {
     return { ok: false, error: `未知 action「${action}」，合法值：${ACTIONS.join('/')}` }
@@ -191,7 +259,8 @@ async function runAction(args) {
   const timeoutMs = Number(env('KIX_BROWSER_TIMEOUT', '15000')) || 15000
 
   if (action === 'close') {
-    await closeSession()
+    // 只清本 owner：自有 tab + 自有连接/进程；别人的会话与借用页一律不动。
+    await closeSession(session)
     return { ok: true, closed: true }
   }
 
@@ -200,8 +269,8 @@ async function runAction(args) {
     if (args.auto !== undefined && args.auto !== 'accept' && args.auto !== 'dismiss') {
       return { ok: false, error: 'dialog.auto 只接受 accept/dismiss' }
     }
-    if (args.auto) dialogAuto = args.auto
-    return { ok: true, auto: dialogAuto, lastDialog }
+    if (args.auto) session.dialogAuto = args.auto
+    return { ok: true, auto: session.dialogAuto, lastDialog: session.lastDialog }
   }
 
   // 纯参数校验（会话门禁之前——错误信息精确，单测无需浏览器）
@@ -229,86 +298,92 @@ async function runAction(args) {
   }
 
   if (action === 'open') {
-    await ensureSession()
-    const resp = await pageHandle.goto(args.url, { timeout: timeoutMs, waitUntil: 'domcontentloaded' })
-    return { ok: true, mode: sessionMode, url: pageHandle.url(), status: resp ? resp.status() : null, title: clipText(await pageHandle.title(), 120) }
+    await ensureSession(session)
+    const p = session.page
+    const resp = await p.goto(args.url, { timeout: timeoutMs, waitUntil: 'domcontentloaded' })
+    return { ok: true, mode: session.mode, url: p.url(), status: resp ? resp.status() : null, title: clipText(await p.title(), 120) }
   }
 
-  if (action === 'tabs' && !browserHandle) return { ok: false, error: '无活动会话：先 browser({action:"open", url}) 建立会话' }
-  if (!pageHandle) return { ok: false, error: '无活动页面：先 browser({action:"open", url}) 建立会话' }
+  if (action === 'tabs' && !session.browser) return { ok: false, error: '无活动会话：先 browser({action:"open", url}) 建立会话' }
+  if (!session.page) return { ok: false, error: '无活动页面：先 browser({action:"open", url}) 建立会话' }
+  const page = session.page
 
   if (action === 'snapshot') {
-    const elements = await pageHandle.$$eval('a[href],button,input,select,textarea,[role="button"],[onclick]', snapshotElements)
+    const elements = await page.$$eval('a[href],button,input,select,textarea,[role="button"],[onclick]', snapshotElements)
     return {
       ok: true,
-      url: pageHandle.url(),
-      title: clipText(await pageHandle.title(), 120),
-      text: clipText(await pageHandle.evaluate(() => document.body.innerText), 4000),
+      url: page.url(),
+      title: clipText(await page.title(), 120),
+      text: clipText(await page.evaluate(() => document.body.innerText), 4000),
       elements,
-      lastDialog,
+      lastDialog: session.lastDialog,
     }
   }
   if (action === 'text') {
-    return { ok: true, url: pageHandle.url(), text: clipText(await pageHandle.evaluate(() => document.body.innerText), 12000) }
+    return { ok: true, url: page.url(), text: clipText(await page.evaluate(() => document.body.innerText), 12000) }
   }
   if (action === 'click') {
-    await pageHandle.locator(args.selector).first().click({ timeout: timeoutMs })
-    return { ok: true, clicked: args.selector, url: pageHandle.url(), lastDialog }
+    await page.locator(args.selector).first().click({ timeout: timeoutMs })
+    return { ok: true, clicked: args.selector, url: page.url(), lastDialog: session.lastDialog }
   }
   if (action === 'type') {
-    await pageHandle.locator(args.selector).first().fill(args.text, { timeout: timeoutMs })
-    return { ok: true, typed: args.text.length, url: pageHandle.url() }
+    await page.locator(args.selector).first().fill(args.text, { timeout: timeoutMs })
+    return { ok: true, typed: args.text.length, url: page.url() }
   }
   if (action === 'press') {
-    await pageHandle.keyboard.press(args.key)
-    return { ok: true, pressed: args.key, url: pageHandle.url(), lastDialog }
+    await page.keyboard.press(args.key)
+    return { ok: true, pressed: args.key, url: page.url(), lastDialog: session.lastDialog }
   }
   if (action === 'select') {
     const vals = Array.isArray(args.values) ? args.values : [args.value]
-    await pageHandle.locator(args.selector).first().selectOption(vals, { timeout: timeoutMs })
-    return { ok: true, selected: vals, url: pageHandle.url() }
+    await page.locator(args.selector).first().selectOption(vals, { timeout: timeoutMs })
+    return { ok: true, selected: vals, url: page.url() }
   }
   if (action === 'hover') {
-    await pageHandle.locator(args.selector).first().hover({ timeout: timeoutMs })
-    return { ok: true, hovered: args.selector, url: pageHandle.url() }
+    await page.locator(args.selector).first().hover({ timeout: timeoutMs })
+    return { ok: true, hovered: args.selector, url: page.url() }
   }
   if (action === 'back' || action === 'forward' || action === 'reload') {
     const r =
       action === 'back'
-        ? await pageHandle.goBack({ timeout: timeoutMs })
+        ? await page.goBack({ timeout: timeoutMs })
         : action === 'forward'
-          ? await pageHandle.goForward({ timeout: timeoutMs })
-          : await pageHandle.reload({ timeout: timeoutMs })
-    return { ok: true, action, url: pageHandle.url(), status: r ? r.status() : null, title: clipText(await pageHandle.title(), 120) }
+          ? await page.goForward({ timeout: timeoutMs })
+          : await page.reload({ timeout: timeoutMs })
+    return { ok: true, action, url: page.url(), status: r ? r.status() : null, title: clipText(await page.title(), 120) }
   }
   if (action === 'wait') {
-    if (args.selector) await pageHandle.waitForSelector(args.selector, { timeout: timeoutMs })
-    else await pageHandle.getByText(args.text).first().waitFor({ timeout: timeoutMs })
-    return { ok: true, waited: args.selector || `text=${args.text}`, url: pageHandle.url() }
+    if (args.selector) await page.waitForSelector(args.selector, { timeout: timeoutMs })
+    else await page.getByText(args.text).first().waitFor({ timeout: timeoutMs })
+    return { ok: true, waited: args.selector || `text=${args.text}`, url: page.url() }
   }
   if (action === 'screenshot') {
     const os = require('os')
     const p = args.path || require('path').join(os.tmpdir(), `kix-browser-${Date.now()}.png`)
-    await pageHandle.screenshot({ path: p, fullPage: !!args.fullPage })
+    await page.screenshot({ path: p, fullPage: !!args.fullPage })
     return { ok: true, path: p, fullPage: !!args.fullPage }
   }
   if (action === 'upload') {
-    await pageHandle.locator(args.selector).first().setInputFiles(args.files, { timeout: timeoutMs })
+    await page.locator(args.selector).first().setInputFiles(args.files, { timeout: timeoutMs })
     return { ok: true, uploaded: args.files }
   }
   if (action === 'tabs') {
-    const pages = browserHandle.contexts().flatMap((c) => c.pages())
+    // 本 owner 连接可见的全部 tab：自有 tab（本 owner 创建，close/卸载回收）
+    // 与借用页（真实浏览器已有 tab，显式 switch 后才驱动，永不关闭）。
+    const pages = session.browser.contexts().flatMap((c) => c.pages())
+    const owned = (p) => session.ownPages.has(p)
     if (typeof args.switch === 'number') {
       if (args.switch < 0 || args.switch >= pages.length) return { ok: false, error: `tab 索引越界：${args.switch}（共 ${pages.length} 个）` }
-      pageHandle = wirePage(pages[args.switch])
-      await pageHandle.bringToFront().catch(() => {})
-      return { ok: true, switched: args.switch, url: pageHandle.url() }
+      const target = pages[args.switch]
+      session.page = wirePage(target, session)
+      await session.page.bringToFront().catch(() => {})
+      return { ok: true, switched: args.switch, url: session.page.url(), owned: owned(target) }
     }
     const list = []
     for (let i = 0; i < pages.length; i++) {
-      list.push({ index: i, url: pages[i].url(), title: clipText(await pages[i].title().catch(() => ''), 80) })
+      list.push({ index: i, url: pages[i].url(), title: clipText(await pages[i].title().catch(() => ''), 80), owned: owned(pages[i]) })
     }
-    return { ok: true, tabs: list, active: pages.indexOf(pageHandle) }
+    return { ok: true, tabs: list, active: pages.indexOf(page), owned: owned(page) }
   }
   return { ok: false, error: `action「${action}」已枚举但未实现（内部错误）` }
 }
@@ -319,10 +394,24 @@ module.exports = {
   inject: ['tools'],
   apply(ctx) {
     const tools = ctx.tools
+    // 本 apply 实例的会话表：owner key → 会话态；无 agent 的调用走私有 fallback。
+    // 两个 apply（同模块或不同 preset 实例）各持一份表 → 天然互不干扰。
+    const sessions = new Map()
+    const fallbackSession = createSession()
+    function sessionFor(exec) {
+      const key = ownerKey(exec)
+      if (!key) return fallbackSession
+      let s = sessions.get(key)
+      if (!s) {
+        s = createSession()
+        sessions.set(key, s)
+      }
+      return s
+    }
     const dispose = tools.register({
       name: 'browser',
       description:
-        '浏览器自动化（playwright-core 直驱，会话跨调用持久）。action：open{url}（CDP attach 真实浏览器优先，headless chromium 兜底）|snapshot{ }（url/title/正文+可交互元素 selector 清单）|text{ }（长正文）|click{selector}|type{selector,text}|press{key}（Enter/Tab/Escape/Control+a…）|select{selector,value|values}|hover{selector}|back|forward|reload|wait{text|selector}|screenshot{path?,fullPage?}|upload{selector,files}|tabs{switch?}（列出/切换标签）|dialog{auto?}（弹窗策略 accept/dismiss，默认 dismiss，结果含 lastDialog）|close{ }。selector 支持 CSS 与 text= 前缀。仅 http/https/about:blank。',
+        '浏览器自动化（playwright-core 直驱，会话跨调用持久，按调用会话隔离）。action：open{url}（CDP attach 真实浏览器优先，headless chromium 兜底）|snapshot{ }（url/title/正文+可交互元素 selector 清单）|text{ }（长正文）|click{selector}|type{selector,text}|press{key}（Enter/Tab/Escape/Control+a…）|select{selector,value|values}|hover{selector}|back|forward|reload|wait{text|selector}|screenshot{path?,fullPage?}|upload{selector,files}|tabs{switch?}（列出/切换标签，owned 标记自有/借用）|dialog{auto?}（弹窗策略 accept/dismiss，默认 dismiss，结果含 lastDialog）|close{ }（只清本会话）。selector 支持 CSS 与 text= 前缀。仅 http/https/about:blank。',
       parameters: {
         type: 'object',
         properties: {
@@ -347,11 +436,12 @@ module.exports = {
         schema: { type: 'object', properties: {}, additionalProperties: true },
         render: (a, value) => [{ type: 'text', text: JSON.stringify(value) }],
       },
-      async execute(args) {
-        // 串行队列：同一 page 上的并发操作按序执行
-        const run = queueTail.then(() => runAction(args)).catch((e) => ({ ok: false, error: String((e && e.message) || e) }))
+      async execute(args, exec) {
+        const session = sessionFor(exec)
+        // 每 owner 串行队列：同一 page 上的并发操作按序执行；owner 之间互不阻塞。
+        const run = session.queueTail.then(() => runAction(session, args)).catch((e) => ({ ok: false, error: String((e && e.message) || e) }))
         // 队列推进不因单次失败中断
-        queueTail = run.then(
+        session.queueTail = run.then(
           () => undefined,
           () => undefined
         )
@@ -366,10 +456,11 @@ module.exports = {
     // 表达式体；单测 mock 曾只 push 不执行回调，盲区——已补镜像语义回归）。
     ctx.effect(() => () => {
       dispose()
-      // 插件卸载时静默收尾（不等待）
-      closeSession().catch(() => undefined)
+      // 卸载只清本 apply 实例自己的会话（自有 tab/连接/进程），不碰别人的。
+      for (const s of [...sessions.values(), fallbackSession]) closeSession(s).catch(() => undefined)
+      sessions.clear()
     })
-    ctx.logger?.info?.('[kix-browser] browser 工具已注册（playwright-core 懒加载，CDP attach 优先）')
+    ctx.logger?.info?.('[kix-browser] browser 工具已注册（playwright-core 懒加载，CDP attach 优先，按会话隔离）')
   },
   // 导出纯函数供单测（不注册任何东西）
   _test: { urlRejection, clipText, snapshotElements, ACTIONS },
