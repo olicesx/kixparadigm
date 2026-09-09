@@ -219,69 +219,33 @@ prompt: |
 
 **决策**：任一问答不出 / 答案揭示验证不足 → 该 finding 降级为 comment 级疑问，或补验证后再定级。reviewer 自己猜测「可能 intentional」只触发继续取证；任一独立 reviewer 基于代码 / 文档提出 intentional / explicit opt-in 反证时，必须先解析项目契约；仍不明确则询问作者，不得发布 major+。
 
-### 阶段 2.5：异质 review-of-review（重要结论 MUST）
+### 阶段 2.5：按结论缺口独立验证与结算
 
-> Deterministic gate 验运行行为，review-of-review 验 finding 的证据维度；两者正交。来源与实证见 AUDIT.md §3.2。
+> Deterministic gate 验其覆盖的行为，独立观察补足主张与证据的缺口；两者不互相冒充。重要结论需要独立证据，人数和 finding 数量不构成验证。
 
-**触发条件**（任一即 MUST 同时调用 `kixpower-dev` + `kixpower-qa` 两个独立视角）：
-- 准备发布 `APPROVE`（包括 0 finding 的正面结论）
-- finding 数 ≥ 3
-- 含 blocking 或 major finding
-- 含「建议抽象/helper/重构」类 finding
-- 含「X 正确修复 Y」类正面断言（最易虚假自信）
+根据会改变结论的信息缺口选择现有 reviewer/qa/dev 或跨厂商视角，不预设两个成员或投票。APPROVE 本身不触发补票；验证不足也不能因旧观察者已完成而直接放行。
 
-**不触发**：只发布纯 minor/nit 的 COMMENT，finding < 3 且不含确定性正面断言。
+- 观察输入保留原始用户目标、适用契约、材料版本与入口。发现型观察不预告草稿结论；主张验证可提供确切 claim，不能要求附和执行方论证。
+- 作者更新后，旧 finding 只作线索。比较增量并检查相关完整实现与调用方，重判新行为/依赖/公共接口及原约束；不要求每次全仓重审。必要跨包改动或 CI 不自动等于越界。
+- 结果按机制事实 / 契约与意图 / 影响与处置结算。有效反例不能被多数覆盖；未知若影响当前交付承诺，先补证或收窄结论。
+- major+ 保留 `claim_gate: {mechanism, contract, impact}`，状态为 `confirmed | disputed | unknown`；成立的缺陷须有相应证据，未决不能包装成确定缺陷。
+- 发布 APPROVE 要有当前对象满足审查目标与适用约束的依据；旧缺陷关闭、测试绿和代理完成都不单独充分。正文中的必须处理项与标题处置必须一致。
 
-**流程**：
-1. 把 review body 草稿 + PR diff 写入 `docs/reviews/pr-<N>-draft.md`
-2. 并行调用两个子 agent，二者都必须独立读取 PR diff 与相关实现，不读取彼此结论：Dev 验实现/语言语义，QA 验行为/边界/证据；两个调用分别使用下方指定的不同厂商模型，不可用时再按 kixParadigm 的跨厂商候选降级
-3. orchestrator 按机制事实 / 项目契约与设计意图 / 影响与严重度三层汇总；只在同一层判断异质多数，禁止跨层投票。任一独立 reviewer 基于代码 / 文档提出反证就深挖分歧，未解决不得保留确定结论
-4. 对每条 major+ 在草稿写入 `claim_gate: {mechanism, contract, impact}`，值仅允许 `confirmed | disputed | unknown`；三项全为 `confirmed` 才能进入阶段 3，反证未解决时对应项必须为 `disputed`
-5. `APPROVE` 还要求两个独立 agent 均未发现 blocking/major；否则拒绝 approve
-6. 复核通过后才进入阶段 3 发布 gate
+**独立观察输入示例**（视角与工具按缺口选择，不是固定调用序列）：
 
-**Dev 子 agent 调用模板**（Tri-Block；DSH：用 `subagent_cross` 自动取反厂商 = 异质第二视角，不写死模型字符串）：
-
-```
-工具: subagent_cross
-prompt: |
-  [CONTEXT]
-  handoff_mode: review
-  review_readonly: true
-  review_origin: kixpower-review
-  PR #<N>
-  review_worktree: <path>
-  review_head_sha: <PR head 的完整 40 位 SHA>
-  不得读取其他 reviewer 结论
-  [TASK]
-  以实现/语言语义视角独立读取 diff、调用方和被调用方实现，验证 correctness/security；报告遗漏 finding 或对草稿 finding 的技术反证
-  [CONSTRAINTS]
-  只读，不修改文件，不发布评论
-  只输出 YAML：claims: [{id, mechanism: {status, evidence}, contract: {status, evidence}, impact: {status, evidence}, rebuttal}]；status 仅允许 confirmed|disputed|unknown
+```text
+目标与契约: <当前用户目标、适用约束及来源；旧 finding 不穷尽验收>
+review_stage: verification
+review_policy: read-only
+artifact_root: <当前 worktree 绝对路径>
+artifact_revision: <当前 SHA/diff hash>
+视角/claim: <待验证主张或未覆盖的语义方向>
+材料与入口: <变更及相关完整实现/调用方>
+约束: 不编辑被审 artifact，不发布；独立读取事实，不读取其他观察者论证
+返回: claims 的 mechanism/contract/impact/status/evidence，以及影响当前结论的未知
 ```
 
-**QA 子 agent 调用模板**（Tri-Block；DSH：用 `subagent` 继承主模型 = 同厂商视角，与 Dev 的跨厂商视角形成异质对）：
-
-```
-工具: subagent
-prompt: |
-  [CONTEXT]
-  handoff_mode: review
-  review_readonly: true
-  review_origin: kixpower-review
-  PR #<N> review 草稿：docs/reviews/pr-<N>-draft.md
-  review_worktree: <path>（Orchestrator 已检出 PR head；从该目录读取完整 diff 与实现）
-  review_head_sha: <PR head 的完整 40 位 SHA>
-  规则：TEAM_CONVENTIONS §证据门禁（四步硬约束 + 规范性结论分层 + 反方辩护）
-  [TASK]
-  以运行行为/边界/测试真实性视角独立读取 worktree 中的 diff 与相关实现；可提出遗漏 finding 或技术反证。
-  [CONSTRAINTS]
-  只输出 YAML：claims: [{id, mechanism: {status, evidence}, contract: {status, evidence}, impact: {status, evidence}, rebuttal}]；status 仅允许 confirmed|disputed|unknown
-  不改文件，不发布评论
-  token 预算：≤15K
-```
-
-**反模式（禁止）**：把草稿结论直接喂给两个 agent 要求“确认”。两个 prompt 必须要求独立读代码和主动找反证，避免同质附和。
+观察期间材料或明确依据变化，重新判断证据有效范围；只重验失效部分。跨厂商通道以实际请求路由为证，不由工具名字推断。
 
 ### 阶段 2.7：实践回收
 
@@ -443,15 +407,15 @@ body 模板（通过类）：
 ## 硬约束
 
 - **只读实现**：不修改源码、不 merge；只有 `--save` 且阶段 3 用户确认 push 时可推送 review summary，`--approve` 只授权正式 review state，不授权改代码
-- **子 agent 有限调用（v5.7）**：满足阶段 2.5 条件时调用专用 `kixpower-reviewer` 两次，使用异质 prompt/model；deterministic gate 与独立复核都通过后才可发布确定结论
-- **Token 控制**：大 PR（>500 文件）只审查 top 50 改动最多的文件
+- **独立验证**：按阶段 2.5 的实际结论缺口选择观察，不设固定人数或多数裁决；发布确定结论需有当前版本与适用契约的证据
+- **覆盖范围**：大 PR 按语义边界选择取证入口，明确未覆盖范围；不能把只审过部分文件称作全量审查
 - **遵循 blast-radius**：`--save` 提交 review.md 时受 `blast-radius-check.ps1` 约束（feature branch 才允许）
 
 ## `--approve` 模式（可选）
 
 用户输入 `/kixpower-review --approve <N>`：
 - 该 flag 已含明确发布授权：审查完成后直接发布 APPROVE review，不再重复确认；执行仍走同一 pending review 事务
-- 仅当 0 blocking、0 major、deterministic gate 明确通过，且两个独立 reviewer 均未发现 blocking/major 时，才允许发布正式 APPROVE
+- 仅当当前版本没有未解决的 blocking/major，相关 deterministic gate 明确通过且独立证据足以支持目标与约束时，才允许发布正式 APPROVE；不按 reviewer 人数计票
 - 任一条件不满足 → 拒绝 approve，改为 COMMENT/REQUEST_CHANGES 并列出原因
 - 未带 flag 时，用户后续明确说「approve/发布 APPROVE」即授权正式 APPROVE；禁止用 `gh pr review --approve` 另建第二个 review（PR#2980 重复发布事故模式）
 
@@ -460,6 +424,6 @@ body 模板（通过类）：
 | 模式 | 流程 | 修改代码 | 调子 agent |
 |---|---|---|---|
 | 1 (new) / 2 (import) / 3 (continue) | Producer→Dev→L2→QA→L4 | ✅ | ✅ |
-| **4 (review)** | 分层审查→异质复核→发 review | ❌ | 重要结论：专用 reviewer 两次 |
+| **4 (review)** | 分层审查→独立证据结算→发 review | ❌ | 按重要结论的缺口选择观察 |
 
 模式 4 是**独立流程**，不进 Sprint 循环。可与模式 3 共存（如：先 review 一个外部 PR，再继续自己 Sprint）。

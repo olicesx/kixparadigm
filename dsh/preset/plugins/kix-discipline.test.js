@@ -79,6 +79,15 @@ plugin.apply(ctxBlock, { intensity: 'block' })
 let steered = []
 const sessionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kix-discipline-session-'))
 const sessionHeader = { cwd: sessionRoot }
+// 夹具收尾（2026-09-09）：本文件自建的 mkdtemp 目录统一登记并在结束时清理，
+// 不泄漏 /tmp，也不触碰其他任务创建的目录。
+const createdTmpDirs = [sessionRoot]
+function cleanupTmpDirs() {
+  for (const dir of createdTmpDirs) {
+    try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* 忽略清理失败 */ }
+  }
+  createdTmpDirs.length = 0
+}
 function dispatchPre(name, args) {
   const exec = { name, arguments: args, token: 't', callId: 'c', agent: { id: 'test-agent', session: { header: sessionHeader } } }
   return preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
@@ -103,6 +112,34 @@ function dispatchTurnFor(agentId, sessionId, surface) {
   const agent = { id: agentId, session: { id: sessionId, header: sessionHeader }, steer(msg) { steered.push(msg) } }
   return turnStopping[0]({ agent, turn: 1, signal: undefined })
 }
+
+// ── 真实工具 canonical 返回形状（ToolExecutionResult，2026-09-09 缺陷修复）──
+// post-execute 收到的是 { isError, value } 包装；bash/pwsh 的 value 是
+// { kind:'foreground', exitCode, timedOut, aborted, sandbox? } 或
+// { kind:'background', jobId }；job_output 的 value 是 { text, job:{status,detail} }。
+// 旧测试用裸 { isError:false } 当成功 stub，正是「非零 exitCode 仍记 green」的盲区。
+function fg(exitCode = 0, extra = {}) {
+  return {
+    isError: false,
+    value: {
+      kind: 'foreground', exitCode, signal: null, timedOut: false, aborted: false, timeoutMs: 120000,
+      stdout: { text: '', truncated: false }, stderr: { text: '', truncated: false }, ...extra,
+    },
+  }
+}
+function bg(jobId) { return { isError: false, value: { kind: 'background', jobId } } }
+function jobRes(id, status, detail) {
+  return {
+    isError: false,
+    value: {
+      text: '',
+      job: { id, kind: 'bash', label: 'job', status, ...(detail === undefined ? {} : { detail }), startedAt: 1 },
+    },
+  }
+}
+const GREEN_RE = /测试未通过|未运行/
+const LINT_RE = /语法检查/
+function turnTexts() { return steered.map((m) => (m.content && m.content[0] && m.content[0].text) || '') }
 
 let passed = 0
 let failed = 0
@@ -158,12 +195,80 @@ await ok('isMutationTool: edit', I.isMutationTool('edit'))
 await ok('isMutationTool: write', I.isMutationTool('write'))
 await ok('isMutationTool 否定: read', !I.isMutationTool('read'))
 await ok('lintIdsForPath: rust 两族', I.lintIdsForPath('src/main.rs').join(',') === 'rust-fmt,rust-clippy')
-await ok('lintIdsForPath: js/ts', I.lintIdsForPath('src/a.ts').join(',') === 'js' && I.lintIdsForPath('src/a.mjs').join(',') === 'js')
+await ok('lintIdsForPath: js/ts 分桶（TS 与 JS 语法证据不再共用一桶）',
+  I.lintIdsForPath('src/a.ts').join(',') === 'ts' && I.lintIdsForPath('src/a.tsx').join(',') === 'ts' &&
+  I.lintIdsForPath('src/a.mts').join(',') === 'ts' && I.lintIdsForPath('src/a.cts').join(',') === 'ts' &&
+  I.lintIdsForPath('src/a.js').join(',') === 'js' && I.lintIdsForPath('src/a.jsx').join(',') === 'js' &&
+  I.lintIdsForPath('src/a.mjs').join(',') === 'js' && I.lintIdsForPath('src/a.cjs').join(',') === 'js')
 await ok('lintIdsForPath: 文档/artifact 空', I.lintIdsForPath('README.md').length === 0 && I.lintIdsForPath('/root/.dsh/settings.yaml').length === 0)
 await ok('lintIdsForPath: rust 测试文件仍要 lint', I.lintIdsForPath('tests/foo.rs').join(',') === 'rust-fmt,rust-clippy')
 await ok('lintIdsForCommand: fmt/clippy 分族', I.lintIdsForCommand('cargo fmt --check').join(',') === 'rust-fmt' && I.lintIdsForCommand('cargo clippy -D warnings').join(',') === 'rust-clippy')
 await ok('lintIdsForCommand: cargo test / npm test 不算 lint', I.lintIdsForCommand('cargo test').length === 0 && I.lintIdsForCommand('npm test').length === 0)
-await ok('lintIdsForCommand: eslint 算 js', I.lintIdsForCommand('npx eslint src').join(',') === 'js')
+await ok('lintIdsForCommand: eslint 算 js+ts（两桶都认 lint 工具链）',
+  I.lintIdsForCommand('npx eslint src').includes('js') && I.lintIdsForCommand('npx eslint src').includes('ts'))
+await ok('lintIdsForCommand: tsc/typecheck 只补 ts 桶（node --check 不补）',
+  I.lintIdsForCommand('npx tsc --noEmit').includes('ts') &&
+  I.lintIdsForCommand('npm run typecheck').includes('ts') &&
+  !I.lintIdsForCommand('node --check src/a.js').includes('ts'))
+// 2026-09-09：本仓实际可跑的 JS 语法 gate 是 node --check（无 eslint 工具链）。
+// 只认确切 node --check/-c + *.js/.cjs/.mjs；.ts 不是它的证据，node --test 不是 lint。
+await ok('lintIdsForCommand: node --check/-c 的 js/cjs/mjs 算 js 语法证据',
+  I.lintIdsForCommand('node --check src/a.js').join(',') === 'js' &&
+  I.lintIdsForCommand('node -c src/a.cjs').join(',') === 'js' &&
+  I.lintIdsForCommand('node --check dsh/preset/plugins/a.mjs').join(',') === 'js' &&
+  I.lintIdsForCommand('npm run build && node --check src/a.js').join(',') === 'js')
+await ok('lintIdsForCommand: node --check 的 .ts/非 js 不算，node --test 不算',
+  I.lintIdsForCommand('node --check src/a.ts').length === 0 &&
+  I.lintIdsForCommand('node --check src/a.py').length === 0 &&
+  I.lintIdsForCommand('node --test src/a.test.js').length === 0 &&
+  I.lintIdsForCommand('node -e "console.log(1)"').length === 0 &&
+  I.lintIdsForCommand('node --check').length === 0)
+// 2026-09-09：命令包装前缀（timeout/env/VAR=/nice）不得让真实测试/lint 漏记；
+// 未知复杂 shell 形态保守不记；echo/printf/grep 引用测试命令不得造成假 green。
+await ok('前缀归一：timeout/env/VAR=/nice 后仍识别测试命令',
+  I.isTestCommand('timeout 120 node --test x.test.js') &&
+  I.isTestCommand('timeout -k 5 120 node --test x.test.js') &&
+  I.isTestCommand('timeout --preserve-status 60 npm test') &&
+  I.isTestCommand('env FOO=1 node --test x.test.js') &&
+  I.isTestCommand('env -i FOO=1 BAR=2 node --test x.test.js') &&
+  I.isTestCommand('FOO=1 node --test x.test.js') &&
+  I.isTestCommand('FOO=1 BAR=2 node --test x.test.js') &&
+  I.isTestCommand('nice -n 10 node --test x.test.js') &&
+  I.isTestCommand('nice -10 node --test x.test.js') &&
+  I.isTestCommand('timeout 60 env FOO=1 nice -n 5 node --test x.test.js') &&
+  I.isTestCommand('cd dsh/preset/plugins && timeout 120 node --test kix-browser.test.js') &&
+  I.isTestCommand('timeout 120 npm test') && I.isTestCommand('timeout 60 pytest -q') &&
+  I.isTestCommand('timeout 60 cargo test'))
+await ok('前缀归一：verification/lint/git commit 同样受益',
+  I.isVerificationCommand('timeout 60 go test ./...') &&
+  I.isVerificationCommand('FOO=1 npm run lint') &&
+  I.isVerificationCommand('nice -n 5 tsc --noEmit') &&
+  I.lintIdsForCommand('timeout 60 npx eslint src/a.js').includes('js') &&
+  I.lintIdsForCommand('FOO=1 node --check src/a.js').join(',') === 'js' &&
+  I.lintIdsForCommand('env X=1 node --check src/a.cjs').join(',') === 'js' &&
+  I.isGitCommitCommand('FOO=1 git commit -m x') &&
+  I.isGitCommitCommand('timeout 60 git commit -m x'))
+await ok('前缀归一保守：未知/复杂 shell 形态不记，echo/printf/grep 引用不假 green',
+  !I.isTestCommand('echo node --test x.test.js') &&
+  !I.isTestCommand("printf 'node --test x.test.js\\n'") &&
+  !I.isTestCommand('grep -rn "node --test" .') &&
+  !I.isTestCommand('bash -c "node --test x.test.js"') &&
+  !I.isTestCommand('xargs node --test') &&
+  !I.isTestCommand('sudo node --test x.test.js') &&
+  !I.isTestCommand('timeout abc node --test x.test.js') &&
+  !I.isTestCommand('timeout node --test x.test.js') &&
+  !I.isTestCommand('FOO=1 echo node --test x.test.js') &&
+  !I.isVerificationCommand('echo go test ./...') &&
+  I.lintIdsForCommand('echo "node --check a.js"').length === 0 &&
+  I.lintIdsForCommand('grep node --check a.js').length === 0 &&
+  I.lintIdsForCommand("printf 'node --check a.js'").length === 0 &&
+  !I.isGitCommitCommand('echo git commit -m x') &&
+  !I.isGitCommitCommand('grep "git commit" file'))
+await ok('前缀归一：纯函数可单测（normalizeCommandText 导出）',
+  typeof I.normalizeCommandText === 'function' &&
+  I.normalizeCommandText('timeout 120 node --test x.js') === 'node --test x.js' &&
+  I.normalizeCommandText('a && FOO=1 npm test') === 'a && npm test' &&
+  I.normalizeCommandText('echo node --test x.js') === 'echo node --test x.js')
 await ok('isGitCommitCommand: 普通 commit', I.isGitCommitCommand('git commit -m x') && I.isGitCommitCommand('git -C /tmp commit -m x'))
 await ok('isGitCommitCommand 否定: commit-tree/echo/status', !I.isGitCommitCommand('git commit-tree HEAD') && !I.isGitCommitCommand('echo git commit') && !I.isGitCommitCommand('git status'))
 await ok('specComplete: 空对象 false', !I.specComplete({}))
@@ -212,6 +317,7 @@ await ok('specComplete 不要求 contract（可选项，五字段为准）', I.s
 // ── 2. makeState：spec 文件持久 ────────────────────────────────────────────
 section('makeState spec 文件')
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kix-disc-test-'))
+createdTmpDirs.push(tmpRoot)
 await ok('saveSpec 写入 true（node:fs 默认 io）', (async () => {
   const st = I.makeState({ sessionKey: 's1', workspaceRoot: tmpRoot })
   return (await st.saveSpec(fullSpec)) === true
@@ -270,6 +376,12 @@ section('pre-execute gate（remind）')
 let dispatchPreAs = (name, args, agentId) => {
   const exec = { name, arguments: args, token: 't', callId: 'c', agent: { id: agentId, session: { header: sessionHeader } } }
   return preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
+}
+// 真实工具生命周期：pre（放行）+ post（落盘）都派发。lint need 由落盘编辑记账。
+// edit 的 canonical value 是 { path, before, after }（dsh-tool-fs）。
+async function editLanded(agentId, filePath) {
+  await dispatchPreAs('edit', { file_path: filePath }, agentId)
+  return dispatchPostAs('edit', { file_path: filePath }, { isError: false, value: { path: filePath, before: '', after: '' } }, agentId)
 }
 await ok('无 spec 首次 edit（remind）→ allow', (async () => {
   const d = await dispatchPreAs('edit', { file_path: 'src/a.ts', content: 'x' }, 'g1')
@@ -369,13 +481,26 @@ await ok('post-execute 无 pendingRemind → accept 无注入', (async () => {
   const d = await dispatchPost('read', { path: 'x' }, { isError: false })
   return d.kind === 'accept' && (d.additionalContexts === undefined || d.additionalContexts.length === 0)
 })())
-await ok('测试运行成功 → green 记录（turnTests=1）', (async () => {
-  const d = await dispatchPost('bash', { command: 'pnpm test' }, { isError: false })
-  return d.kind === 'accept'
+await ok('测试运行成功（foreground exitCode 0）→ green 记录（turnTests=1）', (async () => {
+  const agentId = 'green-record'
+  await editLanded(agentId, 'src/green-record.c')
+  const d = await dispatchPostAs('bash', { command: 'pnpm test' }, fg(0), agentId)
+  const status = await registeredCommands.find((c) => c.name === 'kix-discipline').handler({
+    agent: { id: agentId, session: { header: sessionHeader } }, rawInput: 'status',
+  })
+  return d.kind === 'accept' && /turnTests: 1/.test(status.text)
 })())
-await ok('测试运行失败 → 不记录 green', (async () => {
-  const d = await dispatchPost('bash', { command: 'pnpm test' }, { isError: true })
-  return d.kind === 'accept'
+await ok('测试运行失败（isError / 非零 exitCode）→ 不记录 green', (async () => {
+  const errored = 'green-error'
+  await editLanded(errored, 'src/green-error.c')
+  await dispatchPostAs('bash', { command: 'pnpm test' }, { isError: true, error: { name: 'HarnessError', code: 'X', message: 'boom' }, content: [] }, errored)
+  const nonzero = 'green-nonzero'
+  await editLanded(nonzero, 'src/green-nonzero.c')
+  await dispatchPostAs('bash', { command: 'pnpm test' }, fg(1), nonzero)
+  const statusOf = async (id) => (await registeredCommands.find((c) => c.name === 'kix-discipline').handler({
+    agent: { id, session: { header: sessionHeader } }, rawInput: 'status',
+  })).text
+  return /turnTests: 0/.test(await statusOf(errored)) && /turnTests: 0/.test(await statusOf(nonzero))
 })())
 await ok('pendingRemind 注入 additionalContexts', (async () => {
   // 新会话触发 red remind（pre → 置 pendingRemind），再 post → 注入
@@ -384,18 +509,256 @@ await ok('pendingRemind 注入 additionalContexts', (async () => {
   return d.kind === 'accept' && Array.isArray(d.additionalContexts) && d.additionalContexts.length === 1
 })())
 
+// ── 4b. canonical 执行证据（2026-09-09 缺陷修复回归）──────────────────────
+// 旧实现 discipline:644 `const ok = result && !result.isError` 把非零 bash
+// exitCode 与后台 spawn 都记为 green/lint 证据。以下按真实 canonical 形状
+// （foreground exitCode / background jobId / job_output 终态）钉死判定。
+section('canonical 执行证据')
+await ok('非零 exitCode 的测试命令不计 green', (async () => {
+  await editLanded('ev-exit1', 'src/ev1.c')
+  await dispatchPostAs('bash', { command: 'npm test' }, fg(1), 'ev-exit1')
+  await dispatchTurnAs('ev-exit1')
+  return turnTexts().some((t) => GREEN_RE.test(t))
+})())
+await ok('exitCode 0 的测试命令计 green（无 green 提醒）', (async () => {
+  await editLanded('ev-exit0', 'src/ev2.c')
+  await dispatchPostAs('bash', { command: 'npm test' }, fg(0), 'ev-exit0')
+  await dispatchTurnAs('ev-exit0')
+  return !turnTexts().some((t) => GREEN_RE.test(t))
+})())
+await ok('timedOut / aborted / sandbox.denied 不计 green', (async () => {
+  const cases = [
+    ['ev-timeout', { timedOut: true }],
+    ['ev-aborted', { aborted: true }],
+    ['ev-denied', { sandbox: { mode: 'workspace-write', denied: true } }],
+  ]
+  for (const [id, extra] of cases) {
+    await editLanded(id, 'src/' + id + '.c')
+    await dispatchPostAs('bash', { command: 'npm test' }, fg(0, extra), id)
+    await dispatchTurnAs(id)
+    if (!turnTexts().some((t) => GREEN_RE.test(t))) return false
+  }
+  return true
+})())
+await ok('包装 value（{ok:true,result:{…}}）仍按 canonical 形状判定', (async () => {
+  await editLanded('ev-wrapped-red', 'src/evw1.c')
+  await dispatchPostAs('bash', { command: 'npm test' }, { isError: false, value: { ok: true, result: fg(1).value } }, 'ev-wrapped-red')
+  await dispatchTurnAs('ev-wrapped-red')
+  if (!turnTexts().some((t) => GREEN_RE.test(t))) return false
+  await editLanded('ev-wrapped-green', 'src/evw2.c')
+  await dispatchPostAs('bash', { command: 'npm test' }, { isError: false, value: { ok: true, result: fg(0).value } }, 'ev-wrapped-green')
+  await dispatchTurnAs('ev-wrapped-green')
+  return !turnTexts().some((t) => GREEN_RE.test(t))
+})())
+await ok('未知结果形状（无 canonical value）不计 green', (async () => {
+  await editLanded('ev-unknown', 'src/ev3.c')
+  await dispatchPostAs('bash', { command: 'npm test' }, { isError: false }, 'ev-unknown')
+  await dispatchTurnAs('ev-unknown')
+  return turnTexts().some((t) => GREEN_RE.test(t))
+})())
+await ok('后台启动（jobId）本身不计 green', (async () => {
+  await editLanded('ev-bg-start', 'src/ev4.c')
+  await dispatchPostAs('bash', { command: 'go test ./...' }, bg('ev-job-1'), 'ev-bg-start')
+  await dispatchTurnAs('ev-bg-start')
+  return turnTexts().some((t) => GREEN_RE.test(t))
+})())
+await ok('后台 job 终态 completed exit code 0 计 green', (async () => {
+  await editLanded('ev-bg-green', 'src/ev5.c')
+  await dispatchPostAs('bash', { command: 'go test ./...' }, bg('ev-job-2'), 'ev-bg-green')
+  await dispatchPostAs('job_output', { job_id: 'ev-job-2' }, jobRes('ev-job-2', 'completed', 'exit code: 0'), 'ev-bg-green')
+  await dispatchTurnAs('ev-bg-green')
+  return !turnTexts().some((t) => GREEN_RE.test(t))
+})())
+await ok('后台 job failed/killed/非零/running/未知状态不计 green', (async () => {
+  const cases = [
+    ['failed', 'boom'],
+    ['killed', 'signal: SIGKILL'],
+    ['completed', 'exit code: 2'],
+    ['running', undefined],
+    ['stopping', undefined],
+  ]
+  for (let i = 0; i < cases.length; i++) {
+    const id = 'ev-bg-bad-' + i
+    const jobId = 'ev-job-bad-' + i
+    await editLanded(id, 'src/' + id + '.c')
+    await dispatchPostAs('bash', { command: 'go test ./...' }, bg(jobId), id)
+    await dispatchPostAs('job_output', { job_id: jobId }, jobRes(jobId, cases[i][0], cases[i][1]), id)
+    await dispatchTurnAs(id)
+    if (!turnTexts().some((t) => GREEN_RE.test(t))) return false
+  }
+  return true
+})())
+await ok('旧 job 在新编辑后完成不计 green（generation 过期）', (async () => {
+  await editLanded('ev-stale-job', 'src/ev6.c')
+  await dispatchPostAs('bash', { command: 'go test ./...' }, bg('ev-job-3'), 'ev-stale-job')
+  await editLanded('ev-stale-job', 'src/ev7.c')
+  await dispatchPostAs('job_output', { job_id: 'ev-job-3' }, jobRes('ev-job-3', 'completed', 'exit code: 0'), 'ev-stale-job')
+  await dispatchTurnAs('ev-stale-job')
+  return turnTexts().some((t) => GREEN_RE.test(t))
+})())
+await ok('测试成功后再编辑 → green 证据过期', (async () => {
+  await editLanded('ev-stale-green', 'src/ev8.c')
+  await dispatchPostAs('bash', { command: 'npm test' }, fg(0), 'ev-stale-green')
+  await editLanded('ev-stale-green', 'src/ev9.c')
+  await dispatchTurnAs('ev-stale-green')
+  return turnTexts().some((t) => GREEN_RE.test(t))
+})())
+await ok('lint 非零 exitCode 不计 lint ran', (async () => {
+  await editLanded('ev-lint-red', 'src/ev10.ts')
+  await dispatchPostAs('bash', { command: 'npx eslint src/ev10.ts' }, fg(1), 'ev-lint-red')
+  await dispatchTurnAs('ev-lint-red')
+  return turnTexts().some((t) => LINT_RE.test(t))
+})())
+await ok('lint exitCode 0 计 lint ran', (async () => {
+  await editLanded('ev-lint-green', 'src/ev11.ts')
+  await dispatchPostAs('bash', { command: 'npx eslint src/ev11.ts' }, fg(0), 'ev-lint-green')
+  await dispatchTurnAs('ev-lint-green')
+  return !turnTexts().some((t) => LINT_RE.test(t))
+})())
+await ok('lint 后再编辑 → lint 证据过期', (async () => {
+  await editLanded('ev-lint-stale', 'src/ev12.ts')
+  await dispatchPostAs('bash', { command: 'npx eslint src/ev12.ts' }, fg(0), 'ev-lint-stale')
+  await editLanded('ev-lint-stale', 'src/ev13.ts')
+  await dispatchTurnAs('ev-lint-stale')
+  return turnTexts().some((t) => LINT_RE.test(t))
+})())
+await ok('后台 lint job 终态 exit code 0 计 lint ran', (async () => {
+  await editLanded('ev-lint-bg', 'src/ev14.ts')
+  await dispatchPostAs('bash', { command: 'npm run lint' }, bg('ev-job-4'), 'ev-lint-bg')
+  await dispatchPostAs('job_output', { job_id: 'ev-job-4' }, jobRes('ev-job-4', 'completed', 'exit code: 0'), 'ev-lint-bg')
+  await dispatchTurnAs('ev-lint-bg')
+  return !turnTexts().some((t) => LINT_RE.test(t))
+})())
+await ok('未登记的 job 终态不计 green（不猜来源）', (async () => {
+  await editLanded('ev-unregistered', 'src/ev16.c')
+  await dispatchPostAs('job_output', { job_id: 'ev-job-unknown' }, jobRes('ev-job-unknown', 'completed', 'exit code: 0'), 'ev-unregistered')
+  await dispatchTurnAs('ev-unregistered')
+  return turnTexts().some((t) => GREEN_RE.test(t))
+})())
+await ok('构建/检查命令不伪装成测试（go build/vet 不计 green）', (async () => {
+  await editLanded('ev-build', 'src/ev15.c')
+  await dispatchPostAs('bash', { command: 'go build ./... && go vet ./...' }, fg(0), 'ev-build')
+  await dispatchTurnAs('ev-build')
+  return turnTexts().some((t) => GREEN_RE.test(t))
+})())
+await ok('node --check 成功计 JS 语法证据（本仓实际 gate）', (async () => {
+  await editLanded('ev-check-js', 'src/ev17.js')
+  await dispatchPostAs('bash', { command: 'node --check src/ev17.js' }, fg(0), 'ev-check-js')
+  await dispatchTurnAs('ev-check-js')
+  return !turnTexts().some((t) => LINT_RE.test(t))
+})())
+await ok('node -c 成功同样计 JS 语法证据', (async () => {
+  await editLanded('ev-check-cjs', 'src/ev18.cjs')
+  await dispatchPostAs('bash', { command: 'node -c src/ev18.cjs' }, fg(0), 'ev-check-cjs')
+  await dispatchTurnAs('ev-check-cjs')
+  return !turnTexts().some((t) => LINT_RE.test(t))
+})())
+await ok('node --check 非零 exitCode 不计 JS 语法证据', (async () => {
+  await editLanded('ev-check-red', 'src/ev19.js')
+  await dispatchPostAs('bash', { command: 'node --check src/ev19.js' }, fg(1), 'ev-check-red')
+  await dispatchTurnAs('ev-check-red')
+  return turnTexts().some((t) => LINT_RE.test(t))
+})())
+await ok('node --check .ts 不是 JS 语法证据（不冒充 typecheck）', (async () => {
+  await editLanded('ev-check-ts', 'src/ev20.ts')
+  await dispatchPostAs('bash', { command: 'node --check src/ev20.ts' }, fg(0), 'ev-check-ts')
+  await dispatchTurnAs('ev-check-ts')
+  return turnTexts().some((t) => LINT_RE.test(t))
+})())
+await ok('node --check 先检查后编辑 → 过期不计', (async () => {
+  await dispatchPostAs('bash', { command: 'node --check src/ev21.js' }, fg(0), 'ev-check-stale')
+  await editLanded('ev-check-stale', 'src/ev21.js')
+  await dispatchTurnAs('ev-check-stale')
+  return turnTexts().some((t) => LINT_RE.test(t))
+})())
+// 2026-09-09：包装前缀下的真实测试必须计 green（旧实现漏记：`timeout 120 node --test`）
+await ok('timeout 前缀的真实测试命令计 green（不再漏记）', (async () => {
+  await editLanded('ev-timeout-prefix', 'src/ev28.c')
+  await dispatchPostAs('bash', { command: 'timeout 120 node --test src/ev28.test.c' }, fg(0), 'ev-timeout-prefix')
+  await dispatchTurnAs('ev-timeout-prefix')
+  return !turnTexts().some((t) => GREEN_RE.test(t))
+})())
+await ok('env/VAR= 前缀的真实测试命令计 green', (async () => {
+  await editLanded('ev-env-prefix', 'src/ev29.c')
+  await dispatchPostAs('bash', { command: 'FOO=1 node --test src/ev29.test.c' }, fg(0), 'ev-env-prefix')
+  await dispatchTurnAs('ev-env-prefix')
+  return !turnTexts().some((t) => GREEN_RE.test(t))
+})())
+await ok('echo 引用测试命令不构成 green（假 green 反例）', (async () => {
+  await editLanded('ev-echo-fake', 'src/ev30.c')
+  await dispatchPostAs('bash', { command: 'echo node --test src/ev30.test.c' }, fg(0), 'ev-echo-fake')
+  await dispatchTurnAs('ev-echo-fake')
+  return turnTexts().some((t) => GREEN_RE.test(t))
+})())
+// TS 与 JS 语法证据分桶：node --check *.js 不能补 .ts 的类型/语法检查缺口
+await ok('*.ts 编辑 + node --check x.js 不清 lint 缺口', (async () => {
+  await editLanded('ev-ts-js-check', 'src/ev31.ts')
+  await dispatchPostAs('bash', { command: 'node --check src/other.js' }, fg(0), 'ev-ts-js-check')
+  await dispatchTurnAs('ev-ts-js-check')
+  return turnTexts().some((t) => LINT_RE.test(t))
+})())
+await ok('*.ts 编辑 + npx tsc --noEmit 清 lint 缺口（TS 有对应检查）', (async () => {
+  await editLanded('ev-ts-tsc', 'src/ev32.ts')
+  await dispatchPostAs('bash', { command: 'npx tsc --noEmit' }, fg(0), 'ev-ts-tsc')
+  await dispatchTurnAs('ev-ts-tsc')
+  return !turnTexts().some((t) => LINT_RE.test(t))
+})())
+await ok('*.js 编辑 + node --check x.js 仍清 JS 语法缺口（对照）', (async () => {
+  await editLanded('ev-js-check-ok', 'src/ev33.js')
+  await dispatchPostAs('bash', { command: 'node --check src/ev33.js' }, fg(0), 'ev-js-check-ok')
+  await dispatchTurnAs('ev-js-check-ok')
+  return !turnTexts().some((t) => LINT_RE.test(t))
+})())
+
+// ── 4c. 编辑记账只在落盘成功后（2026-09-09 缺陷修复）────────────────────────
+// 旧实现 pre-execute 即 `turnEdits++`：被沙箱拒绝/失败的 source edit 也算
+// 「本回合有实现编辑」，并让 green/lint 证据过期。记账改为 post 成功后才发生。
+section('编辑记账只在落盘成功')
+await ok('失败的 source edit 不计本回合实现编辑（无 green/lint 提醒）', (async () => {
+  await dispatchPreAs('edit', { file_path: 'src/failed-edit.js' }, 'ev-failed-edit')
+  await dispatchPostAs('edit', { file_path: 'src/failed-edit.js' }, { isError: true, error: { name: 'HarnessError', code: 'E', message: 'sandbox deny' }, content: [] }, 'ev-failed-edit')
+  await dispatchTurnAs('ev-failed-edit')
+  return turnTexts().length === 0
+})())
+await ok('仅 pre 的 source edit（被 deny，无 post 派发）不计', (async () => {
+  await dispatchPreAs('edit', { file_path: 'src/denied-edit.js' }, 'ev-denied-edit')
+  await dispatchTurnAs('ev-denied-edit')
+  return turnTexts().length === 0
+})())
+await ok('失败的 source edit 不让 green 证据过期', (async () => {
+  await editLanded('ev-failed-after-green', 'src/ev22.c')
+  await dispatchPostAs('bash', { command: 'npm test' }, fg(0), 'ev-failed-after-green')
+  await dispatchPostAs('edit', { file_path: 'src/ev23.c' }, { isError: true, error: { name: 'HarnessError', code: 'E', message: 'denied' }, content: [] }, 'ev-failed-after-green')
+  await dispatchTurnAs('ev-failed-after-green')
+  return turnTexts().length === 0
+})())
+await ok('失败的 source edit 不让 lint 证据过期', (async () => {
+  await editLanded('ev-failed-after-lint', 'src/ev24.ts')
+  await dispatchPostAs('bash', { command: 'npm test' }, fg(0), 'ev-failed-after-lint')
+  await dispatchPostAs('bash', { command: 'npx eslint src/ev24.ts' }, fg(0), 'ev-failed-after-lint')
+  await dispatchPostAs('edit', { file_path: 'src/ev25.ts' }, { isError: true, error: { name: 'HarnessError', code: 'E', message: 'denied' }, content: [] }, 'ev-failed-after-lint')
+  await dispatchTurnAs('ev-failed-after-lint')
+  return turnTexts().length === 0
+})())
+await ok('成功 edit 仍让旧 green 证据过期（对照）', (async () => {
+  await editLanded('ev-ok-after-green', 'src/ev26.c')
+  await dispatchPostAs('bash', { command: 'npm test' }, fg(0), 'ev-ok-after-green')
+  await editLanded('ev-ok-after-green', 'src/ev27.c')
+  await dispatchTurnAs('ev-ok-after-green')
+  return turnTexts().some((t) => GREEN_RE.test(t))
+})())
+
 // ── 5. turn-stopping：green 提醒 ──────────────────────────────────────────
 section('turn-stopping')
 await ok('有实现 edit 无测试 → steer 提醒', (async () => {
-  await dispatchPreAs('edit', { file_path: 'src/e.ts' }, 'g7')
+  await editLanded('g7', 'src/e.ts')
   await dispatchTurnAs('g7')
-  const texts = steered.map((m) => (m.content && m.content[0] && m.content[0].text) || '')
-  return steered.length === 2 && texts.some((t) => /测试未通过/.test(t)) && texts.some((t) => /语法检查/.test(t))
+  return steered.length === 2 && turnTexts().some((t) => /测试未通过/.test(t)) && turnTexts().some((t) => /语法检查/.test(t))
 })())
 await ok('有实现 edit 且有测试+lint → 不提醒', (async () => {
-  await dispatchPreAs('edit', { file_path: 'src/f.ts' }, 'g8')
-  await dispatchPostAs('bash', { command: 'npm test' }, { isError: false }, 'g8')
-  await dispatchPostAs('bash', { command: 'npx eslint src/f.ts' }, { isError: false }, 'g8')
+  await editLanded('g8', 'src/f.ts')
+  await dispatchPostAs('bash', { command: 'npm test' }, fg(0), 'g8')
+  await dispatchPostAs('bash', { command: 'npx eslint src/f.ts' }, fg(0), 'g8')
   await dispatchTurnAs('g8')
   return steered.length === 0
 })())
@@ -404,64 +767,62 @@ await ok('无实现 edit → 不提醒', (async () => {
   return steered.length === 0
 })())
 await ok('remindOnce：同会话第二次不重复提醒', (async () => {
-  await dispatchPreAs('edit', { file_path: 'src/g.ts' }, 'g9')
+  await editLanded('g9', 'src/g.ts')
   await dispatchTurnAs('g9')
   const first = steered.length
-  await dispatchPreAs('edit', { file_path: 'src/h.ts' }, 'g9')
+  await editLanded('g9', 'src/h.ts')
   await dispatchTurnAs('g9')
   return first === 2 && steered.length === 0
 })())
 await ok('双重计数回归：pre-execute 测试命令不计数，被拦/失败测试不构成 green（审查修复）', (async () => {
   // 测试命令经 pre-execute(不再 +1) → 无 post-execute 成功 → turnTests=0
   await dispatchPreAs('bash', { command: 'npm test' }, 'dup-test')
-  await dispatchPreAs('edit', { file_path: 'src/dup.ts' }, 'dup-test')
+  await editLanded('dup-test', 'src/dup.ts')
   // 被拦:post-execute isError → 不计数
-  await dispatchPostAs('bash', { command: 'npm test' }, { isError: true }, 'dup-test')
+  await dispatchPostAs('bash', { command: 'npm test' }, { isError: true, error: { name: 'HarnessError', code: 'X', message: 'blocked' }, content: [] }, 'dup-test')
   await dispatchTurnAs('dup-test')
   return steered.length === 2 // green + lint；测试未成功运行必须提醒
 })())
 await ok('双重计数回归：成功测试仍计 1 次（非 2）', (async () => {
-  await dispatchPreAs('edit', { file_path: 'src/ok.ts' }, 'ok-test')
-  await dispatchPostAs('bash', { command: 'npm test' }, { isError: false }, 'ok-test')
-  await dispatchPostAs('bash', { command: 'npx eslint src/ok.ts' }, { isError: false }, 'ok-test')
+  await editLanded('ok-test', 'src/ok.ts')
+  await dispatchPostAs('bash', { command: 'npm test' }, fg(0), 'ok-test')
+  await dispatchPostAs('bash', { command: 'npx eslint src/ok.ts' }, fg(0), 'ok-test')
   await dispatchTurnAs('ok-test')
   return steered.length === 0 // 成功测试+lint=不提醒
 })())
 section('language lint gate')
 await ok('rust 只跑 cargo test → 仍提醒 fmt/clippy', (async () => {
-  await dispatchPreAs('edit', { file_path: 'src/main.rs' }, 'lint-rs-test')
-  await dispatchPostAs('bash', { command: 'cargo test' }, { isError: false }, 'lint-rs-test')
+  await editLanded('lint-rs-test', 'src/main.rs')
+  await dispatchPostAs('bash', { command: 'cargo test' }, fg(0), 'lint-rs-test')
   await dispatchTurnAs('lint-rs-test')
-  const texts = steered.map((m) => (m.content && m.content[0] && m.content[0].text) || '')
-  return steered.length === 1 && texts.some((t) => /rust-fmt/.test(t) && /rust-clippy/.test(t) && /cargo test/.test(t))
+  return steered.length === 1 && turnTexts().some((t) => /rust-fmt/.test(t) && /rust-clippy/.test(t) && /cargo test/.test(t))
 })())
 await ok('rust 只跑 fmt → 仍提醒 clippy', (async () => {
-  await dispatchPreAs('edit', { file_path: 'src/lib.rs' }, 'lint-rs-fmt')
-  await dispatchPostAs('bash', { command: 'cargo fmt --check' }, { isError: false }, 'lint-rs-fmt')
-  await dispatchPostAs('bash', { command: 'cargo test' }, { isError: false }, 'lint-rs-fmt')
+  await editLanded('lint-rs-fmt', 'src/lib.rs')
+  await dispatchPostAs('bash', { command: 'cargo fmt --check' }, fg(0), 'lint-rs-fmt')
+  await dispatchPostAs('bash', { command: 'cargo test' }, fg(0), 'lint-rs-fmt')
   await dispatchTurnAs('lint-rs-fmt')
-  const texts = steered.map((m) => (m.content && m.content[0] && m.content[0].text) || '')
-  return steered.length === 1 && texts.some((t) => /rust-clippy/.test(t) && !/rust-fmt/.test(t))
+  return steered.length === 1 && turnTexts().some((t) => /rust-clippy/.test(t) && !/rust-fmt/.test(t))
 })())
 await ok('rust fmt+clippy+test → 不提醒', (async () => {
-  await dispatchPreAs('edit', { file_path: 'src/ok.rs' }, 'lint-rs-ok')
-  await dispatchPostAs('bash', { command: 'cargo fmt --check && cargo clippy -D warnings && cargo test' }, { isError: false }, 'lint-rs-ok')
+  await editLanded('lint-rs-ok', 'src/ok.rs')
+  await dispatchPostAs('bash', { command: 'cargo fmt --check && cargo clippy -D warnings && cargo test' }, fg(0), 'lint-rs-ok')
   await dispatchTurnAs('lint-rs-ok')
   return steered.length === 0
 })())
 await ok('git commit 漏 lint → allow + 注入提醒（不 deny）', (async () => {
-  await dispatchPreAs('edit', { file_path: 'src/c.rs' }, 'lint-commit')
+  await editLanded('lint-commit', 'src/c.rs')
   const pre = await dispatchPreAs('bash', { command: 'git commit -m x' }, 'lint-commit')
-  const post = await dispatchPostAs('bash', { command: 'git commit -m x' }, { isError: false }, 'lint-commit')
+  const post = await dispatchPostAs('bash', { command: 'git commit -m x' }, fg(0), 'lint-commit')
   const texts = ((post && post.additionalContexts) || []).map((m) => (m.content && m.content[0] && m.content[0].text) || '')
   return pre.kind === 'allow' && post.kind === 'accept' && texts.some((t) => /语法检查/.test(t))
 })())
 await ok('git commit 已跑 lint → 不注入', (async () => {
-  await dispatchPreAs('edit', { file_path: 'src/d.rs' }, 'lint-commit-ok')
-  await dispatchPostAs('bash', { command: 'cargo fmt --check' }, { isError: false }, 'lint-commit-ok')
-  await dispatchPostAs('bash', { command: 'cargo clippy -D warnings' }, { isError: false }, 'lint-commit-ok')
+  await editLanded('lint-commit-ok', 'src/d.rs')
+  await dispatchPostAs('bash', { command: 'cargo fmt --check' }, fg(0), 'lint-commit-ok')
+  await dispatchPostAs('bash', { command: 'cargo clippy -D warnings' }, fg(0), 'lint-commit-ok')
   const pre = await dispatchPreAs('bash', { command: 'git commit -m x' }, 'lint-commit-ok')
-  const post = await dispatchPostAs('bash', { command: 'git commit -m x' }, { isError: false }, 'lint-commit-ok')
+  const post = await dispatchPostAs('bash', { command: 'git commit -m x' }, fg(0), 'lint-commit-ok')
   const extras = (post && post.additionalContexts) || []
   return pre.kind === 'allow' && extras.length === 0
 })())
@@ -545,7 +906,7 @@ await ok('弹问: 终稿正常（已修复）→ 不弹', (async () => {
   return steered.length === 0
 })())
 await ok('弹问: 本回合有实现 edit → 不算拒绝，不弹', (async () => {
-  await dispatchPreAs('edit', { file_path: 'src/deflect.ts' }, 'dv4')
+  await editLanded('dv4', 'src/deflect.ts')
   const surface = { events: [{ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '该问题不处理' }] } } }] }
   await dispatchTurnFor('dv4', 'sv4', surface)
   // 可能触发 green 提醒（有 edit 无测试），但绝不含 deflection 弹问
@@ -557,8 +918,6 @@ await ok('弹问: 无 sessionQuery → 静默跳过', (async () => {
   await turnStopping[0]({ agent: { id: 'dv5', session: { header: sessionHeader }, steer(msg) { steered.push(msg) } }, turn: 1, signal: undefined })
   return steered.length === 0
 })())
-
-fs.rmSync(sessionRoot, { recursive: true, force: true })
 
 // ── v7 编曲保育 ②：mode=solo 信号一致性挑战（2026-08-19，b2da1f02 实证）──
 {
@@ -595,9 +954,10 @@ fs.rmSync(sessionRoot, { recursive: true, force: true })
 }
 
 // ── 汇总 ──────────────────────────────────────────────────────────────────
+cleanupTmpDirs()
 console.log('\n──────────────────────────────')
 console.log(`kix-discipline: ${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)
 }
 
-main().catch((e) => { console.error(e); process.exit(1) })
+main().catch((e) => { console.error(e); cleanupTmpDirs(); process.exit(1) })

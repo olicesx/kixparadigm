@@ -9,15 +9,15 @@ description: "kixParadigm — AI 自编排最小范式。按任务规模、风�
 
 ## 三通道实操（锚点见 persona「三通道交叉验证」「二相性与 review epoch」）
 
-**视角差异来自 prompt，不来自 agent 身份** → 不做专用 agent；需要机械保障时走插件，不做角色化 agent。
+**视角差异来自 prompt，不来自 agent 身份**。优先使用现有 dev/qa/reviewer 成员契约，按信息缺口选择视角；不因 KISS/DRY 等原则名新建角色或固定团队。需要机械保障时复用插件。
 
 ### 三通道 prompt 最小模板
 
 ```
-1. claim — 被验证的断言
-2. 视角 — 聚焦维度（正确性 / 写副作用 / 语言语义 / ...）
-3. 要读的文件 — 路径 + 行号（涉及行为的断言需读被调用方实现，证据=函数体而非调用链）
-4. 返回 — 结论 + 证据(文件:行号) + 推理
+1. 目标与依据 — 当前用户目标、适用约束及来源；共享 spec 须核对任务归属
+2. claim / 视角 — 明确被验证的断言；发现型观察给方向，不预告“已修好”
+3. 材料 — 路径、版本与入口（涉及行为时读被调用方函数体，不止调用链）
+4. 返回 — 证据覆盖范围、有效反例、未验证项及其对当前交付判断的影响
 ```
 
 ### review epoch 冻结声明（需机械冻结时写进分派 prompt）
@@ -27,7 +27,10 @@ review_stage: design|final|verification
 review_policy: read-only
 artifact_root: /absolute/repository/path
 artifact_revision: <optional commit SHA or diff hash>
+artifact_input: /absolute/task-contract-or-config-file
 ```
+
+`artifact_input` 可选、可重复，只声明本任务实际依赖的契约/配置输入。插件在观察起止比较内容，包含被 Git 忽略的文件；变化或无法核验会提醒重判证据，不为外部输入加永久写锁，也不扫描共享 spec。没有额外输入时省略该行。
 
 观察者可以继续递归取证和写 artifact 外的临时 reproducer；协调线程可做不相关工作。发现盲点的关键是读代码本身，不是按 checklist 打勾——"读代码验证 claim 对不对"这类最小指令即可。
 
@@ -68,9 +71,13 @@ artifact_revision: <optional commit SHA or diff hash>
 - 范式盲从盲逆
 - 默认姿态偏差：低风险场景过度防御
 
-## 输出格式（大脑换了，皮肤不变）
+## 结算与表达
 
-review 呈现沿用 kixpower 成熟约定：**结论行前置且永不隐藏**（`✅ APPROVE` / `🔴 CHANGES REQUESTED` + 计数）、全文单语言、严重级别 🔴/🟡/🔵/✅、证据引用 `文件:行号`、**只报 bug 不给方案**（用户会把 review 当执行指令，方案错则干歪）。细则见 [`kixpower-review.prompt.md`](../../prompts/kixpower-review.prompt.md) §评论格式规范 / §发布纪律 / §证据门禁 / §反方辩护测试 / §review-of-review。
+**先判断承诺，再组织格式**：旧 finding 已修不等于总体可交付；继续、修补、优化和复核都须保留当前目标及仍适用的约束。材料或依据变化后只重判受影响的证据；测试绿、工具成功和代理完成不自动认证方案合理性。
+
+审查默认给出缺陷证据与影响，未经验证的修法不混成执行清单；用户要求方案时给出有边界的方案，编码任务则按授权实现。必要跨模块改动、CI 或新依赖不因文件名/数量自动判错。关键未知若影响交付承诺，结论须相应收窄；明确的非阻塞限制可如实接受。
+
+review 结论前置、全文单语言，证据引用 `文件:行号`；影响严重度、证据状态与当前处置分别表达，不以 finding 数量或代理票数决定 APPROVE。通用任务可简洁陈述结果与未覆盖部分，无需固定表格。审查细则按需见 [`kixpower-review.prompt.md`](../../prompts/kixpower-review.prompt.md) §评论格式规范 / §发布纪律 / §证据门禁 / §反方辩护测试 / §review-of-review。
 
 ## 机械保障（插件地图）
 

@@ -11,6 +11,8 @@
 //   ① 实现结算：源码/测试编辑跨 worktree 记账；只有当前 edit generation 的
 //      foreground exitCode=0 或 background job terminal success 才清账。spawn、
 //      running、nonzero、旧 revision job 都不算。后台仍运行时提示“该等未等”。
+//      run_code 的结构化汇总（{logs,result}）没有 exit code，本身不清账；清账的是
+//      它内部可见的工具子调用终态（子调用同样过 tools/post-execute）。
 //   ② 高置信提交：仅根 settlement authority 生效。无编辑、无可复算执行证据、
 //      终稿前部存在独立 verdict 行时，只有 subagent/end=completed 且有 closing
 //      message 才算 fresh。evidence child 不递归结算自己的报告；元引用不算 verdict。
@@ -24,10 +26,15 @@
 'use strict'
 const { createHash, randomUUID } = require('node:crypto')
 const disciplineInternals = require('./kix-discipline.js').__internals
+const executionResult = require('./execution-result.cjs')
+const {
+  resultValue,
+  foregroundExecutionSucceeded,
+  backgroundJobId,
+  terminalJobOutcome,
+  directExecutionSucceeded,
+} = executionResult
 
-const DIRECT_EXECUTION_TOOLS = new Set(['probe', 'run_code'])
-const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'killed'])
-const FAILED_JOB_STATUSES = new Set(['failed', 'killed'])
 const CALIBRATION_SAMPLE_DENOMINATOR = 16
 const MAX_VERDICT_SCAN_LINES = 12
 
@@ -131,49 +138,6 @@ function stableCalibrationSample(sessionId, denominator = CALIBRATION_SAMPLE_DEN
   return bucket % d === 0
 }
 
-function resultValue(result) {
-  let value = result && Object.prototype.hasOwnProperty.call(result, 'value') ? result.value : result
-  if (value && value.ok === true && Object.prototype.hasOwnProperty.call(value, 'result')) value = value.result
-  return value
-}
-
-function foregroundExecutionSucceeded(result) {
-  if (!result || result.isError === true) return false
-  const value = resultValue(result)
-  if (!value || value.kind !== 'foreground') return false
-  return value.exitCode === 0 && value.timedOut !== true && value.aborted !== true && value.sandbox?.denied !== true
-}
-
-function backgroundJobId(result) {
-  if (!result || result.isError === true) return undefined
-  const value = resultValue(result)
-  return value && value.kind === 'background' && typeof value.jobId === 'string' ? value.jobId : undefined
-}
-
-function terminalJobOutcome(result) {
-  if (!result || result.isError === true) return undefined
-  const value = resultValue(result)
-  const job = value && value.job
-  if (!job || !TERMINAL_JOB_STATUSES.has(job.status)) return undefined
-  const detail = String(job.detail || '')
-  const failed = FAILED_JOB_STATUSES.has(job.status) || /exit code:\s*[1-9]\d*/i.test(detail)
-  return { id: String(job.id || ''), success: !failed && job.status === 'completed' }
-}
-
-function directExecutionSucceeded(tool, result) {
-  if (!DIRECT_EXECUTION_TOOLS.has(tool) || !result || result.isError === true) return false
-  const value = resultValue(result)
-  if (value && typeof value === 'object') {
-    if (value.error || value.ok === false || value.success === false) return false
-    if (value.timedOut === true || value.timed_out === true || value.aborted === true) return false
-    const exitCode = typeof value.exitCode === 'number' ? value.exitCode : value.exit_code
-    if (typeof exitCode === 'number' || exitCode === null) return exitCode === 0
-  }
-  // run_code may legitimately return structured data without an exit code. probe always owns
-  // exit_code; an unknown probe shape must not clear the verification account.
-  return tool === 'run_code'
-}
-
 function assistantMessageText(message) {
   const content = Array.isArray(message) ? message : message && message.content
   if (!Array.isArray(content)) return ''
@@ -235,17 +199,20 @@ module.exports = {
       try {
         const key = lifecycleRunKey(info)
         const parent = lifecycleParentAgent(ctx, info)
-        if (key && parent) lifecycleParents.set(key, parent)
+        const st = stateFor(parent)
+        if (key && st) lifecycleParents.set(key, { parent, generation: st.editGeneration })
       } catch (_) { /* observation must never break execution */ }
     })
     ctx.on('subagent/end', (info) => {
       try {
         const key = lifecycleRunKey(info)
-        const parent = key && lifecycleParents.get(key)
+        const observed = key && lifecycleParents.get(key)
         if (key) lifecycleParents.delete(key)
-        if (!subagentCompleted(info)) return
-        const st = stateFor(parent || lifecycleParentAgent(ctx, info))
-        if (st) st.freshObserverSeen = true
+        if (!observed || !subagentCompleted(info)) return
+        const st = stateFor(observed.parent)
+        // A report receipt is fresh only for the generation observed at start.
+        // This does not certify the report's semantic coverage or verdict.
+        if (st && observed.generation === st.editGeneration) st.freshObserverSeen = true
       } catch (_) { /* observation must never break execution */ }
     })
 
@@ -264,6 +231,7 @@ module.exports = {
             if (result && result.isError !== true && fp && (kind === 'source' || kind === 'test')) {
               st.edits += 1
               st.editGeneration += 1
+              st.freshObserverSeen = false
               st.executedSinceLastEdit = false
               st.mutationPaths.add(fp)
             }
@@ -352,7 +320,7 @@ module.exports.__internals = {
   commitBlindText,
   calibrationText,
   VERDICT_RES,
-  DIRECT_EXECUTION_TOOLS,
-  TERMINAL_JOB_STATUSES,
+  DIRECT_EXECUTION_TOOLS: executionResult.DIRECT_EXECUTION_TOOLS,
+  TERMINAL_JOB_STATUSES: executionResult.TERMINAL_JOB_STATUSES,
   CALIBRATION_SAMPLE_DENOMINATOR,
 }

@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.3.15（2026-09-09）运行时修复批次入库：执行终态单源、门禁加固、视觉豁免、本机回环免 token
+
+- **工具执行终态单源（`execution-result.cjs`，四根）**：kix-discipline 原先用 `result && !result.isError` 判成功，导致非零 bash `exitCode`（canonical `{kind:'foreground', exitCode:N}`）与后台 spawn（`{kind:'background', jobId}`）都被记成 green/lint 证据。kix-settle 早已按 canonical 形状判定，但 settle 已 require discipline、反向依赖成环，故抽出第三处共用模块，终态形状与语义只定义一次。
+- **门禁/焦点/编排/纪律/信号/停滞/浏览器/预算/成本/路由加固与回归补测**：四变体同步（`kix-stalled` 补单元测试）。修的是既有的机械误判与边界，不改范式语义。
+- **视觉桥豁免**：只对真正具备视觉能力的模型调整接管条件，保留 bridge / `subagent_vision` / 原生 `read_image` 与提供方配置。
+- **`kix-webauth`（部署面插件 + overlay 行）**：web 绑定回环且请求 Host 回环时跳过浏览器一次性 token（Host/Origin 反 DNS-rebinding 栅栏保留），非回环 / LAN / `--trusted-host` 行为与上游一致；单元测试 `kix-webauth.test.js`。
+- **docs/**：`kix-general-evolution`、`kix-runtime-verification`、`kix-vision-exemption` 三篇（研究阶段方案与运行态验收记录，含各自边界）。
+- **门禁**：`npm test` 59 pass / 0 fail / 1 skip；四变体一致性守护通过。未覆盖：外部供应商推理、故障注入、完整 Web 会话执行记账 E2E。
+
 ## v1.3.14（2026-09-09）DSH 0.1.2 对接：web_fetch 打开、webhook→会话桥、原生模型选型留档
 
 - **`web_fetch` 打开（`tool-web.config.fetch: true`）**：DSH 0.1.2 起宿主默认挂载 SSRF 加固的 `dsh-web-fetch-http` 提供方（公网地址校验 / 连接固定 / 同源重定向 / 字节上限），0.1.1 时代关闭的理由（无提供方 → SSRF 防护后移、目标由模型选）已消失。给 kix 的「外部语义密集 claim 至少一条可重放物证通道」补上原文取证面。实测：0.1.2 上 `web_fetch https://example.com` 返回 HTTP 200 + 解码正文；0.1.1 上同配置启动正常（无提供方时仅调用报错）。
