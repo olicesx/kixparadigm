@@ -4,7 +4,7 @@
 //   POST /api/dsh-vision-bridge/describe
 //   body: { provider, model, images: [{ mime, base64 }], question? }
 // 服务端先解析会话当前模型能力（llm.resolveModelInfo）：
-//   - 模型声明 image 输入 → { mode: "keep" }（client 保留图片原样发送）
+//   - 模型声明 image 输入或能力未知 → { mode: "keep" }（client 保留图片原样发送）
 //   - 模型无视觉（deepseek-v4-flash 等）→ 调智谱 GLM-4.6V（Coding Plan 订阅
 //     端点 api/coding/paas/v4，key 复用 ~/.dsh/.credentials.yaml 的
 //     ZAI_CODING_CN_API_KEY）→ { mode: "describe", text }
@@ -125,7 +125,32 @@ function apply(ctx) {
   // 路由不注册（GET /api/dsh-vision-bridge/describe 404），且时序不稳定
   // （同一环境不同实例有时成功有时失败）。这里轮询等待服务出现（200ms 间隔，
   // 上限 30s），不依赖脆弱的启动顺序。
+  // Metadata only: never read credentials or send images from this route.
+  const resolveImages = async (provider, model) => {
+    if (typeof provider !== 'string' || !provider.trim() || typeof model !== 'string' || !model.trim()) return null;
+    try {
+      const info = await ctx.get('llm')?.resolveModelInfo(provider, model);
+      const modes = info?.inputModalities;
+      return Array.isArray(modes) && modes.length ? modes.includes('image') : null;
+    } catch { return null; }
+  };
   const registerRoute = (webServer) => {
+    webServer.register({
+      kind: 'exact',
+      path: '/api/dsh-vision-bridge/capabilities',
+      handler: async (req, res) => {
+        if (req.method !== 'POST') return sendJson(res, 405, { error: 'method not allowed' });
+        try {
+          const body = JSON.parse(await readBody(req, 16 * 1024));
+          if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((key) => key !== 'provider' && key !== 'model')) {
+            return sendJson(res, 400, { error: 'only provider and model accepted' });
+          }
+          const provider = typeof body.provider === 'string' ? body.provider : null;
+          const model = typeof body.model === 'string' ? body.model : null;
+          sendJson(res, 200, { provider, model, supportsImages: await resolveImages(provider, model) });
+        } catch { sendJson(res, 400, { error: 'invalid capability request' }); }
+      }
+    });
     webServer.register({
       kind: 'exact',
       path: ROUTE_PATH,
@@ -149,21 +174,15 @@ function apply(ctx) {
             sendJson(res, 400, { error: 'each image needs base64' });
             return;
           }
+          // 再确认当前能力：image 或 unknown 都交宿主，不隐式外发。
+          // 保留参数校验，但 bridge 图片大小限制仅适用于明确文字模型。
+          if (await resolveImages(provider, model) !== false) {
+            sendJson(res, 200, { mode: 'keep' });
+            return;
+          }
           if (images.some((img) => img.base64.length > MAX_IMAGE_BYTES * 1.34)) {
             sendJson(res, 413, { error: 'image too large' });
             return;
-          }
-
-          // 当前模型支持图片 → 保留原样（client 不转换）
-          if (provider && model) {
-            const llm = ctx.get('llm');
-            if (llm) {
-              const info = await llm.resolveModelInfo(provider, model);
-              if (info?.inputModalities?.includes('image')) {
-                sendJson(res, 200, { mode: 'keep' });
-                return;
-              }
-            }
           }
 
           // 无视觉模型 → GLM-4.6V 转描述

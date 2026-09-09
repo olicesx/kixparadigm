@@ -905,6 +905,115 @@ await ok('激活 browser → pkgPath 本地 require 走 ctx.plugin 挂载', (asy
   return r.ok === true && calledWithModule
 })())
 
+// ── 10. restrict 失败重试（cordis effect/timer 语义镜像，2026-09-08）──────
+// 出生证明（独立 QA 取证 P1/P1c，2026-09-08，源码与安装副本同哈希）：restrict
+// 抛错时旧实现三处连环失效——
+//   1) `ctx.setInterval` 未 inject timer → `cannot get property "timer" without
+//      inject` 从 applyRestrict 的 catch 穿出 apply → 整个 kix-focus 加载失败
+//      （capability 工具与 restrict 全部消失）；
+//   2) cordis timer 的返回值是 disposer 函数（无 `.clear`），旧代码调 `.clear()`；
+//   3) 花括号 effect 体注册即执行（cordis 语义）→ 刚建的重试定时器被立刻清掉。
+// 本 section 用镜像 cordis 语义的独立 ctx（effect 回调注册即执行、返回值即卸载
+// 钩子；setInterval 句柄经 clearInterval 清理）+ 可控假定时器，锁死「失败保活 /
+// 暂态重试 / 成功停表 / 卸载清理幂等」全路径。
+section('restrict 失败重试（effect 立即执行 + disposer 语义）')
+
+// 假定时器：仅本 section 内替换全局 setInterval/clearInterval。源码自持句柄
+// （与 kix-probe.js 的 setTimeout/clearTimeout 同型），不给 inject 加 'timer'
+// ——timer 不可达时整插件停在 PENDING，比潜伏重试缺陷更硬。
+function installFakeTimers() {
+  const timers = []
+  const realSet = globalThis.setInterval
+  const realClear = globalThis.clearInterval
+  globalThis.setInterval = (cb, ms) => { const h = { cb, ms, cleared: false }; timers.push(h); return h }
+  globalThis.clearInterval = (h) => { if (h) h.cleared = true }
+  return {
+    timers,
+    live: () => timers.filter((t) => !t.cleared),
+    tick: () => { for (const t of timers) if (!t.cleared) t.cb() },
+    restore: () => { globalThis.setInterval = realSet; globalThis.clearInterval = realClear },
+  }
+}
+
+// 独立 apply 实例：restrict 行为由 mode 控制（fail → ok）。
+function makeRetryInstance() {
+  const effectDisposers = []
+  const logs = []
+  const registered = []
+  let mode = 'fail'
+  let restrictCalls = 0
+  const ctx2 = {
+    tools: {
+      schemas: (scope) => (scope === undefined ? [{ name: 'mcp__probe__alpha', description: 'x' }] : []),
+      register(def) { registered.push(def); return () => {} },
+      restrict() { restrictCalls += 1; if (mode === 'fail') throw new Error('probe: restrict refused'); return () => {} },
+      get: () => undefined,
+      guard: () => () => {},
+      execute: async () => ({ isError: false }),
+    },
+    get: () => undefined,
+    logger: { info: (m) => logs.push('I:' + m), warn: (m) => logs.push('W:' + m), error: (m) => logs.push('E:' + m) },
+    on() {},
+    effect(cb) { effectDisposers.push(cb()); return () => {} }, // 镜像 cordis：注册即执行，返回值即卸载钩子
+    plugin() { return { dispose: async () => {}, state: 2 } },
+  }
+  return { ctx: ctx2, effectDisposers, logs, registered, setMode: (m) => { mode = m }, restrictCalls: () => restrictCalls }
+}
+
+// A. 失败保活 + 注册重试 + 卸载清理幂等
+{
+  const ft = installFakeTimers()
+  try {
+    const inst = makeRetryInstance()
+    let applyThrew = null
+    try { plugin.apply(inst.ctx, { resolvePkg: (p) => p }) } catch (e) { applyThrew = e }
+    await ok('restrict 抛错时 apply 不抛错（旧实现整插件丢失）', applyThrew === null)
+    await ok('restrict 抛错后 search/call/activate/deactivate 四工具仍注册', ['kix_capability_search', 'kix_capability_call', 'kix_tool_activate', 'kix_tool_deactivate'].every((n) => inst.registered.some((t) => t.name === n)))
+    await ok('restrict 失败只 warn 一次', inst.logs.filter((l) => l.startsWith('W:') && l.includes('restrict 失败')).length === 1)
+    await ok('失败后注册 3s 重试定时器', ft.live().length === 1 && ft.live()[0].ms === 3000)
+    await ok('每个 effect 都注册了函数型卸载钩子（含重试清理，旧实现 .clear 型无 disposer）', inst.effectDisposers.length === 5 && inst.effectDisposers.every((d) => typeof d === 'function'))
+    // 卸载：effect disposer 清掉在飞的重试定时器；重复调用幂等
+    inst.effectDisposers.forEach((d) => d())
+    await ok('卸载清理清除在飞重试定时器', ft.live().length === 0)
+    const beforeUnload = inst.restrictCalls()
+    ft.tick()
+    await ok('卸载后 tick 不再调用 restrict', inst.restrictCalls() === beforeUnload)
+    await ok('卸载清理重复调用不抛错（幂等）', (() => {
+      try { inst.effectDisposers.forEach((d) => d()); inst.effectDisposers.forEach((d) => d()); return true } catch { return false }
+    })())
+  } finally { ft.restore() }
+}
+
+// B. 暂态失败 → 重试成功 → 停表
+{
+  const ft = installFakeTimers()
+  try {
+    const inst = makeRetryInstance()
+    plugin.apply(inst.ctx, { resolvePkg: (p) => p })
+    inst.setMode('ok')
+    const before = inst.restrictCalls()
+    ft.tick()
+    await ok('重试 tick 再次调用 restrict 并成功', inst.restrictCalls() === before + 1)
+    await ok('restrict 成功后重试定时器被清除', ft.live().length === 0)
+    const afterSuccess = inst.restrictCalls()
+    ft.tick()
+    await ok('成功后 tick 不再调用 restrict（clearInterval 生效）', inst.restrictCalls() === afterSuccess)
+  } finally { ft.restore() }
+}
+
+// C. 一次成功：不注册重试定时器
+{
+  const ft = installFakeTimers()
+  try {
+    const inst = makeRetryInstance()
+    inst.setMode('ok')
+    plugin.apply(inst.ctx, { resolvePkg: (p) => p })
+    await ok('restrict 一次成功时不注册重试定时器', ft.live().length === 0)
+    await ok('一次成功无 restrict 失败 warn', inst.logs.every((l) => !l.includes('restrict 失败')))
+    await ok('成功路径 effect 数 = 5（restrict dispose + 4 工具 dispose）', inst.effectDisposers.length === 5)
+  } finally { ft.restore() }
+}
+
 // ── 清理临时工作区（2026-08-17：与 kix-orchestration.test 同款纪律）──────
 for (const ws of sprintWorkspaces) fsKix.rmSync(ws, { recursive: true, force: true })
 

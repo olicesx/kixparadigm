@@ -51,7 +51,7 @@
 // 边界（诚实声明）：
 //   - 只拦"模型显式分派 subagent 且 prompt 带 current_sprint/handoff 元数据"的调用；
 //     无元数据的分派（如三通道观察子代理）不触发——那是认知层不是编排交接。
-//   - 按 agent scope 挂载，不覆盖子代理会话（同 kix-guards/kix-discipline）。
+//   - 监听器经 preset scope 继承到子会话；状态按 agent 分键，子代理并非天然豁免。
 //   - worktree/SHA/manifest 深度校验不移植（见上）；plan.md 的 task_dag /
 //     verifiable_gates 结构校验做轻量版（存在性），不做 manifest SHA 数学。
 //
@@ -124,11 +124,16 @@ function extractReviewEpochMeta(prompt) {
     .map((m) => m[1].trim())
     .filter(Boolean)
   if (!REVIEW_STAGES.has(stage) || policy !== REVIEW_POLICY || roots.length === 0 || roots.some((root) => !isAbsolute(root))) return undefined
+  const inputs = [...p.matchAll(/^[ \t]*artifact_input:[ \t]*(.+?)[ \t]*$/gim)].map((m) => m[1].trim())
+  const validInputs = inputs.filter((input) => isAbsolute(input))
+  const invalidInputs = inputs.filter((input) => !isAbsolute(input))
   return {
     stage,
     policy,
     roots: [...new Set(roots.map((root) => resolve(root)))],
     revision: field('artifact_revision'),
+    ...(validInputs.length ? { inputs: [...new Set(validInputs.map((input) => resolve(input)))] } : {}),
+    ...(invalidInputs.length ? { invalidInputs } : {}),
   }
 }
 
@@ -525,6 +530,18 @@ async function gitArtifactFingerprint(root) {
     return `${String(head.stdout || '').trim()}:${hash}`
   } catch {
     return undefined
+  }
+}
+
+// Only explicitly declared inputs are fingerprinted: ignored contracts/configs
+// can affect a review, but unrelated workspace specs must not become dependencies.
+function reviewInputFingerprint(file) {
+  try {
+    const stat = statSync(file)
+    if (!stat.isFile() || stat.size > 16 * 1024 * 1024) return undefined
+    return createHash('sha256').update(readFileSync(file)).digest('hex')
+  } catch (error) {
+    return error && error.code === 'ENOENT' ? 'missing' : undefined
   }
 }
 
@@ -963,12 +980,15 @@ module.exports = {
         policy: meta.policy,
         roots: meta.roots,
         revision: meta.revision,
+        invalidInputs: meta.invalidInputs || [],
         fingerprints: new Map(),
+        inputFingerprints: new Map(),
         activeAgents: new Set(),
         rootAgentId: undefined,
         finalized: false,
       }
       for (const root of epoch.roots) epoch.fingerprints.set(root, await gitArtifactFingerprint(root))
+      for (const input of meta.inputs || []) epoch.inputFingerprints.set(input, reviewInputFingerprint(input))
       reviewEpochs.set(epoch.id, epoch)
       const st = stateFor(exec.agent)
       st.reviewEpochIds.add(epoch.id)
@@ -1020,9 +1040,19 @@ module.exports = {
         const after = await gitArtifactFingerprint(root)
         if (before !== undefined && after !== undefined && before !== after) changed.push(root)
       }
-      if (changed.length > 0 && epoch.owner && typeof epoch.owner.steer === 'function') {
-        const text = `kix-orchestration: review epoch 的 artifact 在观察树结算前发生变化：${changed.join(', ')}。本轮 review/APPROVE 已失效；先检查共享工作区副作用，再以新 revision 开启 review epoch。`
-        try { epoch.owner.steer(makeUserMessage(text)) } catch { /* advisory only */ }
+      const unknownInputs = [...(epoch.invalidInputs || [])]
+      for (const [input, before] of epoch.inputFingerprints) {
+        const after = reviewInputFingerprint(input)
+        if (before === undefined || after === undefined) unknownInputs.push(input)
+        else if (before !== after) changed.push(input)
+      }
+      if (epoch.owner && typeof epoch.owner.steer === 'function') {
+        const notes = []
+        if (changed.length) notes.push(`review epoch 的 artifact 或明确依据在观察树结算前发生变化：${[...new Set(changed)].join(', ')}。本轮 review/APPROVE 已失效；按新材料重判受影响结论，不要求无关部分全量重验。`)
+        if (unknownInputs.length) notes.push(`无法核验声明的 review 依据：${unknownInputs.join(', ')}。其新鲜度是 unknown，不能当作未变；先确认它对当前结论的影响。`)
+        if (notes.length) {
+          try { epoch.owner.steer(makeUserMessage('kix-orchestration: ' + notes.join(' '))) } catch { /* advisory only */ }
+        }
       }
     }
 

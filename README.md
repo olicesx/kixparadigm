@@ -54,7 +54,7 @@ chmod +x install.sh && ./install.sh
 | 聚焦 | `kix-focus` | 工具面 85→18 常驻裁剪 + 按需目录与代理执行——渐进披露的运行时形态 |
 | 浏览器 | `kix-browser`（默认激励面常驻；classic 未挂载） | 原生 `browser{action}` 17 动作（open/snapshot/click/type/press/select/hover/导航/等待/截图/上传/多标签/弹窗）——playwright-core 直驱、CDP attach 接管真实浏览器（登录态保留）、会话跨调用持久；替代 MCP 五跳链路。死亡条款：连续一个月真实会话 <2 次则回退按需 |
 | 成本路由 | `kix-cost` · `kix-route` | 子代理思考强度归一化；哨兵模型名 → 运行时可用路由 |
-| 补足 | `kix-commands` · `dsh-vision-bridge` · `kix-stalled` | `/kixpower-*` 原生命令；无视觉主模型识图；停滞 Sprint 检测（默认激励面已启用、candidate keep；classic yml 仍注释 = opt-in） |
+| 补足 | `kix-commands` · `dsh-vision-bridge` · `kix-stalled` | `/kixpower-*` 原生命令；仅明确无视觉的主模型转描述，多模态模型原生收图；停滞 Sprint 检测（默认激励面已启用、candidate keep；classic yml 仍注释 = opt-in） |
 
 默认激励面提供压缩思考锚点 + 效用准则 + 按需技能 + probe/settle/experience。classic 另提供全文编曲说明书、agents 模板与 instructions。清单以各目录为准。各插件机制与版本演进见 [DSH-ADAPTATION.md](dsh/preset-classic/DSH-ADAPTATION.md) 与 [CHANGELOG.md](CHANGELOG.md)。
 
