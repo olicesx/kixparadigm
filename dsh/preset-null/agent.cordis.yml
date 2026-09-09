@@ -848,3 +848,16 @@
 # 插件面；死亡条款与完整背景见默认版注释：一个月真实使用 <2 次回退渐进披露）
 - id: kix-browser
   name: ./plugins/kix-browser.js
+
+# kix-webhook（外部事件 → kix 会话，2026-09-09；与默认版同步——null 变体同
+# 插件面，parity 契约见 plugins/kix4.test.js）。常驻加载但 config.enabled: false
+# → apply 直接返回，无注入/监听/模型可见面，对消融面无行为影响。
+# 完整背景与启用步骤见默认版注释与 dsh/preset/patches/kix-webhook.reference.yml。
+- id: kix-webhook
+  name: ./plugins/kix-webhook.js
+  config:
+    enabled: false
+    workspacePath: /absolute/path/to/workspace
+    agentPreset: kixparadigm
+    permissionPreset: danger-full-access
+    maxSessions: 1

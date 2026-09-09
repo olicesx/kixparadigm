@@ -1,0 +1,25 @@
+# kix-webhook 运行时 overlay（`--patch` 覆盖层）
+#
+# 用途：把 webhook 的 HTTP 入口两行挂进任意 profile，而**不动** profile 自己的
+# cordis.patch.yml——0.1.1 及更早没有 @deepseek-ai/dsh-webhook，挂上去会让整棵
+# 插件树装不上（fail loud）。所以这一层只在升级到 0.1.2-rc.1 之后才用：
+#
+#   dsh web --patch /mnt/c/Users/37112/Desktop/kix-bundle/dsh/preset/patches/kix-webhook.runtime-overlay.yml
+#
+# 需要同时做的另一件事（见 kix-webhook.reference.yml §2）：把已安装预设
+# $DSH_HOME/.agent-presets/kixparadigm/agent.cordis.yml 里 kix-webhook 行的
+# config.enabled 改成 true（profile patch 覆盖不到 preset 内部行）。
+#
+# 前置：$DSH_HOME/.credentials.yaml 的 refs 里已有 KIX_WEBHOOK_SECRET
+# （2026-09-09 本机已生成并写入）。
+- insert:
+    - id: webhook-runtime
+      name: '@deepseek-ai/dsh-webhook'
+
+    - id: webhook-github
+      name: '@deepseek-ai/dsh-webhook-github'
+      config:
+        source: primary-github
+        path: /api/kix-webhook/github
+        secretEnv: KIX_WEBHOOK_SECRET
+        maxBodyBytes: 262144

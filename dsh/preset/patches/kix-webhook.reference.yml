@@ -1,0 +1,103 @@
+# kix-webhook 参考部署（外部事件 → kix 会话）
+#
+# 两处改动：①profile 的 cordis.patch.yml 加 HTTP 入口两行 insert（或改用同目录的
+# `kix-webhook.runtime-overlay.yml` 作 `--patch` 覆盖层，不动 profile）；②预设文件的
+# kix-webhook 行把 config.enabled 改成 true（profile patch 覆盖不到 preset 组成里的行，
+# 见 §2 的实测结论）。kix 预设只提供规则层；HTTP 入口与签名密钥属于部署，预设不替部署决定。
+#
+# 目标 profile（本机）：$DSH_HOME/profiles/web/cordis.patch.yml
+# 前置：DSH ≥ 0.1.2-rc.1（0.1.1 无 ctx.webhookRuntime 与 dsh-webhook-github）
+#
+# 覆盖层用法（2026-09-09 实测：flag 必须放 launcher 位置，`dsh web --patch` 会报
+# "web takes none of parent --patch"）：
+#   dsh --profile web --patch <repo>/dsh/preset/patches/kix-webhook.runtime-overlay.yml --port <p> --no-open
+# 实测该组合：boot 正常、路由挂载（GET → 405 method not allowed）、签名 POST → 202。
+#
+# ── 1. 挂载（把下面整段追加到 profile 的 cordis.patch.yml 末尾）─────────────
+#
+# - insert:
+#     # 宿主运行时：规则注册 + 唯一内置动作（在 Web Workspace 建 root Session）
+#     - id: webhook-runtime
+#       name: '@deepseek-ai/dsh-webhook'
+#
+#     # GitHub 适配器：校验 x-hub-signature-256，投递后立刻回 202
+#     - id: webhook-github
+#       name: '@deepseek-ai/dsh-webhook-github'
+#       config:
+#         source: primary-github
+#         path: /api/kix-webhook/github
+#         secretEnv: KIX_WEBHOOK_SECRET     # 凭据库引用名，不是明文
+#         maxBodyBytes: 262144
+#
+# ── 2. 打开 kix 规则层（改**预设文件**，不是 profile patch）────────────────
+#
+# 实测（2026-09-09，配置面探针）：profile 的 patch 行**覆盖不到 preset 组成里的行**。
+# 探针把 `- id: kix-webhook` + config 写进 profile patch（预设侧 enabled:false）→
+# 插件仍以 enabled:false 加载；把同样内容写进预设文件 → 立即生效。所以开关必须改
+# 已安装的预设文件：
+#
+#   $DSH_HOME/.agent-presets/kixparadigm/agent.cordis.yml
+#     - id: kix-webhook
+#       name: ./plugins/kix-webhook.js
+#       config:
+#         enabled: true
+#         workspacePath: /absolute/path/to/workspace   # 必须是已存在的绝对目录
+#         agentPreset: kixparadigm
+#         permissionPreset: danger-full-access
+#         events: ['pull_request.opened', 'issues.opened']
+#         ignoreSenders: ['*[bot]']
+#         maxSessions: 1                                # 失控 fuse：本进程最多起几个会话
+#         promptTemplate: '外部事件：{{event}} {{action}} {{repository}}#{{number}} {{url}}（sender {{sender}}）。按 kix 范式处理。'
+#
+# 本仓改法：直接改 dsh/preset/agent.cordis.yml 的同一行，然后跑安装/同步脚本
+# 重新物化到 $DSH_HOME/.agent-presets/kixparadigm（改仓 ≠ 改运行时副本）。
+#
+# 注意（lazy mount）：预设是在**首次有会话挂载它**时组装，插件在此之前不会加载。
+# 冷启动后、任何会话之前到来的 webhook 找不到已注册规则 → 只回 202、不起会话。
+# 需要「开机即能接事件」的部署，先开一个会话（或让常驻客户端保持一个会话）。
+#
+# ── 3. 写共享密钥 ──────────────────────────────────────────────────────────
+#
+# $DSH_HOME/.credentials.yaml 的 refs 段加一行（值 = GitHub webhook 里配的同一个 secret）：
+#   refs:
+#     KIX_WEBHOOK_SECRET: <random-32-hex>
+# 生成：openssl rand -hex 32
+# 注：这是**向已有文件追加**的片段；若该文件还不存在、要整份新建，宿主还需要
+# 顶层的 `version: 1`（见 dsh-credentials-local），否则加载失败。
+#
+# ── 4. 自测（本机回环，不需要公网）─────────────────────────────────────────
+#
+# TOKEN 从 `dsh web` 启动行里取；secret 与上面写入的一致：
+#
+#   BODY='{"action":"opened","number":1,"pull_request":{"number":1,"title":"probe"},"repository":{"full_name":"o/r"},"sender":{"login":"alice"}}'
+#   SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | sed 's/^.*= //')
+#   curl -i -X POST "http://127.0.0.1:<port>/api/kix-webhook/github" \
+#     -H 'content-type: application/json' \
+#     -H "x-hub-signature-256: sha256=$SIG" \
+#     -H 'x-github-delivery: manual-1' \
+#     -H 'x-github-event: pull_request' \
+#     --data-binary "$BODY"
+#
+# 期望：HTTP 202；几秒后 $DSH_HOME/sessions/<cwd>/<webhook-session-id>/ 出现会话日志，
+# 首个 request/header 的 system 含 kix 常驻人格（kixParadigm / 三通道 / 需求三检）。
+# 2026-09-09 在 DSH 0.1.2-rc.1 上实测通过（含会话真实执行并回复）。
+#
+# ── 5. 外部可达性（部署面，未验证）──────────────────────────────────────────
+#
+# `dsh web` 默认只绑 127.0.0.1，GitHub 无法直接投递。要接真实事件需要
+# 隧道（cloudflared/ngrok）或反代暴露该路径，并在 GitHub 仓库 Webhook 里填
+# 公网 URL + 同一 secret + application/json。**这条路径本仓未验证**：
+# 上述自测证明的是「已验证投递 → kix 会话」链路，不是公网入口。
+#
+# ── 边界 ───────────────────────────────────────────────────────────────────
+#
+# - 不做持久化去重：GitHub 重投可能多起一个会话，由 maxSessions 兜底。
+# - 不做重试/队列：规则返回 null 即不动作。
+# - **202 不代表处理成功**（0.1.2 源码事实）：入口校验（方法/内容类型/签名/头）失败
+#   才会回 4xx/5xx；`dispatch()` 同步返回后适配器立刻回 202，规则执行与建会话是
+#   异步的，失败只写宿主日志（`dsh-webhook` 的 startInvocation catch → logger.warn）。
+#   所以别用 HTTP 状态判断会话是否起得来——要看 `$DSH_HOME/sessions/` 是否出现
+#   `webhook-*` 目录，或看宿主日志。
+# - 会话是**普通 root 会话**（会走 LLM、会花钱）：maxSessions 与 ignoreSenders
+#   是两道机械闸，不要为了「方便」把 maxSessions 调大。fuse 在返回请求**之前**
+#   自增，因此建会话失败也占名额（保守方向）。
