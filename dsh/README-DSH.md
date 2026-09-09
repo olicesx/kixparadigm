@@ -68,7 +68,8 @@ pwsh -File .\scripts\sync-dsh-preset.ps1 -Force
 - `skills/` — 目录指针 → `../preset-classic/skills`（kixparadigm / kixpower 等按需技能）
 - `prompts/` — /kixpower-* 流程（kix-commands 插件注入用）
 - `memories/` — 方法论记忆（目录清单为准；含 incentive-lessons）
-- `plugins/` — kix-guards / kix-cost / kix-route / kix-commands / kix-stalled（默认启用、candidate keep）+ 测试
+- `plugins/` — kix-guards / kix-cost / kix-route / kix-commands / kix-stalled（默认启用、candidate keep）+ kix-webhook（默认 disabled，外部事件桥）+ 测试
+- `patches/kix-webhook.reference.yml` — webhook 部署参考行（profile 侧 insert + 凭据 + 自测命令）
 
 默认档根**不部署** `DSH-ADAPTATION.md`、`DSH-FUSION-MATRIX.md`、`instructions/`；`skills/` 与 `agents/` 在仓库里是指向 classic 的指针，安装时物化为真目录（保证货架内 `../../agents/*.agent.md` 等相对链接可达）。权威机制映射在 [`preset-classic/DSH-ADAPTATION.md`](preset-classic/DSH-ADAPTATION.md) 与 [`preset-classic/DSH-FUSION-MATRIX.md`](preset-classic/DSH-FUSION-MATRIX.md)。
 
@@ -83,6 +84,46 @@ node --test dsh\vision-bridge\test.js           # vision-bridge 纯逻辑回归
 ```
 
 preset 挂载校验（roster `standingKeyFor`）在 DSH 会话内用 cordis 工具集执行。
+
+## DSH 0.1.2 原生能力对接（2026-09-09 实测）
+
+本机安装 `0.1.1-rc.2`；npm latest = `0.1.2-rc.1`、alpha = `0.1.5-alpha.1`。隔离 DSH_HOME + 0.1.2-rc.1 实测：kix 预设零改动即可加载并跑通（system prompt 含 kixParadigm/三通道/需求三检，9 个 kix 机制工具全部注册）。三处对接：
+
+| 能力 | 状态 | 落点 |
+|---|---|---|
+| `web_fetch`（宿主提供方 `dsh-web-fetch-http`） | 已落地 | 本预设 `tool-web.config.fetch: true`；0.1.1 无提供方时调用报错、不影响启动 |
+| 子代理原生模型选型（`modelSelectionSettings`） | 已验证，未默认开 | 见下：需宿主设置命名空间 + 白名单，属部署决策 |
+| webhook → kix 会话 | 已落地（默认 disabled） | `plugins/kix-webhook.js` + `patches/kix-webhook.reference.yml` |
+
+### 子代理原生模型选型（为什么没有默认打开）
+
+DSH 0.1.2 给 `dsh-tool-subagent` 加了 `modelSelectionSettings`（0.1.1 无此字段）：置 true 后，工具 schema 多出 `provider`/`model`/`reasoning_effort` 三个参数，子调用可显式选型；白名单来自宿主设置命名空间 `subagent-model-selection`（`enabled` + `allowedModels[]` 精确 provider/model 对），并把策略作为 `subagent/model-selection-policy` 投影事件记进会话。
+
+**未默认开的两条机械理由**：①该行要求宿主已挂 `@deepseek-ai/dsh-tool-subagent/model-selection-settings`，缺失时**挂载即抛错**（不是降级），会让整个 preset 装不上；②白名单只认已注册 provider，本机 `zai-coding-cn` / `grok` 由部署 `settings.yaml` 提供，写死在预设里等于把预设绑到某台机器的模型目录。
+
+**打开步骤**（部署侧，两处）：profile patch 里加 `@deepseek-ai/dsh-tool-subagent/model-selection-settings` 行；`$DSH_HOME/settings.yaml` 写：
+
+```yaml
+subagent-model-selection:
+  enabled: true
+  allowedModels:
+    - provider: zai-coding-cn
+      model: glm-5.3
+    - provider: grok
+      model: grok-4.5
+```
+
+然后把 `agent.cordis.yml` 的 `tool-subagent` 行加 `modelSelectionSettings: true`。**实测边界**（2026-09-09，隔离环境）：kix 预设 + 上述配置 → schema 出现三个参数、策略事件写入、`list_subagent_models` 返回白名单路由；`subagent` 工具本身被 kix-focus 的 `tools.restrict()` 裁剪（`unknown global tool "subagent"`），所以端到端调用要在未被 restrict 的档位（如 `subagent_lite`，或临时关掉 focus 裁剪）上验。**它替代不了 kix 分档**：`subagent_lite` 的独立 persona + toolFilter 裁剪（省固定开销）与模型选型是两件事。
+
+### webhook → kix 会话（规则层常驻加载、config 默认关）
+
+`ctx.webhookRuntime`（0.1.2 新增，唯一内置动作 = 在 Web Workspace 建 root Session）+ `@deepseek-ai/dsh-webhook-github`（HMAC 校验、202 不等规则）都不在默认组合里，属部署面。本仓提供规则层 `plugins/kix-webhook.js`（事件匹配 / 机器人忽略 / `maxSessions` fuse / prompt 插值）与参考行 `patches/kix-webhook.reference.yml`。预设里该行**不设 disabled**、以 `config.enabled: false` 常驻加载（未启用时 apply 直接返回，无注入无监听）。
+
+两条实测结论（2026-09-09，隔离环境）：
+- **profile 的 patch 覆盖不到 preset 组成里的行**。探针：`- id: kix-webhook` + config 写进 profile patch（预设侧 `enabled:false`）→ 插件仍以 `enabled:false` 加载；把同样内容写进预设文件 → 立即生效（规则注册、签名 POST 202 → 新建 `webhook-*` 会话，preset=kixparadigm，system prompt 含 kixParadigm/三通道）。所以开关要改预设文件，不能只改 profile patch——参考文件 §2 已按此写。
+- **预设是 lazy mount**：首次有会话挂载它时插件才加载。冷启动后、任何会话之前到来的投递只回 202、不起会话（要「开机即接事件」就先挂一个会话）。
+
+0.1.1 及更早无 `webhookRuntime`：`inject` 保持 pending，同样零副作用。外部可达性（公网入口）未验证，参考文件里写清了。
 
 ### 常驻承诺与死亡条款的结算工具（只读，非门禁）
 
