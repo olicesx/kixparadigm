@@ -456,7 +456,7 @@ module.exports = {
         }
       }
     })
-    ctx.effect(() => { states.clear(); transitionByCall.clear() })
+    ctx.effect(() => () => { states.clear(); transitionByCall.clear() })
 
     // ── agent/pre-step：步计数、动态预算边界与结果急剪 ────────────────────
     ctx.on('agent/pre-step', async (payload, next) => {

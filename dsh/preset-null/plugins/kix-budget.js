@@ -456,7 +456,11 @@ module.exports = {
         }
       }
     })
-    ctx.effect(() => { states.clear(); transitionByCall.clear() })
+    // ⚠️ effect 回调注册即执行（cordis 语义），必须返回卸载钩子：花括号体
+    // `() => { states.clear(); … }` 返回 undefined → 注册瞬间清空 + 未注册任何
+    // disposer（卸载时会话 Map 泄漏）。正确形态是表达式体返回清理函数
+    // （2026-09-08 独立 QA 取证 P4；与 kix-browser.js 同根因修复）。
+    ctx.effect(() => () => { states.clear(); transitionByCall.clear() })
 
     // ── agent/pre-step：步计数、动态预算边界与结果急剪 ────────────────────
     ctx.on('agent/pre-step', async (payload, next) => {

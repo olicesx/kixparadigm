@@ -498,6 +498,59 @@ await ok('review tree 修改 artifact 后结算 → 旧 review 失效提醒', (a
   return steered.length === 1 && steered[0].content[0].text.includes('已失效')
 })())
 
+// Declared contract/config inputs can be ignored by Git; their content still
+// belongs to this review. Unrelated ignored workspace state must not invalidate it.
+for (const scenario of [
+  { id: 'changed', before: 'allow', after: 'deny!', declare: true, stale: true },
+  { id: 'created', before: undefined, after: 'allow', declare: true, stale: true },
+  { id: 'deleted', before: 'allow', after: undefined, declare: true, stale: true },
+  { id: 'unchanged', before: 'allow', after: 'allow', declare: true, stale: false },
+  { id: 'unrelated', before: 'allow', after: 'deny!', declare: false, stale: false },
+]) {
+  await ok(`review declared ignored input ${scenario.id}`, (async () => {
+    const root = makeGitWorkspace()
+    const input = path.join(root, 'contract.txt')
+    fs.appendFileSync(path.join(root, '.git', 'info', 'exclude'), '\ncontract.txt\n')
+    if (scenario.before !== undefined) fs.writeFileSync(input, scenario.before)
+    const messages = []
+    const owner = { id: `input-owner-${scenario.id}`, session: { id: `input-owner-${scenario.id}`, header: { cwd: root } }, steer(msg) { messages.push(msg) } }
+    const lead = { id: `input-lead-${scenario.id}`, session: { id: `input-lead-${scenario.id}`, header: { cwd: root } } }
+    const prompt = `review_stage: verification\nreview_policy: read-only\nartifact_root: ${root}` +
+      (scenario.declare ? `\nartifact_input: ${input}` : '')
+    await preExecute[0]({ name: 'subagent_reviewer', arguments: { prompt }, callId: `input-${scenario.id}`, agent: owner }, () => Promise.resolve({ kind: 'allow' }))
+    const start = emitSubagentStart(owner, lead)
+    if (scenario.after === undefined) fs.unlinkSync(input)
+    else fs.writeFileSync(input, scenario.after)
+    await emitSubagentEnd(lead, start, { lastAssistantMessage: [{ type: 'text', text: 'done' }] })
+    const stale = messages.some((msg) => msg.content[0].text.includes('已失效'))
+    return stale === scenario.stale
+  })())
+}
+
+await ok('review input that cannot be fingerprinted stays unknown', (async () => {
+  const root = makeGitWorkspace()
+  const messages = []
+  const owner = { id: 'input-owner-unknown', session: { id: 'input-owner-unknown', header: { cwd: root } }, steer(msg) { messages.push(msg) } }
+  const lead = { id: 'input-lead-unknown', session: { id: 'input-lead-unknown', header: { cwd: root } } }
+  const prompt = `review_stage: verification\nreview_policy: read-only\nartifact_root: ${root}\nartifact_input: ${root}`
+  await preExecute[0]({ name: 'subagent_reviewer', arguments: { prompt }, callId: 'input-unknown', agent: owner }, () => Promise.resolve({ kind: 'allow' }))
+  const start = emitSubagentStart(owner, lead)
+  await emitSubagentEnd(lead, start, { lastAssistantMessage: [{ type: 'text', text: 'done' }] })
+  return messages.length === 1 && messages[0].content[0].text.includes('unknown') && !messages[0].content[0].text.includes('已失效')
+})())
+
+await ok('invalid optional input does not silently disable a valid epoch', (async () => {
+  const root = makeGitWorkspace()
+  const messages = []
+  const owner = { id: 'invalid-input-owner', session: { id: 'invalid-input-owner', header: { cwd: root } }, steer(msg) { messages.push(msg) } }
+  const lead = { id: 'invalid-input-lead', session: { id: 'invalid-input-lead', header: { cwd: root } } }
+  await preExecute[0]({ name: 'subagent_reviewer', arguments: { prompt: `review_stage: final\nreview_policy: read-only\nartifact_root: ${root}\nartifact_input: relative-contract.md` }, callId: 'invalid-input', agent: owner }, () => Promise.resolve({ kind: 'allow' }))
+  const start = emitSubagentStart(owner, lead)
+  const write = await preExecute[0]({ name: 'edit', arguments: { file_path: path.join(root, 'source.js') }, callId: 'invalid-input-write', agent: owner }, () => Promise.resolve({ kind: 'allow' }))
+  await emitSubagentEnd(lead, start, { lastAssistantMessage: [{ type: 'text', text: 'done' }] })
+  return write.kind === 'deny' && messages.some((msg) => msg.content[0].text.includes('unknown'))
+})())
+
 // ── 6. post-execute：remind 注入 ──────────────────────────────────────────
 section('post-execute')
 await ok('pendingRemind → additionalContexts 注入', (async () => {

@@ -67,6 +67,25 @@ function dispatchIn(cwd, name, args) {
   const exec = { name, arguments: args, token: 't', callId: 'c', agent: { id: 'test-agent', session: { header: { cwd } } } }
   return preExecute[0](exec, () => Promise.resolve({ kind: 'allow' }))
 }
+// 独立 apply 实例：v12 控制平面提醒是「每会话一次」（controlPlaneReminded 在
+// apply 作用域内），共享实例的标记会污染后续断言——需要干净标记的用例走这里。
+function makeGuardsInstance() {
+  const ls = {}
+  plugin.apply({
+    logger: { info() {}, warn() {}, error() {} },
+    get: () => undefined,
+    on(ev, cb) { (ls[ev] ||= []).push(cb) },
+  })
+  let seq = 0
+  async function remind(name, args) {
+    seq += 1
+    const exec = { name, arguments: args, token: 't', callId: 'fresh-' + seq, agent: { id: 'fresh-agent' } }
+    const pre = await ls['tools/pre-execute'][0](exec, () => Promise.resolve({ kind: 'allow' }))
+    const post = await ls['tools/post-execute'][0](exec, { kind: 'success' }, () => Promise.resolve({ kind: 'accept' }))
+    return { pre, post }
+  }
+  return { remind }
+}
 
 let passed = 0
 let failed = 0
@@ -175,7 +194,10 @@ async function softCase(label, name, args) {
   check('pwsh: gh pr create（提问服务不可用）→ allow（v9 软约束）', await dispatch('pwsh', { command: 'gh pr create --title v9-soft' }), false)
 
   // ══ 3. 控制平面保护（v3：home 限定，项目级同名文件不误伤）════════════
-  const HOME = (process.env.USERPROFILE || os.homedir()).replace(/\\/g, '/')
+  // 与实现同源（v18.1，2026-09-08）：USERPROFILE → HOME → os.homedir()。
+  // 旧测试用 USERPROFILE || os.homedir()，实现只读 env → HOME 缺失时测试的
+  // HOME=/root 与实现的 home='' 不同源，断言在真实部署（宿主 environ 无 HOME）直接红。
+  const HOME = (process.env.USERPROFILE || process.env.HOME || os.homedir()).replace(/\\/g, '/')
   check(`pwsh: 读 ${HOME}/.dsh/settings.yaml → allow（v8 只读放行）`, await dispatch('pwsh', { command: `Get-Content ${HOME}\\.dsh\\settings.yaml` }), false)
   check('pwsh: grep/cat/ls 控制平面路径 → allow（v8 只读放行）', await dispatch('pwsh', { command: `grep -R kix ${HOME}/.dsh && cat ${HOME}/.dsh/agent.cordis.yml && ls ${HOME}/.dsh` }), false)
   check('pwsh: rm 控制平面文件 → allow（v12 remind）', await dispatch('pwsh', { command: `rm ${HOME}/.dsh/agent.cordis.yml` }), false)
@@ -397,6 +419,49 @@ async function softCase(label, name, args) {
     console.log(`${termOnce ? 'PASS' : 'FAIL'}  v12: 终端写安装面也不再二次注入`)
     assert.ok(I.makeUserMessage(I.CONTROL_PLANE_REMIND).id, 'remind 消息带非空 id')
     passed += 1
+  }
+
+  // ══ 3b. v18.1（2026-09-08）：宿主 environ 无 HOME/USERPROFILE → os.homedir() 兜底 ══
+  // 出生证明（独立 QA 取证 P2，2026-09-08）：DSH 宿主进程 /proc/<pid>/environ 仅
+  // INVOCATION_ID/JOURNAL_STREAM/LANG/PATH/SYSTEMD_EXEC_PID/USER（无 HOME、无
+  // USERPROFILE）→ 旧实现 home=''，/root/.dsh/settings.yaml 等绝对路径不再命中
+  // 控制平面；v12 降级后提醒是唯一保护手段，漏判 = 静默无提醒。修复只在 home
+  // 解析补 os.homedir() 兜底，不放宽任何既有边界（安装面/源豁免/只读放行不变）。
+  {
+    const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, DSH_HOME: process.env.DSH_HOME }
+    delete process.env.HOME
+    delete process.env.USERPROFILE
+    delete process.env.DSH_HOME
+    try {
+      const H = os.homedir().replace(/\\/g, '/')
+      assert.ok(I.targetsControlPlane(`${H}/.dsh/settings.yaml`), 'v18.1: 无 HOME 时真实 home 绝对路径命中')
+      assert.ok(I.targetsControlPlane(`${H}/.dsh/.agent-presets/kixparadigm/agent.cordis.yml`), 'v18.1: 无 HOME 时安装副本命中')
+      assert.ok(I.targetsControlPlane(`${H}/.dsh/profiles/web/cordis.patch.yml`), 'v18.1: 无 HOME 时 profiles 路径命中')
+      assert.ok(!I.targetsControlPlane(`${H}/project/settings.yaml`), 'v18.1: home 下非 .dsh 项目文件不命中')
+      assert.ok(!I.targetsControlPlane(`${H}/kix-bundle/dsh/preset/agent.cordis.yml`), 'v18.1: home 下源仓库路径仍豁免')
+      assert.ok(!I.targetsControlPlane('/tmp/project/settings.yaml'), 'v18.1: 无关绝对路径不命中')
+      assert.ok(I.targetsControlPlane('/tmp/project/agent.cordis.yml'), 'v18.1: 裸 agent.cordis.yml 兜底仍拦（既有边界不变）')
+      passed += 7
+      // 端到端：无 HOME 环境真实 waterfall 仍投递提醒，且仍只投一次（advisory 语义不变）
+      const fresh = makeGuardsInstance()
+      const first = await fresh.remind('write', { file_path: `${H}/.dsh/settings.yaml` })
+      const second = await fresh.remind('edit', { file_path: `${H}/.dsh/settings.yaml` })
+      const preAllow = first.pre && first.pre.kind === 'allow'
+      if (preAllow) { passed++ } else { failed++ }
+      console.log(`${preAllow ? 'PASS' : 'FAIL'}  v18.1: 无 HOME 时真实 home 写 pre → allow（软提醒，不新硬 deny）`)
+      const injected = first.post && first.post.additionalContexts
+      const okInject = Array.isArray(injected) && injected.length === 1 && String(injected[0].content[0].text).includes('控制平面')
+      if (okInject) { passed++ } else { failed++ }
+      console.log(`${okInject ? 'PASS' : 'FAIL'}  v18.1: 无 HOME 时真实 home 写注入一次控制平面 remind`)
+      const once = !second.post || !second.post.additionalContexts
+      if (once) { passed++ } else { failed++ }
+      console.log(`${once ? 'PASS' : 'FAIL'}  v18.1: 无 HOME 时第二次写不再注入（advisory 仅一次）`)
+    } finally {
+      for (const k of ['HOME', 'USERPROFILE', 'DSH_HOME']) {
+        if (saved[k] === undefined) delete process.env[k]
+        else process.env[k] = saved[k]
+      }
+    }
   }
 
   // ══ 8. v6：gh CLI 写保护 + 重复尝试记忆 ═════════════════════════════════

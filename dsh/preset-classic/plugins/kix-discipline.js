@@ -20,8 +20,15 @@
 //         block（deny 带 reason）。
 //       * 测试文件（*.test.* / test 目录）永远放行——写测试是需求三检/red 步骤。
 //   - tools/post-execute waterfall：识别测试运行（bash/pwsh 命令匹配测试模式）
-//     → 记录 green；识别实现 edit → 记录 red 证据缺失；识别语言 lint 命令
-//     （cargo fmt/clippy、eslint/prettier、gofmt、ruff…）→ 本回合 lint 证据。
+//     → 记录 green；识别语言 lint 命令（cargo fmt/clippy、eslint/prettier、
+//     gofmt、ruff…、node --check *.js/.cjs/mjs）→ 本回合 lint 证据；
+//     识别「落盘成功的实现 edit」→ 本回合实现编辑 + 新 edit generation。
+//     2026-09-09（缺陷修复）：证据只认 canonical 终态——foreground exitCode=0
+//     且未 timeout/abort/被沙箱拒绝，或后台 job_output 的 completed+exit code 0；
+//     非零 exitCode、后台 spawn、失败/未知形状都不计。证据按 edit generation 记账：
+//     相关编辑（source/test）之后的旧测试/lint 结果与新编辑前启动的旧 job 过期，
+//     不构成当前代码的 green/lint 证据（判定在 execution-result.cjs）。编辑记账同样
+//     只在 post 成功：被 deny/sandbox 拒绝/失败的编辑不算实现编辑、不让证据过期。
 //   - tools/pre-execute：git commit 时若本回合改过某语言源码但未跑对应 lint
 //     → 放行并排队 remind（不 deny，0% 误报只约束阻断）。
 //   - agent/turn-stopping serial：回合结束时，本回合有实现 edit 且无测试运行
@@ -58,6 +65,7 @@ const { readFileSync, writeFileSync, mkdirSync, existsSync } = require('node:fs'
 const { join } = require('node:path')
 const { randomUUID } = require('node:crypto')
 const lib = require('./consistency-lib.cjs')
+const executionResult = require('./execution-result.cjs')
 
 // ── 常量 ───────────────────────────────────────────────────────────────────
 const SPEC_FILENAME = 'spec.md'
@@ -150,9 +158,19 @@ const LINT_RULES = [
   },
   {
     id: 'js',
-    ext: /\.(?:[cm]?[jt]sx?)$/i,
+    ext: /\.(?:[cm]?js|jsx)$/i,
+    // node --check/-c + *.js/.cjs/.mjs（2026-09-09）：本仓实际可跑的 JS 语法 gate
+    // 就是它（无 eslint 工具链）。只认确切形式——node --test / -e 不算 lint。
+    cmd: /(?:^|[;&|]\s*)(?:(?:pnpm|npm|npx|yarn|bun)(?:\s+run)?\s+(?:lint|typecheck|format|eslint|prettier|biome|tsc)(?:\s|$)|eslint\b|prettier\b|biome\s+(?:check|lint|format)\b|tsc(?:\s|$)|node\s+(?:--check|-c)\s+\S*\.(?:js|cjs|mjs)"?(?=[\s;&|]|$))/,
+    hint: 'eslint/prettier/biome/tsc 或 node --check *.js/.cjs/mjs；node --check 只验 JS 语法，不等同类型检查',
+  },
+  {
+    id: 'ts',
+    // 2026-09-09 分桶：TS 与 JS 不再共用一桶——`node --check x.js` 只是 JS 语法证据，
+    // 不能把 *.ts 编辑的类型/语法检查缺口记成已满足（本规则不含 node --check 分支）。
+    ext: /\.(?:[cm]?ts|tsx)$/i,
     cmd: /(?:^|[;&|]\s*)(?:(?:pnpm|npm|npx|yarn|bun)(?:\s+run)?\s+(?:lint|typecheck|format|eslint|prettier|biome|tsc)(?:\s|$)|eslint\b|prettier\b|biome\s+(?:check|lint|format)\b|tsc(?:\s|$))/,
-    hint: 'eslint/prettier/biome/typecheck',
+    hint: 'tsc typecheck / eslint / typecheck 脚本（node --check 只验 JS 语法，不能替代 TS 检查）',
   },
   {
     id: 'go',
@@ -201,12 +219,120 @@ function lastAssistantText(surface) {
 
 // ── 纯判定函数（模块级：单元测试经 __internals 直接验证）─────────────────
 
+// 命令前缀归一（2026-09-09）：真实调用常带包装前缀（timeout/env/VAR=/nice），
+// 旧识别锚定段首 → 真实测试/lint 被漏记（实弹：`timeout 120 node --test …`
+// 未计 green）。这里只做「剥前缀」一个小纯函数，再交给既有模式判定——不写完整
+// shell 解析器。保守边界：无法确认是包装形态（选项带未知参数、引号/子 shell、
+// sudo/xargs/bash -c/heredoc…）一律原样返回 → 既有模式不匹配 → 不记证据
+// （宁可漏记，不可假 green；echo/printf/grep 引用测试命令因此不会被误计）。
+const WRAPPER_LIMIT = 8
+
+function isDurationToken(t) {
+  return /^\d+(?:\.\d+)?[smhd]?$/.test(String(t || ''))
+}
+
+/** 剥一层 timeout：timeout [--opt[=v] | -o [arg]]* DURATION。未识别形态原样返回。 */
+function stripTimeoutPrefix(text) {
+  if (!/^timeout(?=\s|$)/.test(text)) return text
+  const tokens = text.split(/\s+/)
+  let i = 1
+  let sawDuration = false
+  while (i < tokens.length) {
+    const t = tokens[i]
+    if (t.startsWith('-')) {
+      i++
+      // 选项参数（-k 5 / -s KILL）：仅当下一 token 是裸词、且再下一个是时长
+      if (i + 1 < tokens.length && !tokens[i].startsWith('-') && isDurationToken(tokens[i + 1])) i++
+      continue
+    }
+    if (isDurationToken(t)) {
+      sawDuration = true
+      i++
+      break
+    }
+    return text
+  }
+  return sawDuration ? tokens.slice(i).join(' ') : text
+}
+
+/** 剥一层 env：env [--opt[=v] | --]* [VAR=value]*。未识别形态原样返回。 */
+function stripEnvPrefix(text) {
+  if (!/^env(?=\s|$)/.test(text)) return text
+  const tokens = text.split(/\s+/)
+  let i = 1
+  while (i < tokens.length) {
+    const t = tokens[i]
+    if (/^--$/.test(t) || /^-{1,2}[A-Za-z][\w-]*(?:=\S+)?$/.test(t) || /^[A-Za-z_][A-Za-z0-9_]*=\S*$/.test(t)) {
+      i++
+      continue
+    }
+    break
+  }
+  return i === 1 ? text : tokens.slice(i).join(' ')
+}
+
+/** 剥一层 nice：nice [-n N | -N | --adjustment=N]（无参数即裸 nice）。 */
+function stripNicePrefix(text) {
+  if (!/^nice(?=\s|$)/.test(text)) return text
+  const tokens = text.split(/\s+/)
+  let i = 1
+  if (tokens[i] === '-n') {
+    if (!/^-?\d+$/.test(tokens[i + 1] || '')) return text
+    i += 2
+  } else if (/^-?\d+$/.test(tokens[i] || '') || /^--adjustment=-?\d+$/.test(tokens[i] || '')) {
+    i += 1
+  }
+  return tokens.slice(i).join(' ')
+}
+
+/** 剥一层 VAR=value 前缀（可连续多个）。 */
+function stripAssignmentPrefix(text) {
+  let out = text
+  let changed = false
+  for (;;) {
+    const m = /^[A-Za-z_][A-Za-z0-9_]*=\S*\s+/.exec(out)
+    if (!m) break
+    out = out.slice(m[0].length)
+    changed = true
+  }
+  return changed ? out : text
+}
+
+function stripOneWrapper(text) {
+  for (const fn of [stripTimeoutPrefix, stripEnvPrefix, stripNicePrefix, stripAssignmentPrefix]) {
+    const next = fn(text)
+    if (next !== text) return next
+  }
+  return text
+}
+
+/** 按段（; && || | 换行）逐段剥包装前缀，分隔符原样保留。纯函数、无副作用。 */
+function normalizeCommandText(text) {
+  const s = String(text || '')
+  if (!s) return s
+  return s
+    .split(/([;&|\n])/)
+    .map((part) => {
+      if (/^[;&|\n]$/.test(part)) return part
+      const m = /^(\s*)([\s\S]*)$/.exec(part)
+      const lead = m ? m[1] : ''
+      let rest = m ? m[2] : part
+      for (let i = 0; i < WRAPPER_LIMIT; i++) {
+        const next = stripOneWrapper(rest)
+        if (next === rest) break
+        rest = next
+      }
+      return lead + rest
+    })
+    .join('')
+}
+
 function isTestCommand(text) {
-  return TEST_COMMAND_PATTERNS.some((re) => re.test(String(text || '')))
+  return TEST_COMMAND_PATTERNS.some((re) => re.test(normalizeCommandText(text)))
 }
 
 function isVerificationCommand(text) {
-  return VERIFICATION_COMMAND_PATTERNS.some((re) => re.test(String(text || '')))
+  return VERIFICATION_COMMAND_PATTERNS.some((re) => re.test(normalizeCommandText(text)))
 }
 
 function lintIdsForPath(filePath) {
@@ -217,21 +343,23 @@ function lintIdsForPath(filePath) {
 }
 
 function lintIdsForCommand(text) {
-  const s = String(text || '')
+  const s = normalizeCommandText(text)
   return LINT_RULES.filter((r) => r.cmd.test(s)).map((r) => r.id)
 }
 
 function isGitCommitCommand(text) {
-  const s = String(text || '')
+  const s = normalizeCommandText(text)
   if (!/\bgit(?:\.exe)?\b/i.test(s)) return false
   // 段首 git … commit，排除 commit-tree / echo git commit。
   return /(?:^|[;&|\n]|&&|\|\|)\s*git(?:\.exe)?(?:\s+-C\s+(?:"[^"]+"|'[^']+'|\S+))?(?:\s+(?:--[a-z][\w-]*(?:=(\S+))?)|\s+-[a-zA-Z](?=\s|$))*\s+commit(?![\w-])/i.test(';' + s)
 }
 
+// lint 证据按 edit generation 记账（2026-09-09）：need 记「哪一代编辑要求这条 lint」，
+// ran 记「哪一代编辑之后跑过」。ran 早于 need（先 lint 后改代码）不算数——旧证据过期。
 function missingLintIds(st) {
   const need = (st && st.turnLintNeed) || {}
   const ran = (st && st.turnLintRan) || {}
-  return LINT_RULES.map((r) => r.id).filter((id) => need[id] && !ran[id])
+  return LINT_RULES.map((r) => r.id).filter((id) => need[id] && !(ran[id] >= need[id]))
 }
 
 function lintRemindReason(ids) {
@@ -239,14 +367,35 @@ function lintRemindReason(ids) {
   return 'kix-discipline: 本回合改了 ' + ids.join('/') + ' 源码，但未跑对应语言的语法检查（' + hints.join('；') + '）。提交前补跑后再声称完成。cargo test / npm test 不算 lint。'
 }
 
-function noteLintNeed(st, filePath) {
+function noteLintNeed(st, filePath, generation) {
   if (!st || !st.turnLintNeed) return
-  for (const id of lintIdsForPath(filePath)) st.turnLintNeed[id] = true
+  for (const id of lintIdsForPath(filePath)) st.turnLintNeed[id] = generation
 }
 
-function noteLintRan(st, cmd, ok) {
-  if (!st || !st.turnLintRan || !ok) return
-  for (const id of lintIdsForCommand(cmd)) st.turnLintRan[id] = true
+function noteLintRan(st, lintIds, generation) {
+  if (!st || !st.turnLintRan || !Array.isArray(lintIds)) return
+  for (const id of lintIds) st.turnLintRan[id] = generation
+}
+
+// 一次 canonical 终态成功结算的记账：测试 → green（绑定当前 edit generation）；
+// lint 命令 → lint ran（同一 generation）。
+function recordVerificationSuccess(st, evidence) {
+  if (!st || !evidence) return
+  if (evidence.isTest) {
+    st.turnTests++
+    st.greenGeneration = st.editGeneration
+  }
+  noteLintRan(st, evidence.lintIds, st.editGeneration)
+}
+
+// job_output 终态结算：只有本插件登记过的 job、且启动代次仍是当前编辑代次才算证据。
+function applyTerminalJobOutcome(st, result) {
+  const outcome = executionResult.terminalJobOutcome(result)
+  if (!outcome) return
+  const pending = st.pendingVerificationJobs.get(outcome.id)
+  if (!pending) return
+  st.pendingVerificationJobs.delete(outcome.id)
+  if (outcome.success && pending.generation === st.editGeneration) recordVerificationSuccess(st, pending)
 }
 
 function normalizeFilePath(path) {
@@ -363,6 +512,11 @@ function makeState({ sessionKey, workspaceRoot, io }) {
     turnTests: 0,
     turnLintNeed: Object.create(null),
     turnLintRan: Object.create(null),
+    // 证据新鲜度（2026-09-09）：相关编辑（source/test）落盘即 +1；green/lint 证据
+    // 只在「记下的代次 === 当前代次」时算当前代码的证据（旧 job/旧结果过期）。
+    editGeneration: 0,
+    greenGeneration: 0,
+    pendingVerificationJobs: new Map(),
     lintReminded: false,
     pendingLintRemind: null,
     spec: undefined,
@@ -599,12 +753,15 @@ module.exports = {
 
       // 只有 source 编辑进入需求三检和 green gate。测试、文档与操作性工件
       // 各有自己的验证语义，不能伪装成“实现编辑未测试”。
-      // lint 记账覆盖 source+test（.rs 测试也要 fmt/clippy），跳过文档/artifact。
+      // lint 记账覆盖 source+test（.rs 测试也要 fmt/clippy），跳过文档/artifact；
+      // 记账在 post-execute 按「落盘成功的编辑」写入（2026-09-09：被拦/失败的
+      // 编辑不产生 lint 债务，need 绑定落盘后的 edit generation）。
       const path = args && (args.file_path || args.path)
-      noteLintNeed(st, path)
       if (classifyMutationPath(path) !== 'source') return next()
 
-      st.turnEdits++
+      // turnEdits / edit generation 只在 post-execute「落盘成功」后记账
+      // （2026-09-09）：pre 阶段命令尚未执行，被 deny/sandbox 拒绝/失败的编辑
+      // 不能算本回合实现编辑，也不能让既有 green/lint 证据过期。
 
       // spec 契约检查：无 spec + 首次实现编辑 → intensity 决定
       const spec = st.spec || (await st.loadSpec())
@@ -638,14 +795,41 @@ module.exports = {
 
       if (!st || !st.enabled) return next()
 
-      // 测试运行结果：成功 → green 证据（回合内）
       const args = exec && (exec.arguments ?? exec.args)
       const cmdText = args && (args.command || args.cmd)
-      const ok = result && !result.isError
-      if (typeof cmdText === 'string') {
-        noteLintRan(st, cmdText, ok)
-        if (isTestCommand(cmdText)) {
-          if (ok) st.turnTests++
+
+      // 实现/测试编辑「落盘成功」才记账（2026-09-09）：失败/被 deny 的 source edit
+      // 不算本回合实现编辑，也不产生新 edit generation（旧 green/lint 证据不过期）。
+      if (isMutationTool(tool)) {
+        const path = args && (args.file_path || args.path)
+        const kind = classifyMutationPath(path)
+        if (result && result.isError !== true && (kind === 'source' || kind === 'test')) {
+          if (kind === 'source') st.turnEdits += 1
+          st.editGeneration += 1
+          noteLintNeed(st, path, st.editGeneration)
+          // 旧代次的后台验证已不可能成为当前代码的证据（终态也只按代次判定），
+          // 直接丢弃，避免长会话里 job 句柄无界堆积。
+          for (const [jobId, pending] of st.pendingVerificationJobs) {
+            if (pending.generation !== st.editGeneration) st.pendingVerificationJobs.delete(jobId)
+          }
+        }
+      } else if (tool === 'job_output') {
+        // 后台验证的终态证据（启动不算，旧代次不算）。
+        applyTerminalJobOutcome(st, result)
+      } else if (typeof cmdText === 'string') {
+        const isTest = isTestCommand(cmdText)
+        const lintIds = lintIdsForCommand(cmdText)
+        // 只对测试/lint 命令记证据；build/vet/typecheck 等是 settle 的结算面，
+        // 不伪装成 red-green 测试（语义与 TEST_COMMAND_PATTERNS 分离）。
+        if (isTest || lintIds.length > 0) {
+          const jobId = executionResult.backgroundJobId(result)
+          if (jobId) {
+            st.pendingVerificationJobs.set(jobId, { generation: st.editGeneration, isTest, lintIds })
+          } else if (executionResult.foregroundExecutionSucceeded(result)) {
+            recordVerificationSuccess(st, { isTest, lintIds })
+          }
+        }
+        if (isTest) {
           if (st.pendingLintRemind) {
             const ids = st.pendingLintRemind
             st.pendingLintRemind = null
@@ -683,9 +867,10 @@ module.exports = {
       if (!agent) return
       const st = stateFor(agent)
       if (!st.enabled) return
-      // 回合边界重置
+      // 回合边界重置。green 证据必须来自当前 edit generation（最后一次相关编辑
+      // 之后成功终态的测试）；编辑之后的旧测试结果或旧后台 job 完成不算。
       const hadEdits = st.turnEdits > 0
-      const hadTests = st.turnTests > 0
+      const hadTests = st.greenGeneration > 0 && st.greenGeneration === st.editGeneration
       const missingLint = missingLintIds(st)
       st.turnEdits = 0
       st.turnTests = 0
@@ -695,7 +880,7 @@ module.exports = {
       if (hadEdits && !hadTests) {
         if (!(st.remindOnce && st.greenReminded)) {
           st.greenReminded = true
-          const reason = 'kix-discipline: 本回合有实现编辑，但测试未通过或未运行（turnTests 只计成功结果——被拦/失败的测试不构成 green 证据）。交付前验证三问：① 测试镜像真实链路吗 ② 证据维度对吗 ③ 关键 claim 独立验证过吗。运行相关测试后再声称完成（kix 提交前必跑 lint/test）。'
+          const reason = 'kix-discipline: 本回合有实现编辑，但测试未通过或未运行（green 证据只认 canonical 成功终态：前台 exitCode=0，或后台 job completed 且 exit code 0；被拦/失败/超时与编辑前启动的旧 job 都不算）。交付前验证三问：① 测试镜像真实链路吗 ② 证据维度对吗 ③ 关键 claim 独立验证过吗。运行相关测试后再声称完成（kix 提交前必跑 lint/test）。'
           agent.steer(makeUserMessage(reason))
         }
       }
@@ -762,6 +947,7 @@ module.exports = {
 module.exports.__internals = {
   isTestCommand,
   isVerificationCommand,
+  normalizeCommandText,
   isTestFile,
   classifyMutationPath,
   isMutationTool,

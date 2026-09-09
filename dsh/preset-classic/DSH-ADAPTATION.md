@@ -115,10 +115,15 @@ subagent（run_in_background 按需）:
     patch 层 `ctx.get` 拿不到 webServer，必须 inject）。**v2 提交时转换模式**：client 注册
     `conversation.input.dock` slot（id `vision-bridge`），**包装 `props.inputActions.submit`**
     （SessionInputShell 的 action face，monkey-patch 一次，`__visionWrapped` 防重复）——
-    粘贴图片不动作，点发送时先调 describe 再提交：描述写入 draft（`setDraft`）＋图片移除
-    （`removeImage`，hero 模式无 session.id，必须用 inputActions 而非
-    `conversation.input.shell(session.id)`）→ 描述以 `📷 [图片自动识别]` 前缀进入会话；
-    转换失败/超时（100s）提示且不提交，图片保留可重试。模式 keep（模型支持图片）原样提交。
+    粘贴图片不转换。**当前能力豁免（2026-09）**：通过 `modelDirectories.directoryFor(sessionId)`
+    读取当前选择，以无图的本地 `/api/dsh-vision-bridge/capabilities` 查询宿主明确能力。
+    支持 image 或能力未知/查询失败/切换未稳定时直接原生提交，跳过桥的 8MB 限制、
+    FileReader、转描述请求和草稿/图片修改；宿主自身图片限制仍适用。只有确认当前模型
+    为 text-only 才调 describe，携带精确 provider/model。成功后描述写入 draft（`setDraft`）
+    并移除该次图片（`removeImage`）；失败/超时保留原图。切换模型或改变附件后，不应用旧转换结果。
+    原生目录尚未投影 inputModalities，因此不根据名称或缺少目录字段判断文字模型。
+    能力查询不接收图片、不读取视觉凭据、不执行识图推理。服务端对缺少身份/能力未知的旧客户端
+    同样保留原图，避免未经确认的外部转发。
     模型侧：persona 已声明该前缀为插件自动产物，直接基于描述回答；细节不足时请用户
     给图片路径用 `subagent_vision` 细看。重装 preset 不影响本插件（profile 层）。
     **2026-08 加固（实测）**：① exports 补 `./package.json` 声明——缺失时 client-modules

@@ -28,7 +28,7 @@ const ctx = {
   on(event, cb) {
     ;(listeners[event] ||= []).push(cb)
   },
-  effect(fn) { this.cleanup = fn },
+  effect(fn) { this.cleanup = fn() },
   get(name) {
     return services[name]
   },
@@ -38,6 +38,7 @@ const ctx = {
 const plugin = require(path.join(__dirname, 'kix-budget.js'))
 assert.strictEqual(plugin.name, 'kix-budget')
 plugin.apply(ctx)
+assert.equal(typeof ctx.cleanup, 'function', 'effect returns a disposer instead of clearing state at registration')
 for (const ev of ['session/event', 'agent/pre-step', 'tools/pre-execute', 'tools/post-execute', 'agent/turn-stopping']) {
   assert.ok(listeners[ev] && listeners[ev].length === 1, `${ev} 监听器已注册`)
 }

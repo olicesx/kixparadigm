@@ -82,9 +82,9 @@ function sourceEdit(agent, file = path.join(sessionRoot, 'src', 'x.js')) {
   return postExecute({ name: 'edit', arguments: { file_path: file }, callId: 'edit', agent }, { isError: false }, () => Promise.resolve({ kind: 'accept' }))
 }
 
-function post(agent, name, args, value, isError = false) {
+function post(agent, name, args, value, isError = false, execExtra = {}) {
   return postExecute(
-    { name, arguments: args || {}, callId: name + '-call', agent },
+    { name, arguments: args || {}, callId: name + '-call', agent, ...execExtra },
     { isError, value },
     () => Promise.resolve({ kind: 'accept' }),
   )
@@ -157,12 +157,13 @@ await ok('verdict 只认前部独立结论行，不认元引用或代码块', ()
   !I.looksLikeVerdict('APPROVE 不是新增证据') &&
   !I.looksLikeVerdict('## COMMENT') &&
   !I.looksLikeVerdict('```text\nAPPROVE\n```'))
-await ok('probe 读取真实 snake_case 结果，run_code 允许无 exit code', () =>
+await ok('probe 读取真实 snake_case 结果，run_code 汇总不算执行证据', () =>
   I.directExecutionSucceeded('probe', { isError: false, value: { ok: true, exit_code: 0 } }) &&
   !I.directExecutionSucceeded('probe', { isError: false, value: { ok: true, exit_code: 2 } }) &&
   !I.directExecutionSucceeded('probe', { isError: false, value: { ok: true, timed_out: true, exit_code: null } }) &&
   !I.directExecutionSucceeded('probe', { isError: false, value: { ok: true } }) &&
-  I.directExecutionSucceeded('run_code', { isError: false, value: { answer: 42 } }))
+  !I.directExecutionSucceeded('run_code', { isError: false, value: { logs: [], result: { answer: 42 } } }) &&
+  !I.directExecutionSucceeded('run_code', { isError: false, value: { logs: ['ok'], result: { exitCode: 0 } } }))
 await ok('盲抽样按 session id 稳定且参数非法时关闭', () => {
   const sampled = sampledAgent('stable')
   return I.stableCalibrationSample(sampled.session.id) &&
@@ -243,6 +244,34 @@ await ok('probe exit_code=0 清账，非零与 timeout 不清账', async () => {
   await post(timeout, 'probe', { code: 'while True: pass' }, { ok: true, timed_out: true, exit_code: null })
   await stop(timeout)
   return steered.length === 1
+})
+
+section('run_code 证据边界')
+await ok('纯 read 的 run_code 结构化汇总不清账（无 exit code 即无执行证据）', async () => {
+  const agent = mkAgent('run-code-read')
+  steered.length = 0
+  await sourceEdit(agent)
+  await post(agent, 'run_code', { code: 'return tools.read({ file_path: "x" })', description: 'read one file' }, { logs: [], result: { lines: [{ number: 1, text: 'x' }] } })
+  await stop(agent)
+  return steered.length === 1 && steered[0].content[0].text.includes('没有成功终态')
+})
+await ok('run_code 内可见工具子调用终态仍清账（子调用各自过 post-execute）', async () => {
+  const agent = mkAgent('run-code-sub')
+  steered.length = 0
+  await sourceEdit(agent)
+  await post(agent, 'run_code', { code: 'await tools.bash({ command: "go test ./..." })', description: 'run go tests' }, { logs: ['ok'] })
+  await post(agent, 'bash', { command: 'go test ./...' }, foreground(0), false, { parent: 'run-code-token', callId: 'run-code-call:code:1' })
+  await stop(agent)
+  return steered.length === 0
+})
+await ok('run_code 子调用失败不清账', async () => {
+  const agent = mkAgent('run-code-sub-red')
+  steered.length = 0
+  await sourceEdit(agent)
+  await post(agent, 'run_code', { code: 'await tools.bash({ command: "go test ./..." })', description: 'run go tests' }, { logs: ['fail'] })
+  await post(agent, 'bash', { command: 'go test ./...' }, foreground(1), false, { parent: 'run-code-token', callId: 'run-code-call:code:1' })
+  await stop(agent)
+  return steered.length === 1 && steered[0].content[0].text.includes('没有成功终态')
 })
 
 section('background terminal accounting')
@@ -328,6 +357,41 @@ await ok('未命中样本或已有 fresh observer 不追加盲抽样', async () 
   emitSubagentEnd(observed, { id: 'sample-observer', stopReason: 'completed', lastAssistantMessage: [{ type: 'text', text: 'evidence' }] })
   await stop(observed)
   return steered.length === 0
+})
+
+section('observer generation validity')
+await ok('completed observer before a later edit does not exempt current calibration', async () => {
+  const agent = sampledAgent('observer-before-edit')
+  steered.length = 0
+  await sourceEdit(agent)
+  emitSubagentEnd(agent, { id: 'observer-old-completed', stopReason: 'completed', lastAssistantMessage: [{ type: 'text', text: 'reviewed old version' }] })
+  await sourceEdit(agent)
+  await post(agent, 'probe', { code: 'print(1)' }, { exit_code: 0 })
+  await stop(agent)
+  return steered.length === 1 && steered[0].content[0].text.includes('低频盲抽样')
+})
+await ok('inflight observer completing after a later edit is stale', async () => {
+  const agent = sampledAgent('observer-inflight-edit')
+  steered.length = 0
+  await sourceEdit(agent)
+  const child = { id: 'inflight-observer', session: { id: 'inflight-observer', header: { parentSession: agent.session.id } } }
+  runtimeAgents.set(agent.session.id, agent)
+  runtimeAgents.set(child.id, child)
+  subagentStart({ id: child.id, runId: 'inflight-observer-run' })
+  await sourceEdit(agent)
+  subagentEnd({ id: child.id, runId: 'inflight-observer-run', stopReason: 'completed', lastAssistantMessage: [{ type: 'text', text: 'old result' }] })
+  await post(agent, 'probe', { code: 'print(1)' }, { exit_code: 0 })
+  await stop(agent)
+  return steered.length === 1 && steered[0].content[0].text.includes('低频盲抽样')
+})
+await ok('observer without an observed start has unknown freshness', async () => {
+  const agent = mkAgent('observer-unknown-start')
+  steered.length = 0
+  runtimeAgents.set(agent.session.id, agent)
+  runtimeAgents.set('unknown-start-child', { id: 'unknown-start-child', session: { header: { parentSession: agent.session.id } } })
+  subagentEnd({ id: 'unknown-start-child', runId: 'unknown-start-run', stopReason: 'completed', lastAssistantMessage: [{ type: 'text', text: 'done' }] })
+  await stop(agent, 'APPROVE')
+  return steered.length === 1 && steered[0].content[0].text.includes('没有成功的 fresh 观察者')
 })
 
 section('observer terminal accounting and stopping pressure')

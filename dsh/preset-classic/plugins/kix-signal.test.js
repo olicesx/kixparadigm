@@ -138,6 +138,23 @@ console.log('# S3 spec-draft')
   ok(contextsOf(d6).length === 0, 'specDraft: false 显式关闭')
 }
 
+// The real commands service requires a CommandResult, not a raw string.
+{
+  const ctx = makeCtx()
+  plugin.apply(ctx, { specDraft: true })
+  const agent = makeAgent()
+  const command = ctx.__registered.commands.find((item) => item.name === 'kixsig-check')
+  const result = await command.handler({ agent })
+  ok(result && result.kind === 'success' && typeof result.text === 'string', 'kixsig-check returns a canonical CommandResult')
+  ok(result.text.includes('reminded: false'), 'kixsig-check reads the invoking session state')
+  await runPre(ctx, agent, 'edit', { file_path: 'src/probe.js' })
+  await runPost(ctx, agent, 'edit', { file_path: 'src/probe.js' }, { ok: true })
+  const changed = await command.handler({ agent })
+  ok(changed.text.includes('reminded: true'), 'kixsig-check observes the real trigger')
+  const noAgent = await command.handler({})
+  ok(noAgent.kind === 'error', 'kixsig-check without an agent reports missing context')
+}
+
 // ═══ 单元：纯函数 ════════════════════════════════════════════════════════
 console.log('# pure helpers')
 {

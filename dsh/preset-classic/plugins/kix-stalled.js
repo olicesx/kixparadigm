@@ -22,6 +22,7 @@
 
 'use strict'
 
+const lib = require('./consistency-lib.cjs')
 const STALLED_HOURS = 24
 
 function parseDate(v) {
@@ -96,16 +97,15 @@ module.exports = {
     const fs = ctx.fs
     const commands = ctx.commands
     const tools = ctx.tools
-    const sandboxPolicy = ctx.get('sandboxPolicy')
-    const defaultRoot = sandboxPolicy !== undefined && sandboxPolicy.workspaceRoot ? sandboxPolicy.workspaceRoot : undefined
+    const rootFor = (agent) => lib.resolveWorkspaceRoot(agent, ctx.get('sandboxPolicy'))
 
     // 用户命令：零 token、只读、无状态
     commands.register({
       name: 'kixst-check',
       description: '扫描项目 docs/sprint-*/progress.md 检测停滞 Sprint（只读，threshold=24h）',
       input: { hint: '[项目根目录]' },
-      async handler({ rawInput }) {
-        const root = (rawInput || '').trim() || defaultRoot
+      async handler({ agent, rawInput }) {
+        const root = (rawInput || '').trim() || rootFor(agent)
         if (!root) return { kind: 'error', text: 'kixst-check: 未提供项目根目录（且无 workspaceRoot 可回退）' }
         try {
           const result = await scanRoot(fs, root)
@@ -132,8 +132,8 @@ module.exports = {
         schema: { type: 'object', properties: {}, additionalProperties: true },
         render: (args, value) => [{ type: 'text', text: JSON.stringify(value) }],
       },
-      async execute(args) {
-        const root = args && args.root ? String(args.root) : defaultRoot
+      async execute(args, exec) {
+        const root = args && args.root ? String(args.root) : rootFor(exec && exec.agent)
         if (!root) return { ok: false, error: 'no root; pass root explicitly' }
         const result = await scanRoot(fs, root)
         return { ok: true, checkedAt: new Date().toISOString(), stalledCount: result.sprints.filter((s) => s.stalled).length, project: result }
