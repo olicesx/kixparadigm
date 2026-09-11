@@ -36,6 +36,8 @@ const {
   crossFailText,
   visionFailText,
   thinkerFailText,
+  mergePreferences,
+  auditPreferenceIds,
 } = require('./kix-route.js').__internals
 
 let passed = 0
@@ -148,14 +150,18 @@ async function main() {
     })())
   }
 
-  // ── orderedModels ───────────────────────────────────────────────────────
+  // ── orderedModels（2026-09-10：插件级默认偏好表已清空，默认 = 目录序）──
   check(
-    '偏好排序：glm-5.3 在 glm-4.7 前',
-    JSON.stringify(orderedModels('zai-coding-cn', ['glm-4.7', 'glm-5.3'])) === JSON.stringify(['glm-5.3', 'glm-4.7']),
+    '默认无偏好表 → 目录序原样（后者在前不被重排）',
+    JSON.stringify(orderedModels('zai-coding-cn', ['glm-4.7', 'glm-5.3'])) === JSON.stringify(['glm-4.7', 'glm-5.3']),
   )
   check(
-    '目录中不在偏好表的模型追加在后',
-    JSON.stringify(orderedModels('zai-coding-cn', ['glm-x9', 'glm-4.7'])) === JSON.stringify(['glm-4.7', 'glm-x9']),
+    '未知 provider/模型 → 目录序原样',
+    JSON.stringify(orderedModels('zai-coding-cn', ['glm-x9', 'glm-4.7'])) === JSON.stringify(['glm-x9', 'glm-4.7']),
+  )
+  check(
+    '显式传表才生效（偏好表是部署/配置事实，不是插件默认）',
+    JSON.stringify(orderedModels('zai-coding-cn', ['glm-4.7', 'glm-5.3'], { modelPreference: { 'zai-coding-cn': ['glm-5.3'] } })) === JSON.stringify(['glm-5.3', 'glm-4.7']),
   )
 
   // ── crossProviderOrder ──────────────────────────────────────────────────
@@ -170,8 +176,12 @@ async function main() {
       JSON.stringify(crossProviderOrder(llm, 'deepseek-official')) === JSON.stringify(['zai-coding-cn']),
     )
     check(
-      '父=未知厂商 → 通用序全保留',
-      JSON.stringify(crossProviderOrder(llm, 'anthropic-official')) === JSON.stringify(['deepseek-official', 'zai-coding-cn']),
+      '父=未知厂商 → 通用兜底 = 已注册目录序（无插件内置顺序）',
+      JSON.stringify(crossProviderOrder(llm, 'anthropic-official')) === JSON.stringify(['zai-coding-cn', 'deepseek-official']),
+    )
+    check(
+      '显式 genericCrossOrder 才改变通用兜底顺序',
+      JSON.stringify(crossProviderOrder(llm, 'anthropic-official', { genericCrossOrder: ['deepseek-official'] })) === JSON.stringify(['deepseek-official', 'zai-coding-cn']),
     )
     check(
       '父=grok → zai 在前且 deepseek 仍在 tail',
@@ -211,7 +221,7 @@ async function main() {
       resolvable: new Set(['zai-coding-cn/glm-5.2', 'zai-coding-cn/glm-4.7', 'deepseek-official/deepseek-v4-flash']),
     })
     const hit = await resolveCrossRoute(llm, 'deepseek-official', undefined)
-    check('cross：父=deepseek → zai 偏好序首个可用（glm-5.2）', hit !== undefined && hit.model === 'glm-5.2')
+    check('cross：父=deepseek → zai 目录序首个可解析（glm-4.7）', hit !== undefined && hit.model === 'glm-4.7')
   }
   {
     const llm = mockLlm({
@@ -219,7 +229,7 @@ async function main() {
       models: { 'zai-coding-cn': ['glm-5.3', 'glm-4.7'] },
       resolvable: new Set(['zai-coding-cn/glm-4.7']),
     })
-    check('cross：首选不可用回退 glm-4.7', (await resolveCrossRoute(llm, 'deepseek-official', undefined))?.model === 'glm-4.7')
+    check('cross：目录首个不可解析 → 落到下一个可解析模型', (await resolveCrossRoute(llm, 'deepseek-official', undefined))?.model === 'glm-4.7')
   }
   {
     const llm = mockLlm({ providers: ['zai-coding-cn'], models: { 'zai-coding-cn': ['glm-5.3'] }, resolvable: new Set(['zai-coding-cn/glm-5.3']) })
@@ -488,17 +498,65 @@ async function main() {
     }
   }
 
-  // L11 偏好表配置化（2026-08-17，外部审查 5.6「硬编码」技术债最小配置化）
+  // ── L12 配置偏好 vs 真实目录的自查（2026-09-10；成因：钉了目录里没有的
+  //    glm-4.7 却无人提示，直到派发才 UNKNOWN_MODEL）─────────────────────────
+  {
+    const llm = mockLlm({
+      providers: ['zai-coding-cn', 'deepseek-official'],
+      models: { 'zai-coding-cn': ['glm-5.3', 'glm-5.3-flash'], 'deepseek-official': ['deepseek-v4-flash'] },
+      resolvable: new Set(['zai-coding-cn/glm-5.3', 'deepseek-official/deepseek-v4-flash']),
+    })
+    const dead = await auditPreferenceIds(llm, mergePreferences({
+      modelPreference: { 'zai-coding-cn': ['glm-5.3', 'glm-4.7'] },
+      crossProviderOrder: { zhipu: ['deepseek-official'] },
+      genericCrossOrder: ['su2api'],
+      fallbackProviderOrder: ['deepseek-official'],
+      visionProviderHint: ['zai-vision'],
+      thinkerProviderHint: ['deepseek-official'],
+    }))
+    check('L12a 目录里没有的模型被点名（zai-coding-cn/glm-4.7）',
+      dead.some((f) => f.includes('zai-coding-cn/glm-4.7')))
+    check('L12b 未注册 provider 被点名（su2api / zai-vision）',
+      dead.some((f) => f.includes('"su2api"')) && dead.some((f) => f.includes('"zai-vision"')))
+    check('L12c 存在的条目零误报（glm-5.3 与 deepseek-official 不在 findings 里）',
+      !dead.some((f) => f.includes('glm-5.3（')) && !dead.some((f) => f.includes('"deepseek-official"')))
+    // 自查永不影响路由：无 llm / 目录抛错 → 空数组、不抛
+    check('L12d 无 llm 服务 → 空数组不抛', (await auditPreferenceIds(undefined, mergePreferences({}))).length === 0)
+    const boom = { listProviders: () => { throw new Error('down') }, listModels: async () => { throw new Error('down') } }
+    check('L12e 目录整体不可达 → 空数组不抛（自查是提示不是前置依赖）',
+      (await auditPreferenceIds(boom, mergePreferences({ fallbackProviderOrder: ['deepseek-official'] }))).length === 0)
+    // 默认（无配置）→ 无偏好可查
+    check('L12f 无配置偏好 → 零 findings', (await auditPreferenceIds(llm, mergePreferences(undefined))).length === 0)
+    // 挂载侧防御：agent/request 里的自查钩子在任何 ctx 环境下都不得打断请求
+    // （ctx.get 抛错 / logger 缺失 / 目录抛错 —— 钩子只是提醒，不是前置依赖）
+    for (const [label, svc] of [['ctx.get 抛错', undefined], ['llm.listProviders 抛错', { llm: { listProviders: () => { throw new Error('boom') }, listModels: async () => { throw new Error('boom') } } }]]) {
+      let handler
+      const ctx = {
+        on: (ev, h) => { if (ev === 'agent/request') handler = h },
+        get: (n) => { if (svc === undefined) throw new Error('service unavailable'); return svc[n] },
+        logger: { warn: () => { throw new Error('logger broken') } },
+      }
+      routeMod.apply(ctx, { fallbackProviderOrder: ['deepseek-official'] })
+      const seed = { provider: 'deepseek-official', model: 'deepseek-v4-flash', maxTokens: 65536 }
+      let out
+      try {
+        out = await handler({ agent: { options: { subagentDepth: 1 } }, signal: undefined, messages: [] }, () => Promise.resolve(seed))
+      } catch (e) { out = { threw: String(e && e.message) } }
+      check(`L12g 挂载侧自查不打断请求（${label}）`, out !== undefined && !out.threw)
+    }
+  }
+
+  // L11 偏好表配置化（2026-08-17 起；2026-09-10 起插件级默认表**已清空**）
   {
     const { mergePreferences, orderedModels, crossProviderOrder, resolveCrossRoute } = require('./kix-route.js').__internals
-    // 不传 config = 默认表原样（行为零变化）
+    // 出生证明：插件逻辑里不再有模型 id 字面量（默认表为空）
     const def = mergePreferences(undefined)
-    check('L11a 不传 config → 默认偏好表原样',
-      def.modelPreference['zai-coding-cn'][0] === 'glm-5.3' && def.crossProviderOrder.zhipu[0] === 'deepseek-official')
+    check('L11a 不传 config → 插件级模型偏好表为空（无硬编码模型名）',
+      Object.keys(def.modelPreference).length === 0)
     // 浅合并：只覆盖传的键
     const merged = mergePreferences({ modelPreference: { 'zai-coding-cn': ['glm-5.5'] } })
-    check('L11b modelPreference 子集覆盖，其余键保留',
-      merged.modelPreference['zai-coding-cn'][0] === 'glm-5.5' && merged.modelPreference['deepseek-official'][0] === 'deepseek-v4-flash')
+    check('L11b modelPreference 传入即生效（其余 provider 仍无默认）',
+      merged.modelPreference['zai-coding-cn'][0] === 'glm-5.5' && merged.modelPreference['deepseek-official'] === undefined)
     // prefs 注入 orderedModels：新偏好生效
     check('L11c prefs 注入 orderedModels（新偏好在前）',
       JSON.stringify(orderedModels('zai-coding-cn', ['glm-5.3', 'glm-5.5'], merged)[0]) === '"glm-5.5"')
@@ -509,16 +567,16 @@ async function main() {
     check('L11d prefs 注入 crossProviderOrder（自定义顺序在前）', order[0] === 'other-org')
     const hit = await resolveCrossRoute(llmOther, 'zai-coding-cn', undefined, prefs2)
     check('L11e prefs 注入 resolveCrossRoute（路由到自定义 provider）', hit !== undefined && hit.provider === 'other-org')
-    // 默认（无 prefs）：行为与旧版一致
+    // 无 prefs：cross 落在**已注册的异厂商**上，序取目录序（不再依赖插件默认表）
     const hitDef = await resolveCrossRoute(llmOther, 'zai-coding-cn', undefined, undefined)
-    check('L11f 无 prefs = 旧默认行为（deepseek 优先）', hitDef !== undefined && hitDef.provider === 'deepseek-official')
+    check('L11f 无 prefs = 已注册异厂商（目录序首个 other-org）', hitDef !== undefined && hitDef.provider === 'other-org')
     // listener 级：apply(ctx, config) 传 config 后 cross 路由用新偏好
     const services = {
       llm: mockLlm({ providers: ['zai-coding-cn', 'other-org', 'deepseek-official'], models: { 'other-org': ['m1'], 'deepseek-official': ['deepseek-v4-flash'] }, resolvable: new Set(['other-org/m1', 'deepseek-official/deepseek-v4-flash']) }),
     }
     await withListener(routeMod, services, async ({ call }) => {
       const out = await call(child(65536), { provider: 'zai-coding-cn', model: 'kix-route:cross', maxTokens: 65536 })
-      check('L11g 无 config 的 apply = 默认 deepseek', out.provider === 'deepseek-official')
+      check('L11g 无 config 的 apply = 已注册目录序（other-org 注册在前）', out.provider === 'other-org')
     })
     // 带 config 的 apply（重新捕获 handler）
     {
@@ -591,8 +649,12 @@ async function main() {
     })
     const hit = await resolveFallbackRoute(llm, undefined, undefined, (provider) => provider !== 'deepseek-official')
     const crossHit = await resolveCrossRoute(llm, 'zai-coding-cn', undefined, undefined, (provider) => provider !== 'deepseek-official')
-    check('Q6 普通 fallback 跳过熔断并按偏好选择 su2api/sol', hit?.provider === 'su2api' && hit?.model === 'gpt-5.6-sol')
-    check('Q7 cross 保持异厂商约束并跳过熔断 DeepSeek', crossHit?.provider === 'su2api')
+    const legPrefs = mergePreferences({ fallbackProviderOrder: ['su2api', 'zai-coding-cn', 'deepseek-official'], genericCrossOrder: ['su2api', 'zai-coding-cn', 'deepseek-official'] })
+    const hitPref = await resolveFallbackRoute(llm, undefined, legPrefs, (provider) => provider !== 'deepseek-official')
+    const crossHitPref = await resolveCrossRoute(llm, 'zai-coding-cn', undefined, legPrefs, (provider) => provider !== 'deepseek-official')
+    check('Q6 普通 fallback 跳过熔断后取目录序首个健康 provider（zai）', hit?.provider === 'zai-coding-cn')
+    check('Q6b fallbackProviderOrder 显式配置时按其顺序（su2api 首位）', hitPref?.provider === 'su2api')
+    check('Q7 cross 保持异厂商约束并跳过熔断 DeepSeek', crossHit?.provider === 'su2api' && crossHitPref?.provider === 'su2api')
   }
   {
     const llm = mockLlm({
@@ -606,7 +668,7 @@ async function main() {
     try {
       const runtimeAgents = new Map()
       const agents = { get: (id) => runtimeAgents.get(String(id)) }
-      await withRuntime(routeMod, { llm, agents }, { providerCircuitTtlMs: 200 }, async ({ emit, waterfall, call, listenerOptions, warns }) => {
+      await withRuntime(routeMod, { llm, agents }, { providerCircuitTtlMs: 200, fallbackProviderOrder: ['su2api', 'zai-coding-cn', 'deepseek-official'] }, async ({ emit, waterfall, call, listenerOptions, warns }) => {
         const steers = []
         const parent = { id: 'parent-1', steer: (message) => steers.push(message) }
         const failedChild = {
@@ -632,7 +694,7 @@ async function main() {
           notice.includes('健康路由仍可用：su2api'))
         const fresh = { agent: { id: 'child-retry', options: { subagentDepth: 1 } }, signal: undefined }
         const rerouted = await call(fresh, { provider: 'deepseek-official', model: 'deepseek-v4-flash', maxTokens: 8192 })
-        check('Q9 协调线程仅在信息缺口仍存在时另派 child，健康路由会跳过硬熔断 provider', rerouted.provider === 'su2api' && rerouted.model === 'gpt-5.6-sol' && warns.some((w) => w.includes('改路由')))
+        check('Q9 协调线程仅在信息缺口仍存在时另派 child，健康路由会跳过硬熔断 provider', rerouted.provider === 'su2api' && warns.some((w) => w.includes('改路由')))
       })
     } finally {
       Date.now = realNow
