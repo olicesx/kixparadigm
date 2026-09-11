@@ -208,16 +208,14 @@ agent.cordis.yml（preset）
   web_search；subagent 五档与 kix_capability_* 是 scope 注册、自动可见——**restrict 对
   scope-local 名会 fail，故不列入 allow**）；MCP（GitHub 26/Playwright 24/Context7/Semgrep）、
   workflow/goal/ralph/job_*/cordis_* 等按需。`tools/change` 事件重试（MCP 可能晚于插件注册）。
-  restrict 只影响模型可见面，scope 内工具与门禁插件不受影响。
+  DSH 0.1.2-rc.1 起 restrict 是继承面执行 ACL（直呼被 deny 的全局名 = UNKNOWN_TOOL）；
+  scope 自有注册不受 restrict。
 - **Phase 2 — 渐进披露**：`kix_capability_search`（按需目录，返回分组元数据：类别/用途/
   示例工具名，**不含全 schema**——每轮不占上下文；用**全局视图** `schemas(undefined)`
-  列出被 restrict 的工具）+ `kix_capability_call`（代理执行，经 `ctx.tools.execute` 走
-  完整 pre-execute→guards→execute→post-execute 管线，**门禁依然拦截**：已验证
-  kix-guards 的 KNOWN_SAFE_TOOLS 含全部编排目标、GitHub 门禁对只读放行；带 agent 的
-  调用非 model-direct，不会被 UNKNOWN_TOOL 拒绝；存在性检查用全局视图
-  `get(name, undefined)`）。**感知设计（2026-08-16 修订）**：不挂 pre-execute deny——
-  restrict 已保证被裁剪工具对模型不可见（模型直呼 = UNKNOWN_TOOL），且 capability_call
-  内部子调用走 pre-execute 必须放行（否则代理永远失败）；引导由 capability_call 返回与
+  列出被 restrict 的工具）+ `kix_capability_call`（agent 视图优先、否则全局；对被 deny
+  的 MCP **省略 agent** 走全局 execute；scope 可见工具仍带 agent。GitHub 写由
+  kix-guards 在外层 capability_call unwrap `args.tool`）。**感知设计**：不挂
+  pre-execute deny——直呼被裁工具 = UNKNOWN_TOOL；引导由 capability_call 返回与
   persona 触发句承担。
 - **Phase 3 — PTC 协同**：保持 `tool-presentation mode: both`（native 直呼验证 +
   run_code 机械多步）；kix 红线「验证/观察用 native 直呼（证据可回放）」不变；
@@ -226,8 +224,9 @@ agent.cordis.yml（preset）
 **配置**：`enableRestrict: false` 可关闭裁剪（仅保留 search/call）；`extraResidentTools`
 可追加常驻工具。双版挂载（CN/EN），全量断言绿色（7 插件，以 `npm test` 实测数为准）。
 
-**诚实边界**：restrict 是"模型可见面"裁剪而非"可执行面"——代理调用仍能执行被裁剪工具
-（这正是渐进披露语义：能力在，schema 不常驻）。MCP 工具 schema 大且低频 → 全部按需；
+**诚实边界**：DSH 0.1.2-rc.1 起 restrict 是继承面执行 ACL（直呼被 deny 的全局名 =
+UNKNOWN_TOOL）。渐进披露语义不变（能力在、schema 不常驻），但代理必须走全局 execute。
+MCP 工具 schema 大且低频 → 全部按需；
 cordis_*/goal/ralph/workflow 重型编排 → 按需（kix 主路径是 subagent 三通道）。
 
 **scope 工具精简决策（2026-08-15 二次实测修正 + 三次按需激活；2026-08-17 用户决策

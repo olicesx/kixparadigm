@@ -65,21 +65,34 @@ const ctx = {
 ctx.tools = {
   register(def) { registeredTools.push(def); return () => {} },
   restrict(filter) { restrictCalls.push(filter); return () => {} },
-  // 2026-08-17 视图语义对齐真实 dsh-tools（源码+API 文档实证）：
-  // `get(name, scope)`/`schemas(scope)` 中 scope 省略或显式 undefined 都是
-  // **全局视图**（`peek(undefined)`=undefined、`chainLayers(undefined)` 无
-  // 覆盖层）；scope 工具注册在 agent 层，只在 **agent 视图** 可见。agent
-  // 视图 = 全局 ∪ 祖先 ∪ 自身层 → mock 中合并两表（scope 优先）。
-  // 旧 mock 把"无参=scope、undefined 参=全局"当语义，曾让 scope 优先修复
-  // 在单测全绿下空转（真实运行时两者机械等同，WSL2 E2E + 源码实锤）。
+  // DSH 0.1.2-rc.1 视图语义：
+  // `get(name, scope)`/`schemas(scope)` 中 scope 省略或显式 undefined = 全局视图。
+  // agent 视图 = 自身层 ∪ 未被 restrict deny 的继承全局。restrict 是执行 ACL：
+  // 被 deny 的 mcp__* / 全局 web_search 在 agent 视图读作 absent。
+  // 2026-09-11 前 mock 把 agent 视图做成「scope ∪ 全局、不应用 restrict」，
+  // 导致 capability_call 带 agent execute MCP 的 UNKNOWN_TOOL 单测全绿漏网。
   schemas(scope) { return scope === undefined ? mockGlobalSchemas : mockSchemas },
   get(name, scope) {
-    const list = scope === undefined
-      ? mockGlobalSchemas
-      : [...mockSchemas, ...mockGlobalSchemas] // agent 视图：scope ∪ 全局
-    return list.find((s) => s.name === name) ? { name } : undefined
+    if (scope === undefined) {
+      return mockGlobalSchemas.find((s) => s.name === name) ? { name } : undefined
+    }
+    if (mockSchemas.find((s) => s.name === name)) return { name }
+    // inherited global, minus restrict deny (mcp__* / web_search)
+    if (typeof name === 'string' && (name.startsWith('mcp__') || name === 'web_search')) return undefined
+    return mockGlobalSchemas.find((s) => s.name === name) ? { name } : undefined
   },
-  async execute(input) { executeCalls.push(input); return { isError: false, value: { executed: input.name } } },
+  async execute(input) {
+    executeCalls.push(input)
+    // Mirror dsh-tools resolveExecution: agent view cannot execute restricted MCP.
+    if (input && input.agent && typeof input.name === 'string' && input.name.startsWith('mcp__')) {
+      return {
+        isError: true,
+        error: { message: `unknown tool "${input.name}"`, info: { name: 'ToolNotFoundError', code: 'UNKNOWN_TOOL' } },
+        content: [{ type: 'text', text: `Error: unknown tool "${input.name}"` }],
+      }
+    }
+    return { isError: false, value: { executed: input.name } }
+  },
 }
 
 // ── 加载被测试插件 ────────────────────────────────────────────────────────
@@ -375,6 +388,26 @@ await ok('嵌套调用传播 rootCallId（同一执行树）', (async () => {
   await callTool.execute({ tool: 'mcp__github__get_issue', arguments: { owner: 'o' } }, { agent: { id: 'a' }, rootCallId: 'root-123', signal: undefined })
   return executeCalls.length === 1 && executeCalls[0].rootCallId === 'root-123'
 })())
+await ok('DSH 0.1.2-rc.1: restrict MCP 代理 execute 省略 agent', (async () => {
+  executeCalls = []
+  const r = await callTool.execute(
+    { tool: 'mcp__github__get_issue', arguments: { owner: 'o', repo: 'r', issue_number: 1 } },
+    { agent: { id: 'a' }, rootCallId: 'root-mcp' },
+  )
+  return r.ok === true
+    && executeCalls.length === 1
+    && executeCalls[0].name === 'mcp__github__get_issue'
+    && executeCalls[0].agent === undefined
+    && executeCalls[0].rootCallId === 'root-mcp'
+})())
+await ok('scope 工具代理仍带 agent', (async () => {
+  executeCalls = []
+  const r = await callTool.execute(
+    { tool: 'subagent_qa', arguments: { prompt: 'ping' } },
+    { agent: { id: 'a' } },
+  )
+  return r.ok === true && executeCalls.length === 1 && executeCalls[0].agent && executeCalls[0].agent.id === 'a'
+})())
 await ok('代理调用 scope 常驻工具(job_output) → 拒绝', (async () => {
   // scope 工具只在 agent 视图可见——必须带 exec.agent（真实运行时 executor 总会提供）
   const r = await callTool.execute({ tool: 'job_output', arguments: {} }, { agent: { id: 'a' } })
@@ -577,6 +610,7 @@ await ok('capability_call 首次调用低频档位 → 自动挂载并执行', (
     && r.autoActivated === true && String(r.note).includes('首次使用自动激活')
     && pluginCalls.length === 1 && pluginCalls[0].cfg.toolName === 'subagent_thinker'
     && executeCalls.length === 1 && executeCalls[0].name === 'subagent_thinker'
+    && executeCalls[0].agent && executeCalls[0].agent.id === 'agent-1'
     && effectCalls.length === before
 })())
 await ok('低频档位自动激活后再次代理 → 不再挂载、直接执行', (async () => {

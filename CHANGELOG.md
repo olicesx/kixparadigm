@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.3.16（2026-09-11）DSH 0.1.5-rc.1 原生适配 + MCP 代理对齐 restrict ACL
+
+### DSH 0.1.5-rc.1 原生适配（preset 挂载失败修复）
+
+DSH 0.1.5-rc.1 下 kixparadigm **完全无法使用**：preset 挂载抛错 → 会话建不出来 → GUI
+composer 永久 inert。两处根因，均已在 0.1.2-rc.1 与 0.1.5-rc.1 双实例实测：
+
+- **`dsh-persona` 配置改名**：0.1.2 用 `text`（必填），0.1.5 改为 `prefix`（必填）+
+  `suffix`，并把 prompt section 拆成 PREFIX/SUFFIX。四份 preset 的 persona 行改用
+  YAML 锚点同时给出 `text` 与 `prefix`（同源，不复制文本）——两版都能挂。
+  `consistency-lib.cjs` 的 persona 预算提取同步接受锚点前缀。
+- **子代理 `toolFilter.deny` 含 `subagent` 会每次派发 throw**：`dsh-subagent` 用
+  `composeFrom(childCtx, parent.ctx)` 把 preset 挂进**子代理自己的 layer**，
+  own-layer 名不在 `restrictableNames` 内，`restrict({deny:['subagent']})` 抛
+  `names unknown global tool "subagent"`。四份 preset 的全部 32 处 deny 名单移除该名
+  （嵌套派发仍由 `kix-cost` 的 `tools.guard` + harness maxDepth 拒绝）。0.1.2 与 0.1.5
+  的 `restrict` 语义一致，故这是两版共同的真缺陷，此前只在线上 preset 手改过、未回仓库。
+
+**实测证据（隔离实例，DSH 0.1.5-rc.1）**：preset 挂载成功；persona 进入 system prompt；
+7 个 `kix_*` 工具注册；`restrict.applied=true / denyCount=52 / error=null`，可见面 0 个
+`mcp__` 工具；子代理派发 `subagent_lite` 成功（`echo kix-subagent-ok` → 原样返回，
+exit 0，`autoActivated=true`）。同一 preset 在 0.1.2-rc.1 上同样 7 工具可用。
+
+### MCP 代理对齐 DSH 0.1.2-rc.1 restrict ACL
+
+- **kix-focus**：`kix_capability_call` 对被 `restrict` deny 的全局 MCP 省略 `agent` 走全局 `execute`。DSH 0.1.2-rc.1 的 `restrict` 是继承面执行 ACL（`get(name, agent)` 读作 absent），带 agent 的嵌套 execute 会 `UNKNOWN_TOOL`。scope 可见工具仍带 agent。
+- **kix-guards v19**：外层 `kix_capability_call` unwrap `args.tool`，GitHub 写 main/缺 branch 与直呼同一 `checkGitHubWrite`。
+- **单测**：mock agent 视图应用 deny；MCP 带 agent 的 execute 模拟 `UNKNOWN_TOOL`。
+- **宿主**：GitHub MCP 环境变量对齐 `GITHUB_PERSONAL_ACCESS_TOKEN`（另见 systemd `EnvironmentFile=-/root/.dsh/mcp.env`）。**须重启 dsh-web** 才装载新插件；本会话已加载的旧模块不会热更。
+
 ## v1.3.15（2026-09-09）运行时修复批次入库：执行终态单源、门禁加固、视觉豁免、本机回环免 token
 
 - **工具执行终态单源（`execution-result.cjs`，四根）**：kix-discipline 原先用 `result && !result.isError` 判成功，导致非零 bash `exitCode`（canonical `{kind:'foreground', exitCode:N}`）与后台 spawn（`{kind:'background', jobId}`）都被记成 green/lint 证据。kix-settle 早已按 canonical 形状判定，但 settle 已 require discipline、反向依赖成环，故抽出第三处共用模块，终态形状与语义只定义一次。

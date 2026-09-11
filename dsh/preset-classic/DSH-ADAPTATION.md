@@ -68,11 +68,11 @@ autoApprove 全开 → 对应 DSH 权限预设（本部署 `danger-full-access`�
 
 **极简+渐进披露插件（kix-focus，2026-08-16 新增，三层递进 P4）**：把模型每轮可见工具面从 ~85 个（~108KB schema，估算 ~30.8K token）裁到常驻核心集，量化 **-81.6%**（`scripts/quantify-focus.cjs` 可复跑）：
 - **Phase 1 裁剪**：当前用 `tools.restrict({ deny })` 隐藏全局 MCP / global web_search；历史 `RESTRICT_ALLOW` 仅作统计，含 10 个全局基础工具（edit/write/read/grep/glob/pwsh/bash/ask_user_question/todo_write/skill）。scope 注册的 generic/cross/reviewer/dev/qa、workflow、job_*、子代理控制与 preset `web_search` 自动可见，不列入 restrict；goal、lite/thinker/vision/fork 按需，ralph 已移除。`tools/change` 事件重试（MCP 可能晚于插件注册）
-- **Phase 2 渐进披露**：`kix_capability_search`（用**全局视图** `schemas(undefined)` 列出被裁剪工具，返回分组元数据不含全 schema）+ `kix_capability_call`（`get(name, undefined)` 全局存在性检查 + 经 `ctx.tools.execute` 代理执行，走完整 pre-execute→guards→execute→post-execute 管线，门禁依然拦截；**传播 `rootCallId`**（嵌套执行树归属），带 agent 调用非 model-direct 不会被 UNKNOWN_TOOL 拒绝）
+- **Phase 2 渐进披露**：`kix_capability_search`（用**全局视图** `schemas(undefined)` 列出被裁剪工具，返回分组元数据不含全 schema）+ `kix_capability_call`（agent 视图优先、否则全局存在性检查）。DSH 0.1.2-rc.1 起 `restrict` 是继承面执行 ACL：对被 deny 的全局 MCP **省略 agent** 走全局 `execute`（带 agent 即 `UNKNOWN_TOOL`）；scope 可见工具仍带 agent。**传播 `rootCallId`**。GitHub 写门禁由 kix-guards 在外层 `kix_capability_call` unwrap `args.tool`
 - **感知设计（2026-08-16 修订）**：**不挂 pre-execute deny**——restrict 已保证被裁剪工具对模型不可见（直呼=UNKNOWN_TOOL 到不了 pre-execute），且 capability_call 内部子调用必须放行（否则代理永远失败）；引导由 call 返回与 persona 触发句承担
 - **Phase 3 PTC 协同**：保持 `tool-presentation mode: both`；kix 红线「原始输出即证据或需逐步观察时用 native 直呼（证据可回放）」不变；capability_call 亦可被 run_code SDK 子分派调用（子分派过门禁）
 - 配置：`enableRestrict: false` 关闭裁剪（仅保留 search/call）；`extraResidentTools` 追加常驻
-- 与 kix-guards 交互：capability_call/search 已入 KNOWN_SAFE_TOOLS 白名单（防未来正则误伤）；被代理工具的每次子调用仍过 kix-guards 门禁
+- 与 kix-guards 交互：capability_call/search 已入 KNOWN_SAFE_TOOLS 白名单（防未来正则误伤）；MCP 代理的 GitHub 写在外层 capability_call unwrap，不依赖内层 agent 视图 pre-execute
 - **2026-08-17（决策 A+B，用户原则：简单机械不影响思考的工具常驻，有认知负担的工具机制化自动激活）**：job_*（job_output/job_list/job_kill）**常驻化**——后台任务随时可用（修 tool-jobs 曾 disabled 时 run_in_background 报 "background jobs unavailable: no job controller serves this agent" 的组成矛盾）；subagent 细分档位与 goal **首次使用自动激活**——capability_call 代理未挂载的可激活工具时自动 `ctx.plugin` 挂载并继续执行（激活由**机制**兜底，模型无需记住先 kix_tool_activate；下一轮起可直呼；kix_tool_activate 保留为显式预激活，kix_tool_deactivate 卸载）
 
 **一致性守护写时拦截（kix-consistency，2026-08-17 新增 P5；v1.2.15 泛化）**：CI 脚本只在测试期校验、改 preset 文件不实时拦截 drift，本插件把「唯一事实源」从自觉变机械（见 `PLUGINIZATION-ROADMAP.md` P5）：
@@ -224,6 +224,7 @@ kix 的原始编排假设只有 runSubagent；DSH 提供更结构化的原生能
 3. **slash command（/kixpower-*）已注册为 DSH 原生命令**（P1-8，2026-08-15）：`plugins/kix-commands.js` 注册 5 命令（kixpower-new/import/continue/review/kixpower），敲 `/` 见候选、触发后 handler 读 `prompts/*.prompt.md` 剥离 frontmatter 注入 user 消息（与 /plan 同语义，零 token）。「无 UI 注册」过期文案已于 2026-08-15 全量修复（persona §DSH 适配、kixpower/SKILL.md 适配注记），不再残留
 4. **CodeGraphy / GitHub MCP 无对应**——降级 grep/read + gh CLI
 5. **memory 不自动注入**——按需读取
+6. **DSH 版本跨度**：0.1.5-rc.1 有两处破坏性变更会让 preset **挂不上**（persona `text`→`prefix`；子代理 `toolFilter.deny` 含 `subagent` 每次派发 throw），两者已修且经 0.1.2 / 0.1.5 双实例实测。机制与证据见 `dsh/README-DSH.md` 的「DSH 0.1.5-rc.1 适配」节
 
 ## 8. 编排载体选择
 
