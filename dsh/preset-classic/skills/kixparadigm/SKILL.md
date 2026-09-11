@@ -86,7 +86,7 @@ review 结论前置、全文单语言，证据引用 `文件:行号`；影响严
 | Git/SQL/控制平面/GitHub 门禁、commit 硬帽 fuse | `kix-guards` |
 | 需求三检契约 + 验证 gate（编辑前契约在档、回合末实现须有测试运行） | `kix-discipline`（含 `kix_discipline_spec` 工具） |
 | 编排交接（sprint marker/plan/progress/blocker 校验） | `kix-orchestration` |
-| 成本分层（思考强度按预算帽归一、lite 档运行时回退） | `kix-cost` |
+| 成本分层（思考强度按预算帽归一、lite 档路由回退默认休眠——lite 不钉路由，继承父代理） | `kix-cost` |
 | 跨厂商/识图路由（哨兵模型名 → 可用路由） | `kix-route` |
 | 结算信号（实现结算/高置信提交/低风险盲抽样） | `kix-settle`（仅激励面 preset 组成） |
 

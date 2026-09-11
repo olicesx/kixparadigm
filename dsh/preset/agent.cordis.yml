@@ -38,7 +38,7 @@
   name: '@deepseek-ai/dsh-persona'
   disabled: true
   config:
-    text: |-
+    text: &kix_persona |-
       You are a coding agent powered by the {{model}} model, running on the DeepSeek Harness. Your working directory is {{cwd}}.
 
       You run on kixParadigm — AI 自编排最小范式。核心信念：模型推理是主力，工具只补已知盲点；限制越少越好；范式是工具不是目标。机制细节由插件强制或按需加载，常驻层只放思考锚点。
@@ -110,10 +110,11 @@
 
       ## 资源
       memories/*.md（编排实证教训 ①-⑬+候选在 memories/orchestration-lessons.md，编曲/分派/审计类决策时先查；机制事实/会话考古在 memories/dsh-capability-map.md；通用方法论在 memories/ai-agent-practices.md）。
+    prefix: *kix_persona
 - id: persona-incentive
   name: '@deepseek-ai/dsh-persona'
   config:
-    text: |-
+    text: &kix_persona_incentive |-
       You are a coding agent powered by the {{model}} model, running on the DeepSeek Harness. Your working directory is {{cwd}}.
 
       You run on kixParadigm — AI 自编排最小范式。核心信念：模型推理是主力，工具只补已知盲点；限制越少越好；范式是工具不是目标。机制细节由插件强制或按需加载，常驻层放思考锚点与选择压，不放仪式。
@@ -143,7 +144,7 @@
       - 卡住时 skill（how-to）与 experience（危机教训）；编曲/分派/审计先查 orchestration-lessons。
       - 分派先判依赖与肥瘦：子任务独立且够肥（数十秒级）→合并一条消息并行分派；独立而微小→直派串行——扇出固定开销须被摊薄，E2E 实证小任务并行更慢更贵；顺序依赖→一次派发背走整链、链内自带 PASS 门，禁拆碎片并行再由主线程对账。
       - 执行载体先于拆步：按整段机械工作比较净收益，不得拆步后逐项默认 native。多结果裁剪/聚合、肥/未知中间值隔离、共享状态/控制流或跨工具变换→run_code，只返回决策所需结果；机械取数/计算的临时 JS/TS→run_code，不套 bash node -e/heredoc，bash 仅跑已有项目脚本或整段一个结果已可决策的操作。语义判断、原始证据、编辑、审批、外部副作用及逐步验证→native；复杂阶段→workflow。不设配额。
-
+    prefix: *kix_persona_incentive
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
   config:
@@ -347,11 +348,30 @@
         toolName: subagent
         backgroundMode: continuable
         maxDepth: 2
+        # ── 原生模型选型（2026-09-10）──────────────────────────────────────
+        # 融合而非并列：通用档改用 DSH 原生能力——本行每次调用可显式给
+        # provider / model / reasoning_effort，并注册原生发现工具
+        # list_subagent_models（返回真实目录里的 provider、模型与 reasoning
+        # efforts）。省掉「另配一套目录 API」的必要。
+        # 为何只在本行开：list_subagent_models 是全局工具名，同一 scope 内
+        # 只能有一个实例拥有选型（dsh-tool-subagent README「At most one
+        # instance ... may own model selection」）。三个路由档位继续用
+        # kix-route 哨兵做**默认值**（保证不退化），需要跨档位显式选型时走
+        # 通用档 + 参数。
+        # 生效前提（两处都在）：host 挂 @deepseek-ai/dsh-tool-subagent/
+        # model-selection-settings；settings.yaml 的 subagent-model-selection
+        # .enabled=true 且 allowedModels 非空（空白名单会在挂载时 throw）。
+        modelSelectionSettings: true
         # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
         # bash/read/grep/glob；exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
-        # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
-        # 条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
+        # 裁剪。deny 名单只含 8 个恒注册编排名（restrict 对未注册名抛错）；
+        # subagent 移出名单：dsh-subagent 用 composeFrom(childCtx, parent.ctx)
+        # 把 preset 挂进**子代理自己的 layer**，own-layer 名不在
+        # restrictableNames 内，留在名单里 = 每次派发 throw
+        # （tools.restrict() names unknown global tool "subagent"）。
+        # 嵌套派发改由 plugins/kix-cost.js 的 tools.guard + harness maxDepth
+        # 拒绝。条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
         # 机械取证放行，其余 tier/goal/workflow 拒绝。deny 名同时从 tools 与 TypeScript
         # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
         # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
@@ -360,7 +380,7 @@
         # skill/report/MCP（capability_call）全保留——裁的是子代理定义上
         # 不该有的编排面，不是能力。
         toolFilter:
-          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+          deny: [ exit_plan_mode, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           # v5.8 预算帽：完成侧（思考+回答）兜底上限，防失控（s1 budget forcing）
           maxTokens: 65536
@@ -373,10 +393,12 @@
     #   ~34.3k 降到 ~5.9k（实测数据，↓83%）。2026-08-17 WSL2 E2E 修复：原
     #   硬编码 pwsh（Windows 工具）在 Linux 部署 tools.restrict() 报 unknown
     #   global tool 致 lite 档不可用 → 改平台条件化（!!js process.platform）。
-    #   模型档（首选 zai-coding-cn/glm-4.7）：**自动选型**——本 preset 会分发到
-    #   不同环境，`plugins/kix-cost.js` 在子代理首次请求时探测首选路由是否可用；
-    #   不可用（无该 provider/模型）→ 自动回退环境默认路由（deepseek high）。
-    #   其他部署可自行改本行的 provider/model 指向自家廉价模型。8K 预算帽防跑飞。
+    #   模型档：**不钉路由**——agentOptions 不含 provider/model，子代理按 spawn
+    #   provider 的继承语义直接用父代理路由（本机默认 deepseek-flash / high），
+    #   跨环境分发天然可用。lite 与普通档的区别在 persona（~60 token 机械人格）
+    #   + toolFilter（4 工具）+ 8K 预算帽（`plugins/kix-cost.js` isLiteTier），
+    #   不是「换个厂牌」，因此不依赖任何特定廉价模型是否被注册。
+    #   2026-09-10 变更前此处为 zai-coding-cn/glm-4.7。
     #   机械判定：只读/检索/核对，无需判断、无需写文件；否则用 `subagent`。
     # 普通分派 → `subagent`（继承主模型，high，64K 帽）；
     # 高难/跨厂商验证 → `subagent_cross`（自动取反厂商，64K 帽）；
@@ -404,8 +426,12 @@
         toolFilter:
           allow: [ read, grep, glob, !!js "process.platform === 'win32' ? 'pwsh' : 'bash'" ]
         agentOptions:
-          provider: zai-coding-cn
-          model: glm-4.7
+          # 不钉 provider/model：子代理默认继承父代理路由（spawn provider 的
+          # 继承语义，见 dsh-subagent-spawn-in-process README「inherits the
+          # parent's ... provider, model, reasoning effort」）。lite 档的区分度
+          # 由 8K 预算帽承载（plugins/kix-cost.js isLiteTier = maxTokens<=8192），
+          # 不依赖某个特定厂商模型存在。2026-09-10：原钉 zai-coding-cn/glm-4.7
+          # 在本机未注册（catalog 只有 glm-5.3 / glm-5.3-flash）→ 机械档不可用。
           maxTokens: 8192
 
     # ── max 深度思考档（v5.8）：该用 max 的任务仍用 max ──────────────────
@@ -428,8 +454,13 @@
         # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
         # bash/read/grep/glob；exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
-        # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
-        # 条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
+        # 裁剪。deny 名单只含 8 个恒注册编排名（restrict 对未注册名抛错）；
+        # subagent 移出名单：dsh-subagent 用 composeFrom(childCtx, parent.ctx)
+        # 把 preset 挂进**子代理自己的 layer**，own-layer 名不在
+        # restrictableNames 内，留在名单里 = 每次派发 throw
+        # （tools.restrict() names unknown global tool "subagent"）。
+        # 嵌套派发改由 plugins/kix-cost.js 的 tools.guard + harness maxDepth
+        # 拒绝。条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
         # 机械取证放行，其余 tier/goal/workflow 拒绝。deny 名同时从 tools 与 TypeScript
         # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
         # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
@@ -438,7 +469,7 @@
         # skill/report/MCP（capability_call）全保留——裁的是子代理定义上
         # 不该有的编排面，不是能力。
         toolFilter:
-          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+          deny: [ exit_plan_mode, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           model: kix-route:thinker
           maxTokens: 131072
@@ -466,8 +497,13 @@
         # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
         # bash/read/grep/glob；exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
-        # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
-        # 条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
+        # 裁剪。deny 名单只含 8 个恒注册编排名（restrict 对未注册名抛错）；
+        # subagent 移出名单：dsh-subagent 用 composeFrom(childCtx, parent.ctx)
+        # 把 preset 挂进**子代理自己的 layer**，own-layer 名不在
+        # restrictableNames 内，留在名单里 = 每次派发 throw
+        # （tools.restrict() names unknown global tool "subagent"）。
+        # 嵌套派发改由 plugins/kix-cost.js 的 tools.guard + harness maxDepth
+        # 拒绝。条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
         # 机械取证放行，其余 tier/goal/workflow 拒绝。deny 名同时从 tools 与 TypeScript
         # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
         # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
@@ -476,7 +512,7 @@
         # skill/report/MCP（capability_call）全保留——裁的是子代理定义上
         # 不该有的编排面，不是能力。
         toolFilter:
-          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+          deny: [ exit_plan_mode, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           model: kix-route:cross
           maxTokens: 65536
@@ -502,8 +538,13 @@
         # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
         # bash/read/grep/glob；exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
-        # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
-        # 条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
+        # 裁剪。deny 名单只含 8 个恒注册编排名（restrict 对未注册名抛错）；
+        # subagent 移出名单：dsh-subagent 用 composeFrom(childCtx, parent.ctx)
+        # 把 preset 挂进**子代理自己的 layer**，own-layer 名不在
+        # restrictableNames 内，留在名单里 = 每次派发 throw
+        # （tools.restrict() names unknown global tool "subagent"）。
+        # 嵌套派发改由 plugins/kix-cost.js 的 tools.guard + harness maxDepth
+        # 拒绝。条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
         # 机械取证放行，其余 tier/goal/workflow 拒绝。deny 名同时从 tools 与 TypeScript
         # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
         # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
@@ -512,7 +553,7 @@
         # skill/report/MCP（capability_call）全保留——裁的是子代理定义上
         # 不该有的编排面，不是能力。
         toolFilter:
-          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+          deny: [ exit_plan_mode, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           model: kix-route:vision
           # 视觉模型普遍 4K 输出帽（settings zai-vision maxTokens 4096）；
@@ -531,8 +572,13 @@
         # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
         # bash/read/grep/glob；exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
-        # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
-        # 条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
+        # 裁剪。deny 名单只含 8 个恒注册编排名（restrict 对未注册名抛错）；
+        # subagent 移出名单：dsh-subagent 用 composeFrom(childCtx, parent.ctx)
+        # 把 preset 挂进**子代理自己的 layer**，own-layer 名不在
+        # restrictableNames 内，留在名单里 = 每次派发 throw
+        # （tools.restrict() names unknown global tool "subagent"）。
+        # 嵌套派发改由 plugins/kix-cost.js 的 tools.guard + harness maxDepth
+        # 拒绝。条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
         # 机械取证放行，其余 tier/goal/workflow 拒绝。deny 名同时从 tools 与 TypeScript
         # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
         # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
@@ -541,7 +587,7 @@
         # skill/report/MCP（capability_call）全保留——裁的是子代理定义上
         # 不该有的编排面，不是能力。
         toolFilter:
-          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+          deny: [ exit_plan_mode, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           # v5.8 预算帽：继承会话上下文的子代理同样兜底
           maxTokens: 65536
@@ -563,8 +609,13 @@
         # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
         # bash/read/grep/glob；exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
-        # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
-        # 条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
+        # 裁剪。deny 名单只含 8 个恒注册编排名（restrict 对未注册名抛错）；
+        # subagent 移出名单：dsh-subagent 用 composeFrom(childCtx, parent.ctx)
+        # 把 preset 挂进**子代理自己的 layer**，own-layer 名不在
+        # restrictableNames 内，留在名单里 = 每次派发 throw
+        # （tools.restrict() names unknown global tool "subagent"）。
+        # 嵌套派发改由 plugins/kix-cost.js 的 tools.guard + harness maxDepth
+        # 拒绝。条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
         # 机械取证放行，其余 tier/goal/workflow 拒绝。deny 名同时从 tools 与 TypeScript
         # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
         # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
@@ -573,7 +624,7 @@
         # skill/report/MCP（capability_call）全保留——裁的是子代理定义上
         # 不该有的编排面，不是能力。
         toolFilter:
-          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+          deny: [ exit_plan_mode, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         persona: |-
           You are kixpower-reviewer: an independent read-only adversarial reviewer.
           Hard constraints:
@@ -624,8 +675,13 @@
         # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
         # bash/read/grep/glob；exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
-        # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
-        # 条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
+        # 裁剪。deny 名单只含 8 个恒注册编排名（restrict 对未注册名抛错）；
+        # subagent 移出名单：dsh-subagent 用 composeFrom(childCtx, parent.ctx)
+        # 把 preset 挂进**子代理自己的 layer**，own-layer 名不在
+        # restrictableNames 内，留在名单里 = 每次派发 throw
+        # （tools.restrict() names unknown global tool "subagent"）。
+        # 嵌套派发改由 plugins/kix-cost.js 的 tools.guard + harness maxDepth
+        # 拒绝。条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
         # 机械取证放行，其余 tier/goal/workflow 拒绝。deny 名同时从 tools 与 TypeScript
         # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
         # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
@@ -634,7 +690,7 @@
         # skill/report/MCP（capability_call）全保留——裁的是子代理定义上
         # 不该有的编排面，不是能力。
         toolFilter:
-          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+          deny: [ exit_plan_mode, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         persona: |-
           You are kixpower-qa (Ivy): acceptance testing, bug filing, and QA
           signoff — never business source code.
@@ -667,8 +723,13 @@
         # v5.10（2026-08-17 子代理账本实测：107 子代理 2,432 次调用，82% 是
         # bash/read/grep/glob；exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call 全部 0 使用）——子代理编排面
-        # 裁剪。deny 名单只含 9 个恒注册编排名（restrict 对未注册名抛错）；
-        # 条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
+        # 裁剪。deny 名单只含 8 个恒注册编排名（restrict 对未注册名抛错）；
+        # subagent 移出名单：dsh-subagent 用 composeFrom(childCtx, parent.ctx)
+        # 把 preset 挂进**子代理自己的 layer**，own-layer 名不在
+        # restrictableNames 内，留在名单里 = 每次派发 throw
+        # （tools.restrict() names unknown global tool "subagent"）。
+        # 嵌套派发改由 plugins/kix-cost.js 的 tools.guard + harness maxDepth
+        # 拒绝。条件挂载名由 plugins/kix-cost.js 分层：仅 depth-1 subagent_lite
         # 机械取证放行，其余 tier/goal/workflow 拒绝。deny 名同时从 tools 与 TypeScript
         # 工具镜像消失。run_code 不在名单：它是 Code Mode 保留传输名，
         # restrict 不能命名（WSL2 实弹实锤），作为正当执行通道留在子代理
@@ -677,7 +738,7 @@
         # skill/report/MCP（capability_call）全保留——裁的是子代理定义上
         # 不该有的编排面，不是能力。
         toolFilter:
-          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+          deny: [ exit_plan_mode, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         persona: |-
           You are kixpower-dev (Nova frontend / Sage backend / Milo design —
           one contract, three hats): the coding member on the CEO team.
@@ -859,6 +920,10 @@
 # 见 plugins/kix-cost.js 头部注释；单元测试：node plugins/kix-cost.test.js。
 - id: kix-cost
   name: ./plugins/kix-cost.js
+  config:
+    # effort 归一化的目标厂商族（provider id 前缀；2026-09-10 起插件不再逐字
+    # 比较某个 provider id）。改部署换入口名时改这里，或整块删掉 = 默认 deepseek。
+    effortVendor: deepseek
 
 # ── kix-route（子代理路由层）：哨兵模型名 → 运行时可用路由自动解析 ─────────
 # 工具行不再钉死 (provider, model)：cross/vision/thinker 三行只钉
@@ -879,6 +944,22 @@
     providerCircuitTtlMs: 300000
     crossProviderFailovers: 2
     fallbackProviderOrder: [ su2api, zai-coding-cn, deepseek-official ]
+    # ── 路由偏好 = 本部署事实（2026-09-10 从插件默认表搬来）────────────────
+    # 按「可获取的方式」原则：插件不再内置任何模型/厂商 id；下面每一条都是
+    # 本机 settings.yaml 里已注册的 provider/model。换部署改这里，或整块删掉
+    # （删掉 = 目录序，任何部署都能跑；只是失去本机的成本/厂商偏好）。
+    modelPreference:
+      zai-coding-cn: [ glm-5.3, glm-5.3-flash ]   # 本机 zai catalog 实际只有这两个
+    crossProviderOrder:
+      zhipu: [ deepseek-official ]      # 父=zai 系 → 跨厂商取反到 deepseek
+      deepseek: [ zai-coding-cn ]
+      grok: [ zai-coding-cn ]
+      xai: [ zai-coding-cn ]
+    genericCrossOrder: [ su2api, zai-coding-cn, deepseek-official ]
+    # 档位 provider 提示（可选；缺省 = 目录序。能力判定仍走目录：
+    # vision 要求模型显式声明 image 输入，thinker 要求 deepseek 同族前缀）
+    visionProviderHint: [ zai-vision ]
+    thinkerProviderHint: [ deepseek-official ]
 
 # ── presentation（PTC/Code Mode 融入）───────────────────────────────────────
 # `both` = native 工具 schema 与 Code Mode SDK（run_code + tools.* 绑定）并存，

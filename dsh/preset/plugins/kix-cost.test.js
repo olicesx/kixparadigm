@@ -46,7 +46,7 @@ plugin.apply(ctx)
 const onRequest = listeners['agent/request']
 assert.ok(Array.isArray(onRequest) && onRequest.length === 1, 'agent/request 监听器已注册')
 
-const { decideEffort, effortIdsOf, isSubagentChild, isLiteTier, probeRoute, isChildOrchestrationCall, leafTextOf, classifyComplexity, adaptiveEffort, hasActiveSignal } = plugin.__internals
+const { decideEffort, effortIdsOf, isSubagentChild, isLiteTier, probeRoute, isChildOrchestrationCall, leafTextOf, classifyComplexity, adaptiveEffort, hasActiveSignal, vendorOf, DEFAULT_EFFORT_VENDOR } = plugin.__internals
 assert.ok(guards.length === 1, 'tools.guard 已注册（v5.10 child guard）')
 const onPreStep = listeners['agent/pre-step']
 assert.ok(Array.isArray(onPreStep) && onPreStep.length === 1, 'agent/pre-step 监听器已注册（v5.11 复杂度画像）')
@@ -78,7 +78,13 @@ check('decideEffort: deepseek 64K → high', decideEffort('deepseek-official', 6
 check('decideEffort: deepseek 128K → max', decideEffort('deepseek-official', 131072) === 'max')
 check('decideEffort: deepseek 98K 阈值 → max', decideEffort('deepseek-official', 98304) === 'max')
 check('decideEffort: zai → undefined（适配器自管）', decideEffort('zai-coding-cn', 8192) === undefined)
-check('decideEffort: deepseek 无预算 → high', decideEffort('deepseek-official', undefined) === 'high')
+check('decideEffort: 无预算 → high', decideEffort('deepseek-official', undefined) === 'high')
+// 2026-09-10：effort 归属由「厂商族前缀」判定，不再逐字比较 provider id
+check('decideEffort: 同族入口改名仍生效（deepseek-partner 64K → high）', decideEffort('deepseek-partner', 65536) === 'high')
+check('decideEffort: 非目标族不接管（acme-deepseek 的族是 acme）', decideEffort('acme-deepseek', 131072) === undefined)
+check('decideEffort: effortVendor 可配置（目标族换 zhipu → zai 64K 得 high）', decideEffort('zai-coding-cn', 65536, 'zhipu') === 'high')
+check('decideEffort: effortVendor 换族后原族不再被接管（deepseek → undefined）', decideEffort('deepseek-official', 65536, 'zhipu') === undefined)
+check('vendorOf: zai-*/zhipu-* → zhipu（与 kix-route 同规则）', vendorOf('zai-coding-cn') === 'zhipu' && vendorOf('zhipu-x') === 'zhipu' && vendorOf('deepseek-official') === 'deepseek')
 check('isSubagentChild: depth 1 → true', isSubagentChild({ subagentDepth: 1 }) === true)
 check('isSubagentChild: depth 0 → false', isSubagentChild({ subagentDepth: 0 }) === false)
 check('isSubagentChild: 主会话无字段 → false', isSubagentChild({}) === false)

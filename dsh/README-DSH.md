@@ -85,6 +85,33 @@ node --test dsh\vision-bridge\test.js           # vision-bridge 纯逻辑回归
 
 preset 挂载校验（roster `standingKeyFor`）在 DSH 会话内用 cordis 工具集执行。
 
+## DSH 0.1.5-rc.1 适配（2026-09-11 实测，两处破坏性变更）
+
+0.1.2-rc.1 下零改动可跑的 preset，在 0.1.5-rc.1 上**完全挂不上**：preset 挂载抛错 →
+会话建不出来 → GUI composer 永久停在 inert（「选择一个工作区开始」），表现为「kix 范式无法使用」。
+两个独立根因：
+
+| # | 变更 | 影响面 | 修法 |
+|---|---|---|---|
+| 1 | `@deepseek-ai/dsh-persona` 配置从 `text`（必填）改为 `prefix`（必填）+ `suffix`，prompt section 拆成 `DEPLOYMENT_PERSONA_PREFIX` / `_SUFFIX` | 四份 preset 的每个 persona 行；挂载报 `invalid config: $.prefix missing required value` | persona 行改用 YAML 锚点，同时给出 `text` 与 `prefix`（同源，不复制文本）。schemastery 不拒绝未知键，故两版都能挂 |
+| 2 | 子代理 `toolFilter.deny` 含 `subagent` → **每次派发 throw** | 四份 preset 共 32 处 tier deny 名单 | 移除 `subagent`。嵌套派发仍由 `kix-cost` 的 `tools.guard` + harness `maxDepth` 拒绝 |
+
+**根因 2 的机制**：`dsh-subagent` 的 `applyChildComposition` 调
+`childCtx.get("agentPresets")?.composeFrom(childCtx, parent.ctx)`，把父 preset 的组成挂进
+**子代理自己的 layer**；`tools.view(scope).restrictableNames` 只含 inherited（全局 + 祖先，**不含
+own layer**），所以 own-layer 的 `subagent` 不在可 restrict 名单里，
+`restrict({deny:['subagent']})` 抛 `names unknown global tool "subagent"`。0.1.2 与 0.1.5 的
+`view()` / `restrict()` 实现逐字节一致，这是两版共同的真缺陷——此前只在线上的安装副本手改过，
+仓库没回填，重装即复发。
+
+**实测证据**（隔离 `DSH_HOME` + `0.1.5-rc.1`，装入仓库产物）：
+
+- preset 挂载成功，无报错；persona 文本进入会话 `system/message`
+- 7 个 `kix_*` 工具注册（capability_search / capability_call / discipline_spec / signal_status / stalled_check / tool_activate / tool_deactivate）
+- `kix_capability_search` 诊断：`restrict.applied=true`、`denyCount=52`、`error=null`；可见面 0 个 `mcp__` 工具
+- 子代理派发 `subagent_lite` 成功：`echo kix-subagent-ok` 原样返回，exit 0，`autoActivated=true`
+- 同一 preset 在 `0.1.2-rc.1` 隔离实例上同样列出 7 个 kix 工具（改动向后兼容）
+
 ## DSH 0.1.2 原生能力对接（2026-09-09 实测）
 
 本机安装 `0.1.1-rc.2`；npm latest = `0.1.2-rc.1`、alpha = `0.1.5-alpha.1`。隔离 DSH_HOME + 0.1.2-rc.1 实测：kix 预设零改动即可加载并跑通（system prompt 含 kixParadigm/三通道/需求三检，9 个 kix 机制工具全部注册）。三处对接：

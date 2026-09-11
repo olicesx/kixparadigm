@@ -70,12 +70,12 @@ description: "Kixpower — AI 多智能体协作编排（v5.7）。采用 DAG �
 ## v5.8 成本纪律（2026-08-15 日志实测驱动）
 
 > 常驻规则在 `agent.cordis.yml` persona「成本纪律」节（两 edition 均有）；本表是路由索引。
-> 机制落地：`plugins/kix-cost.js`（lite 自动选型 + 思考强度归一化）+ 四档子代理工具行 + per-role 预算帽。
+> 机制落地：`plugins/kix-cost.js`（lite 档路由回退默认休眠 + 思考强度归一化）+ 四档子代理工具行 + per-role 预算帽。
 
 | # | 方法 | 落地段 |
 |---|---|---|
 | ⑭ | 机械档精简组合（`subagent_lite`：机械 persona ~60 token + 只读 4 工具 + 8K 帽；每步固定开销 34.3k → ~5.9k，↓83%） | agent.cordis.yml `tool-subagent-lite` 行 |
-| ⑮ | lite 首选路由（zai/glm-4.7）首次请求自动探测，不可用回退环境默认路由（跨环境分发不挂） | `plugins/kix-cost.js` |
+| ⑮ | lite 档不钉路由（继承父代理路由；插件默认不含任何模型/厂商偏好）；仅当部署显式给 lite 钉 provider/model 时才首次请求探测 + 不可用回退环境默认路由 | `plugins/kix-cost.js` |
 | ⑯ | 思考强度归一化：`subagent_thinker`（≥98K 帽）→ max；其余 deepseek 子代理 → high（适配器默认 high/256K，64K 帽是跑飞防线） | `plugins/kix-cost.js`（agent/request waterfall） |
 | ⑰ | per-role 预算帽：subagent/cross/fork 64K、thinker 128K、lite 8K | 各工具行 `agentOptions.maxTokens` |
 | ⑱ | 禁轮询空转 / 观察者门控（1→分歧+1，并发≤3）/ [EFFORT]+[BUDGET] 标注 / outputSchema 回流 / 跨会话结论复用 / 同会话去重 | persona「成本纪律」节（agent.cordis.yml，P1 压缩为选择层；机制由 kix-cost/kix-route 插件强制） |

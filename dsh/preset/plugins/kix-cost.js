@@ -1,4 +1,4 @@
-// kix-cost — 子代理成本层：机械档自动选型 + 思考强度分层 + 有界 lite 取证（v5.12，2026-08-18）
+// kix-cost — 子代理成本层：机械档路由回退（默认休眠）+ 思考强度分层 + 有界 lite 取证（v5.12，2026-08-18）
 //
 // 解决的问题（源码 + 日志双重实测确认的机制）：
 //   A. 子代理思考强度失控：deepseek 子代理经 resolveChildAgentOptions 创建，
@@ -12,13 +12,17 @@
 //        （该用 max 的任务仍可用 max）；其余（subagent/subagent_fork，64K 帽）
 //        → reasoningEffort: high（默认档，与全局默认一致；预算帽 64K 才是
 //        真正的跑飞防线——适配器默认上限是 256K）。
-//   B. 机械档（subagent_lite）硬编码模型不适配他人环境：本 preset 会分发到
-//      不同部署，zai-coding-cn/glm-4.7 未必存在、未必配置。
-//      → 对轻量子代理（预算帽 ≤ 8K）在「首次请求」探测首选路由是否可用
-//        （llm.listProviders + llm.resolveModelInfo）；不可用 → 回退到环境
-//        默认路由（agentDefaultModel.currentSelection()，任何部署都有），
-//        并继续走档位注入（回退后通常是 deepseek → high）。
+//   B. 机械档（subagent_lite）不再钉路由（2026-09-10 变更；此前硬编码
+//      zai-coding-cn/glm-4.7，本机 catalog 无该模型 → 机械档直接不可用）。
+//      preset 的 agentOptions 只留 maxTokens: 8192 —— 子代理继承父代理路由
+//      （spawn provider 继承语义），任何部署开箱可用；lite 的区分度在
+//      persona + toolFilter + 8K 帽（见 isLiteTier），不在「换个厂牌」。
+//      → 探测/回退分支保留为防御路径：仅当某部署显式给 lite 钉了
+//        provider/model（自有廉价模型）时才触发——「首次请求」探测该路由是否
+//        可用（llm.listProviders + llm.resolveModelInfo），不可用 → 回退环境
+//        默认路由（agentDefaultModel.currentSelection()）并继续走档位注入。
 //        探测结果按 agent 缓存（WeakMap，无泄漏），每子代理只探测一次。
+//        默认配置（不钉路由）下本分支休眠：resolved 路由即继承来的可用路由。
 //   C.（v5.12）子代理再分派：账本实测 40/107 个 child 尝试派孙代；全开放会
 //      重复付固定开销，全禁止又损失局部机械取证。→ 静态 toolFilter 继续隐藏
 //      regular/cross 控制面；tools.guard 只放行 depth-1 → subagent_lite，拒绝
@@ -76,7 +80,7 @@
 'use strict'
 
 const HEAVY_MAXTOKENS = 98304   // thinker 行预算帽阈值（≥ → max）
-const LITE_MAXTOKENS = 8192     // lite 行预算帽（≤ → 机械档，需自动选型探测）
+const LITE_MAXTOKENS = 8192     // lite 行预算帽（≤ → 机械档；显式钉路由时才走路由回退探测）
 const HEAVY_EFFORT = 'max'
 const CHILD_EFFORT = 'high'
 const TRIVIAL_EFFORT = 'off'     // v5.11：高置信机械活 → 关思考（deepseek 直发；非 deepseek 需能力表含 off）
@@ -86,11 +90,23 @@ const LOW_EFFORT = 'low'         // v5.11：非 deepseek 能力门控次选降�
 // 前缀一旦变更测试当场翻红）。
 const KIX_ROUTE_SENTINEL_PREFIX = 'kix-route:'
 
+/** 厂商前缀归一（与 kix-route 的 vendorOf 同一规则：provider id 破折号前段）。
+ * 用「族」而不是某个具体 provider id 判定 effort 归属——换官方入口名
+ * （deepseek-official → 别的 id）不该让整条 effort 分层静默失效。
+ * 2026-09-10：原实现逐字比较 provider === 'deepseek-official'（硬编码 id）。 */
+function vendorOf(provider) {
+  if (typeof provider !== 'string' || provider === '') return ''
+  if (provider === 'zai' || provider === 'zhipu' || provider.startsWith('zai-') || provider.startsWith('zhipu-')) return 'zhipu'
+  return provider.split('-')[0]
+}
+/** effort 分层的目标厂商（config.effortVendor 可覆盖；默认 deepseek 族）。 */
+const DEFAULT_EFFORT_VENDOR = 'deepseek'
+
 // ── 纯判定函数（模块级：单元测试经 __internals 直接验证）───────────────
 
-/** deepseek 子代理按预算帽决定 effort；非 deepseek 返回 undefined（适配器自管）。 */
-function decideEffort(provider, maxTokens) {
-  if (provider !== 'deepseek-official') return undefined
+/** deepseek 族子代理按预算帽决定 effort；其他族返回 undefined（适配器自管）。 */
+function decideEffort(provider, maxTokens, effortVendor = DEFAULT_EFFORT_VENDOR) {
+  if (vendorOf(provider) !== effortVendor) return undefined
   return (maxTokens ?? 0) >= HEAVY_MAXTOKENS ? HEAVY_EFFORT : CHILD_EFFORT
 }
 
@@ -116,7 +132,7 @@ function isSubagentChild(opts) {
   return (opts?.subagentDepth ?? 0) >= 1
 }
 
-/** 是否为轻量子代理（预算帽 ≤ 8K → 机械档，需自动选型）。 */
+/** 是否为轻量子代理（预算帽 ≤ 8K → 机械档；路由默认继承父代理，不钉 provider/model）。 */
 function isLiteTier(opts) {
   return (opts?.maxTokens ?? 0) <= LITE_MAXTOKENS
 }
@@ -318,8 +334,8 @@ function classifyComplexity(text) {
  *     无能力数组（未探测 / 探测失败缓存 []）→ undefined（适配器自管，行为
  *     不变）。绝不返回能力表外的 effort。
  */
-function adaptiveEffort(entry, provider, maxTokens, supportedEfforts) {
-  if (provider !== 'deepseek-official') {
+function adaptiveEffort(entry, provider, maxTokens, supportedEfforts, effortVendor = DEFAULT_EFFORT_VENDOR) {
+  if (vendorOf(provider) !== effortVendor) {
     if (!Array.isArray(supportedEfforts)) return undefined
     const profile = entry && entry.profile
     if (profile === 'trivial') {
@@ -332,7 +348,7 @@ function adaptiveEffort(entry, provider, maxTokens, supportedEfforts) {
     }
     return undefined
   }
-  const base = decideEffort(provider, maxTokens)
+  const base = decideEffort(provider, maxTokens, effortVendor)
   const profile = entry && entry.profile
   if (profile === 'trivial') return TRIVIAL_EFFORT
   if (profile === 'deep' && base === CHILD_EFFORT && (maxTokens ?? 0) > LITE_MAXTOKENS) {
@@ -367,7 +383,7 @@ function isChildOrchestrationCall(name, opts, args) {
 }
 
 /**
- * 探测首选路由是否可用：provider 已注册适配器 + 模型可解析。
+ * 探测给定路由是否可用：provider 已注册适配器 + 模型可解析。
  * 任何异常（未知 provider/模型、探测失败）→ false（触发回退）。
  */
 async function probeRoute(llm, provider, model, signal) {
@@ -388,7 +404,10 @@ async function probeRoute(llm, provider, model, signal) {
 module.exports = {
   name: 'kix-cost',
   inject: ['tools'],
-  apply(ctx) {
+  apply(ctx, config) {
+    // effort 分层目标厂商：默认 deepseek 族，preset config 可覆盖（换部署/换入口名
+    // 不必改插件代码——2026-09-10 前这里是逐字比较 'deepseek-official' 的硬编码 id）。
+    const effortVendor = (config && typeof config.effortVendor === 'string' && config.effortVendor) || DEFAULT_EFFORT_VENDOR
     // v5.10 child guard：tools.guard 是单调守卫（pre-execute 瀑布后、同步判定）。
     // 注册在 preset 层 = 对挂载下的所有 agent 生效；谓词只对 child 生效。
     // inject 声明 'tools'（Cordis：ctx 属性访问必须 inject；ctx.get 不需要），
@@ -456,7 +475,7 @@ module.exports = {
       let config = resolved
       const llm = ctx.get('llm')
 
-      // A. 机械档自动选型：首选路由不可用 → 回退环境默认路由。
+      // A. 机械档路由回退（默认配置下休眠：lite 不钉路由，inherited 路由可用）：
       // 2026-08-17 修复（外部审查 5.6 发现 + 源码复核确认）：旧实现只缓存
       // 'ok'|'fallback' 标签不缓存回退路由——第二轮请求 probes.get(agent)
       // 已非 undefined，跳过整个探测块，config=resolved 回到不可用的首选
@@ -498,13 +517,13 @@ module.exports = {
                 ...(fallbackRoute.reasoningEffort === undefined ? {} : { reasoningEffort: fallbackRoute.reasoningEffort }),
               }
             } else {
-              // 环境默认路由也不可得：只缓存探测结果，不改写（保持首选路由，
+              // 环境默认路由也不可得：只缓存探测结果，不改写（保持该路由，
               // 由适配器响亮报错，不静默降级到未知路由）
               probes.set(agent, { ok: false })
             }
           }
         }
-        // cached 为 {ok:true} → 首选路由可用，不改写
+        // cached 为 {ok:true} → 该路由可用，不改写
       }
 
       // B. 思考强度分层 + v5.11 复杂度感知。deepseek 子代理（含回退后仍为
@@ -521,7 +540,7 @@ module.exports = {
         let supported
         if (
           (profile === 'trivial' || profile === 'deep')
-          && config.provider !== 'deepseek-official'
+          && vendorOf(config.provider) !== effortVendor
           && typeof config.provider === 'string' && typeof config.model === 'string'
           && llm !== undefined
         ) {
@@ -540,7 +559,7 @@ module.exports = {
           }
           supported = byRoute.get(key)
         }
-        const effort = adaptiveEffort(entry, config.provider, config.maxTokens, supported)
+        const effort = adaptiveEffort(entry, config.provider, config.maxTokens, supported, effortVendor)
         if (effort !== undefined) config = { ...config, reasoningEffort: effort }
       }
       return config
@@ -548,4 +567,4 @@ module.exports = {
   },
 }
 
-module.exports.__internals = { KIX_ROUTE_SENTINEL_PREFIX, decideEffort, effortIdsOf, isSubagentChild, isLiteTier, probeRoute, childOrchestrationTarget, isChildOrchestrationCall, CHILD_ORCHESTRATION_DENY_REASON, leafTextOf, classifyComplexity, adaptiveEffort, hasActiveSignal }
+module.exports.__internals = { KIX_ROUTE_SENTINEL_PREFIX, decideEffort, effortIdsOf, isSubagentChild, isLiteTier, probeRoute, childOrchestrationTarget, isChildOrchestrationCall, CHILD_ORCHESTRATION_DENY_REASON, leafTextOf, classifyComplexity, adaptiveEffort, hasActiveSignal, vendorOf, DEFAULT_EFFORT_VENDOR }

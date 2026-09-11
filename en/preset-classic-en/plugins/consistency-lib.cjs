@@ -87,7 +87,9 @@ function extractPersona(root, rel) {
       collecting = false
       continue
     }
-    if (/^ {4}text: \|-\s*$/.test(line)) {
+    // v1.3.16：persona 行改用 YAML 锚点（text: &kix_x |- / prefix: *kix_x），
+    // text 与 prefix 同源；锚点可选前缀由本正则吸收，预算仍按单份文本计。
+    if (/^ {4}text: (?:&\S+ )?\|-\s*$/.test(line)) {
       collecting = !disabled
       if (collecting) blocks.push([])
       continue

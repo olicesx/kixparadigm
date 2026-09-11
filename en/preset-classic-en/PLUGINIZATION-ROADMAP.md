@@ -89,13 +89,10 @@ shows trimming the surface cuts cost without losing capability.
 - **Phase 2 — Progressive disclosure**: `kix_capability_search` (on-demand catalog; group
   metadata — category/use/example tool names, NO full schemas — nothing resident per turn;
   uses the GLOBAL view `schemas(undefined)` so trimmed tools are listed) + `kix_capability_call`
-  (proxy execution via `ctx.tools.execute`; full pre-execute→guards→execute→post-execute
-  pipeline, gates still fire; agent-carrying calls are not model-direct, so no UNKNOWN_TOOL;
-  existence check via global `get(name, undefined)`). **Sensing design (revised 2026-08-16)**:
-  NO pre-execute deny — restrict already makes trimmed tools invisible to the model (direct
-  calls = UNKNOWN_TOOL before pre-execute), and capability_call's nested sub-calls must pass
-  pre-execute (a deny would make the proxy always fail). Guidance rides the capability_call
-  return and the persona trigger phrases.
+  (agent view first, else global; restricted MCP executed without agent because
+  DSH 0.1.2-rc.1 restrict is an execution ACL; GitHub writes unwrapped on the outer
+  capability_call). **Sensing design**: NO pre-execute deny — direct MCP calls are
+  UNKNOWN_TOOL. Guidance rides the capability_call return and persona trigger phrases.
 - **Phase 3 — PTC synergy**: keeps `tool-presentation mode: both` (native direct calls for
   verification + run_code for mechanical steps); kix red line "verification/observation stay
   native (evidence replayable)" unchanged; capability_call is also callable from run_code SDK
@@ -105,9 +102,9 @@ shows trimming the surface cuts cost without losing capability.
 appends resident tools. Mounted in both editions; full assertion suite green (7 plugins, verify
 exact count via `npm test`).
 
-**Honest boundary**: restrict trims the model-visible surface, not the executable surface —
-proxy calls can still execute trimmed tools (that is the disclosure semantics: capability
-present, schema not resident).
+**Honest boundary**: from DSH 0.1.2-rc.1 restrict is an inherited-surface execution ACL
+(direct call of a denied global name = UNKNOWN_TOOL). Disclosure semantics stay
+(capability present, schema not resident), but the proxy must execute in the global view.
 
 **Scope-tool trimming decision (2026-08-15, 2nd measurement pass + 3rd on-demand
 activation; revised 2026-08-17 per user decision A+B)**: restrict only trims GLOBAL

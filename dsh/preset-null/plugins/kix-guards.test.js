@@ -231,6 +231,11 @@ async function softCase(label, name, args) {
   check('github create_or_update_file branch=main → deny', await dispatch('mcp__github__create_or_update_file', { owner: 'o', repo: 'r', path: 'a.ts', branch: 'main', content: 'x' }), true)
   check('github create_or_update_file 无 branch → deny', await dispatch('mcp__github__create_or_update_file', { owner: 'o', repo: 'r', path: 'a.ts', content: 'x' }), true)
   check('github create_or_update_file branch=feature → allow', await dispatch('mcp__github__create_or_update_file', { owner: 'o', repo: 'r', path: 'a.ts', branch: 'feature/x', content: 'x' }), false)
+  check('github via capability_call write main → deny', await dispatch('kix_capability_call', { tool: 'mcp__github__create_or_update_file', arguments: { owner: 'o', repo: 'r', path: 'a.ts', branch: 'main', content: 'x' } }), true)
+  check('github via capability_call 无 branch → deny', await dispatch('kix_capability_call', { tool: 'mcp__github__create_or_update_file', arguments: { owner: 'o', repo: 'r', path: 'a.ts', content: 'x' } }), true)
+  check('github via capability_call write feature → allow', await dispatch('kix_capability_call', { tool: 'mcp__github__create_or_update_file', arguments: { owner: 'o', repo: 'r', path: 'a.ts', branch: 'feature/x', content: 'x' } }), false)
+  check('github via capability_call get_issue → allow', await dispatch('kix_capability_call', { tool: 'mcp__github__get_issue', arguments: { owner: 'o', repo: 'r', issue_number: 1 } }), false)
+  check('capability_call playwright 不误入 github 门', await dispatch('kix_capability_call', { tool: 'mcp__playwright__browser_navigate', arguments: { url: 'https://example.com' } }), false)
   check('github push_files branch=master → deny', await dispatch('mcp__github__push_files', { owner: 'o', repo: 'r', branch: 'master', files: [], message: 'm' }), true)
   // v5：mutation 类 ask → 聊天内提问
   await softCase('github merge_pull_request', 'mcp__github__merge_pull_request', { owner: 'o', repo: 'r', pull_number: 3 })
@@ -256,6 +261,19 @@ async function softCase(label, name, args) {
   // ══ 7. __internals 纯逻辑 ═════════════════════════════════════════════
   const I = plugin.__internals
   assert.ok(I, '__internals 已导出')
+
+  // githubCallTarget（v19：capability_call unwrap）
+  {
+    const gh = I.githubCallTarget('kix_capability_call', { tool: 'mcp__github__create_or_update_file', arguments: { branch: 'main' } })
+    assert.ok(gh && gh.name === 'mcp__github__create_or_update_file' && gh.args.branch === 'main', 'unwrap capability_call GitHub 写')
+    const direct = I.githubCallTarget('mcp__github__get_issue', { owner: 'o' })
+    assert.ok(direct && direct.name === 'mcp__github__get_issue' && direct.args.owner === 'o', '直呼 GitHub 仍命中')
+    assert.strictEqual(I.githubCallTarget('kix_capability_call', { tool: 'mcp__playwright__browser_navigate', arguments: { url: 'x' } }), null, '非 GitHub MCP 不 unwrap')
+    assert.strictEqual(I.githubCallTarget('kix_capability_call', { tool: 'subagent_qa', arguments: { prompt: 'x' } }), null, '成员代理不 unwrap')
+    const custom = I.githubCallTarget('kix_capability_call', { tool: 'mcp__gh__push_files', arguments: { branch: 'x' } }, /^mcp__gh__/)
+    assert.ok(custom && custom.name === 'mcp__gh__push_files', '自定义前缀 unwrap')
+    passed += 5
+  }
 
   // resolveCommitBudget
   assert.strictEqual(I.resolveCommitBudget({}), 3, '无上下文 → 默认 3（v15 回退 v14 无证据提升）')

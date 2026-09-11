@@ -2,28 +2,29 @@
 //
 // 三层递进架构的实现载体（设计见 PLUGINIZATION-ROADMAP.md（classic 档）§8）：
 //
-//   Phase 1 — 常驻裁剪：tools.restrict 把模型每轮可见的工具从 85 个（~108KB
-//     schema JSON）裁到常驻核心集。裁剪只影响"模型可见/可直呼"的继承全局
-//     工具，scope 内注册的工具（门禁插件等）不受影响；restrict 后的工具仍
-//     可被代理调用（见 Phase 2）。2026-08-16 实测修正：web/preset 架构下
-//     基础工具全在 scope 层，全局层只剩宿主 MCP——allow 模式过滤后为空而
-//     fail（MCP 全可见），改用 **deny 模式**（动态收集 mcp__* 全局工具名
-//     移除）。
-//   Phase 2 — 渐进披露：kix_capability_search 返回被裁剪工具的元数据
-//     （名字/用途/参数摘要，不含全 schema —— 每轮不占上下文）；
-//     kix_capability_call 代理执行目标工具（经 ctx.tools.execute，走完整
-//     pre-execute→guards→execute→post-execute 管线，门禁依然拦截）。
+//   Phase 1 — 常驻裁剪：tools.restrict({ deny: mcp__* }) 把模型每轮可见的
+//     继承全局工具从 ~52 个 MCP schema 裁掉。DSH 0.1.2-rc.1 起 restrict 是
+//     **继承面执行 ACL**（get/schemas/execute 同一可见集），不是"只藏 schema"：
+//     直呼被 deny 的全局名 = UNKNOWN_TOOL。scope 自有注册不受 restrict。
+//     2026-08-16 实测修正：web/preset 架构下基础工具全在 scope 层，全局层
+//     只剩宿主 MCP——allow 模式过滤后为空而 fail，改用 **deny 模式**。
+//   Phase 2 — 渐进披露：kix_capability_search 用全局视图列出被裁工具元数据
+//     （不含全 schema）；kix_capability_call 是 **受调停的执行入口**：
+//     agent 视图可见 → 带 agent execute（scope 工具，门禁走内层 pre-execute）；
+//     仅全局可见（被 restrict 的 MCP）→ 省略 agent，走全局 execute。
+//     GitHub 写门禁由 kix-guards 在外层 capability_call 上 unwrap args.tool。
 //   Phase 3 — PTC 协同：保持 tool-presentation mode:both（native 直呼验证 +
 //     run_code 机械多步），kix 红线「验证/观察用 native 直呼」不变；
 //     kix_capability_call 同样可被 run_code 的 SDK 子分派调用（子分派过门禁）。
 //
-// 感知：模型直接调用被裁剪工具时（工具已 restrict 掉，正常应 UNKNOWN_TOOL），
-//   若仍在工具目录中（如 MCP 注册的工具被 restrict 隐藏），本插件的 pre-execute
-//   监听器返回引导：提示用 kix_capability_search/call 按需获取。
+// 感知：不挂 pre-execute。被 deny 的全局名直呼 = UNKNOWN_TOOL，走不到插件。
+//   引导由 capability_call 返回与 persona 触发句承担。MCP 代理省略 agent
+//   走全局 execute；GitHub 写由 kix-guards 在本工具外层 unwrap。
 //
 // 边界与诚实声明：
-//   - restrict 是"模型可见面"裁剪，不是"可执行面"——代理调用仍能执行被裁剪
-//     工具（这正是渐进披露的语义：能力在，schema 不常驻）。
+//   - restrict 在 DSH 0.1.2-rc.1 是继承面执行 ACL。渐进披露的语义不变
+//     （能力在、schema 不常驻），但代理不得带着 agent 去 execute 被 deny
+//     的全局名——那条路就是 UNKNOWN_TOOL。合法路径 = 全局 execute。
 //   - 常驻核心集 = 三通道执行/观察/交互必需 + 发现入口；其余按需。
 //   - MCP 工具（GitHub/Playwright/Context7/Semgrep）schema 大且低频 → 全部按需。
 //   - cordis_*（宿主平面注册的全局工具）→ 按需代理。
@@ -332,7 +333,7 @@ function searchCapabilities(schemas, query) {
 
 // 纯函数：生成"工具不可直呼，请用 capability_call"的引导文本
 function guidanceText(name) {
-  return `kix-focus: ${name} 不在常驻工具集（极简模式裁剪）。能力仍在——用 kix_capability_search 查询，用 kix_capability_call 代理调用（走完整门禁管线）。`
+  return `kix-focus: ${name} 不在常驻工具集（极简模式裁剪）。能力仍在——用 kix_capability_search 查询，用 kix_capability_call 代理调用（MCP 走全局 execute；GitHub 写在外层 unwrap）。`
 }
 
 function makeUserMessage(text) {
@@ -376,7 +377,9 @@ Return concise factual results with file:line evidence when relevant.`,
       // 仍 tools.restrict() 报 unknown global tool "pwsh"（Linux 部署）。
       // 与 preset 行保持一致：win32 用 pwsh，其余平台用 bash。
       toolFilter: { allow: ['read', 'grep', 'glob', process.platform === 'win32' ? 'pwsh' : 'bash'] },
-      agentOptions: { provider: 'zai-coding-cn', model: 'glm-4.7', maxTokens: 8192 },
+      // 不钉 provider/model：父代理路由继承（见 agent.cordis.yml tool-subagent-lite
+      // 行注释）。8K 帽才是本档判据（kix-cost isLiteTier = maxTokens<=8192）。
+      agentOptions: { maxTokens: 8192 },
     },
   },
   subagent_thinker: {
@@ -646,7 +649,7 @@ module.exports = {
       return [...scope, ...global.filter((s) => !seen.has(s.name))]
     }
 
-    // ── Phase 1：restrict 裁剪（scope 级，只影响模型可见面）──────────────
+    // ── Phase 1：restrict 裁剪（scope 级执行 ACL = 模型不可直呼）────────
     // 2026-08-16 实测修正：allow 模式在 web/preset 架构下失效——基础工具
     // （edit/write/pwsh/ask_user_question/skill/todo/web_search）在 web 模式
     // 全部由 preset 行注册（scope-local），全局层只剩宿主 MCP；RESTRICT_ALLOW
@@ -738,7 +741,7 @@ module.exports = {
             denyCount: restrictDenyCount,
             error: restrictError,
           },
-          guidance: 'reviewer/dev/qa 是 role-first 常驻成员，职责命中时直接调用；generic subagent 仅无归属 Explore，workflow 用于批量扇出。lite/thinker/vision/fork 与 goal 首用由 kix_capability_call 自动激活；MCP 等按需工具经代理走完整门禁。成员仍可经 capability_call 兼容调用，以保留 Sprint current_sprint 自动注入。',
+          guidance: 'reviewer/dev/qa 是 role-first 常驻成员，职责命中时直接调用；generic subagent 仅无归属 Explore，workflow 用于批量扇出。lite/thinker/vision/fork 与 goal 首用由 kix_capability_call 自动激活；MCP 经代理走全局 execute，GitHub 写在外层 unwrap。成员仍可经 capability_call 兼容调用，以保留 Sprint current_sprint 自动注入。',
         }
       },
     })
@@ -747,7 +750,7 @@ module.exports = {
     // ── Phase 2：kix_capability_call（代理执行 + 首次使用自动激活，常驻）──
     const disposeCall = tools.register({
       name: 'kix_capability_call',
-      description: '代理调用按需披露工具（走完整 pre-execute→guards→execute 管线，门禁仍拦）。MCP/cordis_* 直接代理；未挂载的 lite/thinker/vision/fork 与 goal 首次使用自动激活。reviewer/qa/dev 已常驻且应直接调用，但保留本兼容入口以注入 Sprint current_sprint；其他 scope 常驻工具（workflow/job_* 等）拒绝代理。',
+      description: '代理调用按需披露工具。被 restrict 的 MCP 省略 agent 走全局 execute（带 agent 即 UNKNOWN_TOOL）；GitHub 写在本工具外层 unwrap。未挂载的 lite/thinker/vision/fork 与 goal 首次使用自动激活。reviewer/qa/dev 已常驻且应直接调用，但保留本兼容入口以注入 Sprint current_sprint；其他 scope 常驻工具（workflow/job_* 等）拒绝代理。',
       parameters: {
         // tools.register 原样投影 parameters（不做 ValueSchemaSpec 转换）：
         // 必须传合法 JSON Schema，含顶层 type: 'object'。arguments 用 object +
@@ -787,18 +790,14 @@ module.exports = {
           }
         }
 
-        // 存在性检查 **agent 视图优先、全局视图兜底**：dsh-tools 的
-        // `get(name, scope)`——scope 省略或显式 undefined 都是**全局视图**
-        //（`peek(undefined)` 返回 undefined、`chainLayers(undefined)` 无覆盖层；
-        // 源码 + API 文档实证，2026-08-17）。而 scope 工具（动态挂载的细分档位、
-        // job_* 等）注册在 agent 层，只在 **agent 视图** 可见——agent 视图 =
-        // 全局 ∪ 祖先层 ∪ 自身层，一把可见全部。
-        // 最初只用 `tools.get(name, undefined)`（全局）：自动激活已成功挂载
-        // fiber 但复查永远 undefined → 报"工具不存在"（WSL2 E2E 实锤）；随后
-        // 的 `get(name) || get(name, undefined)` 也无效——两者机械等同，均为
-        // 全局视图。必须传 exec.agent。
+        // 存在性：agent 视图优先（scope 自有 / 未 restrict 的继承），否则全局。
+        // DSH 0.1.2-rc.1：get(name, agent) 对 deny 的继承工具读作 absent，
+        // 所以 MCP 只能从全局视图看到。scope 工具（激活后的 lite、job_*）
+        // 必须查 agent 视图——全局视图永远看不到它们（2026-08-17 E2E 实锤）。
         const agentScope = exec && exec.agent
-        const def = (agentScope ? tools.get(toolName, agentScope) : null) || tools.get(toolName, undefined)
+        let defAgent = agentScope ? tools.get(toolName, agentScope) : null
+        let defGlobal = tools.get(toolName, undefined)
+        let def = defAgent || defGlobal
         // 常驻工具通常直接调用；成员工具保留 capability_call 兼容入口，用于
         // 旧 prompt 与 Sprint current_sprint 契约的机械注入。新选择压仍优先直呼。
         if (resident.has(toolName) && def && !ORCH_MEMBER_TOOLS.has(toolName)) {
@@ -815,35 +814,38 @@ module.exports = {
           const r = await ensureActivated(actKey)
           if (!r.ok) return { ok: false, tool: toolName, error: r.error }
           autoActivated = true
+          defAgent = agentScope ? tools.get(toolName, agentScope) : null
+          defGlobal = tools.get(toolName, undefined)
+          def = defAgent || defGlobal
         }
         // 档位守卫：subagent_lite 仅在 maxTokens > 8192 时可用（避免 lite 档反锁）。
         if (toolName === 'subagent_lite' && exec.agent && exec.agent.options && exec.agent.options.maxTokens <= 8192) {
           return { ok: false, error: `kix-focus: subagent_lite 需要 maxTokens > 8192（当前 ${exec.agent.options.maxTokens}）。升级档位或直接调用目标工具。` }
         }
-        // 目标工具必须存在（agent 视图优先；restrict 不影响存在性检查）
-        const def2 = (agentScope ? tools.get(toolName, agentScope) : null) || tools.get(toolName, undefined)
-        if (!def2) {
+        if (!def) {
           return { ok: false, error: `kix-focus: 工具 ${toolName} 不存在。先用 kix_capability_search 确认。` }
         }
         // 2026-08-17 决策记录（外部审查 5.6 提出"call 白名单"，评估后不做）：
         // 不校验"该工具是否被 search 返回过/属于编目组"。理由（kix 哲学：规则是
         // 负债，机制只补已知盲点）：
-        //   1. 执行面防线已闭环——被裁剪工具对模型不可见（直呼 UNKNOWN_TOOL），
-        //      capability_call 是唯一通路且走完整 pre-execute 门禁（kix-guards
-        //      拦危险操作），"知道名字"不构成绕过；
+        //   1. 执行面防线已闭环——被裁剪工具对模型不可直呼（UNKNOWN_TOOL），
+        //      capability_call 是唯一通路；GitHub 写由 kix-guards 在本工具
+        //      外层 unwrap args.tool 拦截，"知道名字"不构成绕过；
         //   2. 会话级白名单会误拦长尾组动态工具（新装工具/名字来自文档而非
         //      search 的场景），多一轮往返且 query 不匹配时永久误拦（>0% 误报）；
         //   3. discovery ≠ authorization 的正解在门禁层（已有），不在目录层。
 
-        // 经 tools.execute 走完整管线（pre-execute 门禁 → guards → execute → post-execute）。
-        // 注意：目标工具在 restrict 后对模型不可见，但本调用带 agent（非 model-direct
-        // call），不会被 UNKNOWN_TOOL 拒绝；pre-execute 门禁（kix-guards 等）仍拦截。
-        // 嵌套语义：传播 exec.rootCallId（"nested dispatchers propagate the enclosing
-        // value"）——子调用归属同一根执行树，门禁关联与 UNKNOWN_TOOL 判定正确。
+        // DSH 0.1.2-rc.1：restrict 后 get(name, agent) 读作 absent；resolveExecution
+        // 只用 get()，parent/rootCallId 只绕过 PTC collapse、不绕过 restrict。
+        // 因此对被 deny 的全局工具必须省略 agent（全局视图可执行）。
+        // scope 可见的工具（激活后的 lite/成员等）仍带 agent，好让内层
+        // pre-execute / sprint 注入 / 子代理门禁继续生效。
+        // 嵌套语义：仍传播 exec.rootCallId（同一根执行树）。
+        const useAgent = Boolean(defAgent && exec && exec.agent)
         const result = await tools.execute({
           name: toolName,
           arguments: toolArgs,
-          ...exec && exec.agent ? { agent: exec.agent } : {},
+          ...(useAgent ? { agent: exec.agent } : {}),
           ...exec && exec.rootCallId !== void 0 ? { rootCallId: exec.rootCallId } : {},
           ...exec && exec.signal !== void 0 ? { signal: exec.signal } : {},
         })
@@ -996,10 +998,9 @@ module.exports = {
       }
     })
 
-    // ── Phase 2 感知（不做 deny）：restrict 已保证被裁剪工具对模型不可见
-    //（模型直呼 = UNKNOWN_TOOL，走不到这里）；capability_call 内部子调用走
-    // pre-execute 时必须放行（否则代理永远失败）。感知引导由 capability_call
-    // 的返回与 persona 触发句承担，不再挂 pre-execute 拦截。
+    // ── Phase 2 感知（不做 deny）：restrict 已保证被裁剪工具对模型不可直呼
+    //（UNKNOWN_TOOL，走不到这里）。MCP 代理走全局 execute，不会再打到本层
+    // pre-execute。感知引导由 capability_call 的返回与 persona 触发句承担。
 
     ctx.logger?.info?.('[kix-focus] 极简+渐进披露已挂载（restrict 裁剪 + capability_search/call）')
   },
