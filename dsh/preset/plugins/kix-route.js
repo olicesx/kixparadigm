@@ -20,12 +20,16 @@
 //     无备用才按零证据终止并通知父线程。非 cross 保留原终止行为。HTTP 402 /
 //     AUTH 进程内硬熔断；QUOTA/RATE_LIMIT/SERVER/TIMEOUT/TRANSPORT 保留 TTL 半开。
 //
-// 档位解析（候选全部来自 llm.listProviders()/listModels() 实时目录）：
-//   - cross：父厂商取反（zhipu→deepseek 系 / deepseek→zai 系 / 其他厂商
-//     → 已注册的任一异厂商），偏好顺序见 CROSS_PROVIDER_ORDER / MODEL_PREFERENCE；
-//   - vision：第一个 inputModalities 声明 image 的模型（zai-vision 优先，
-//     其余 provider 兜底）；
-//   - thinker：deepseek 系 provider（deepseek-official 首选）。
+// 档位解析（候选与顺序全部来自运行时：llm.listProviders()/listModels() 目录 +
+// 本行 config 声明的部署偏好；2026-09-10 起插件内**零**模型/厂商 id 字面量）：
+//   - cross：父厂商取反（vendorOf 由 provider id 前缀推导），顺序 = config 的
+//     crossProviderOrder（按父厂商）/ genericCrossOrder，未配置 = 已注册异厂商目录序；
+//   - vision：第一个声明 inputModalities 含 image 的模型，provider 顺序 =
+//     config 的 visionProviderHint 在前，未配置 = 目录序；
+//   - thinker：deepseek 同族 provider（族由前缀推导），config 的
+//     thinkerProviderHint 在前，未配置 = 同族目录序。
+// 各档位具体选中哪个 provider/model 是**部署事实**，写在 preset 的 kix-route
+// config 里；插件只负责「怎么挑」（能力判定 + 目录探测 + 熔断跳过）。
 //
 // 边界语义（单厂商 / 无 deepseek / 无视觉模型的部署，v5.9.1）——核心原则：
 // 角色核心能力缺失 → 报错（信息带回父模型）；角色仍成立 → 降级 + 告警：
@@ -76,37 +80,45 @@ function vendorOf(provider) {
   return provider.split('-')[0]
 }
 
-// 跨厂商取反的 provider 偏好顺序（按父厂商）；数组外的是通用兜底顺序。
-// 2026-09-03 出生证明：父=grok 走 GENERIC_CROSS_ORDER，首选未付费
-// deepseek-official → 402；熔断文案不点名健康下一跳，协调线程停在「勿补票」。
-// grok/xai 显式取反到 zai-coding-cn（已注册才进 head）。死亡条件：父=grok 且
-// zai 已注册时首选 zai；zai 熔断则落到其他异厂商；未知父厂商 generic 序不变。
-const CROSS_PROVIDER_ORDER = {
-  zhipu: ['deepseek-official'],
-  deepseek: ['zai-coding-cn'],
-  grok: ['zai-coding-cn'],
-  xai: ['zai-coding-cn'],
-}
-const GENERIC_CROSS_ORDER = ['deepseek-official', 'zai-coding-cn']
-const FALLBACK_PROVIDER_ORDER = ['su2api', 'zai-coding-cn', 'deepseek-official']
+// 跨厂商取反的 provider 偏好顺序（按父厂商）；数组外的是通用兜底目录序。
+// **插件级默认已清空**（2026-09-10）：跨厂商取反的**语义**由 vendorOf（provider
+// id 前缀推导）保证，取舍哪个异厂商是部署事实 → 由 preset config 的
+// crossProviderOrder / genericCrossOrder / fallbackProviderOrder 声明。
+// 历史（插件内置默认，含具体 provider 名，已移除）：
+//   父=grok 走 generic，首选 deepseek-official → 402；grok/xai 显式取反到
+//   zai-coding-cn（已注册才进 head）。这些事实仍成立，但现由 preset 配置承载。
+// 未配置时行为：已注册异厂商按目录序（单厂商部署 → 无候选，由调用方降级）。
+const CROSS_PROVIDER_ORDER = {}
+const GENERIC_CROSS_ORDER = []
+const FALLBACK_PROVIDER_ORDER = []
+
+// 档位 provider 提示（可选）：vision 想先试的 provider、thinker 想先试的 provider。
+// 未配置时 = 已注册目录序（能力判定仍走目录：vision 要求模型显式声明 image 输入）。
+const VISION_PROVIDER_HINT = []
+const THINKER_PROVIDER_HINT = []
+// thinker 的同族判据（provider id 前缀，与 vendorOf 同一归一规则；不是模型名清单）
+const THINKER_VENDOR = 'deepseek'
 const DEFAULT_PROVIDER_CIRCUIT_TTL_MS = 5 * 60 * 1000
 const DEFAULT_CROSS_PROVIDER_FAILOVERS = 2
 const PROVIDER_AVAILABILITY_CODES = new Set(['QUOTA', 'AUTH', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT', 'NO_ADAPTER'])
 
-// 各 provider 内部模型偏好（新的在前）；目录里不在表中的模型排在表后（目录序）。
-const MODEL_PREFERENCE = {
-  su2api: ['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra'],
-  'deepseek-official': ['deepseek-v4-flash'],
-  'zai-coding-cn': ['glm-5.3', 'glm-5.2', 'glm-5.1', 'glm-5-turbo', 'glm-4.7', 'glm-5.5', 'glm-4.5-air'],
-  'zai-vision': ['glm-4.6v', 'glm-4.6v-flash', 'glm-4.5v'],
-}
+// 各 provider 内部模型偏好：**插件级默认表已清空**（2026-09-10）。
+// 原表钉着具体模型名（glm-5.3 / glm-4.7 / gpt-5.6-sol …），这在他人部署里
+// 要么指到不存在的模型、要么随厂商改线腐烂（本仓已踩：zai 线 glm-4.7 在
+// 本机 catalog 不存在 → 机械档不可用）。改为**可获取的方式**：
+//   · 默认序 = 部署自己声明的目录序（settings.yaml 的 llm-* models 书写顺序，
+//     经 llm.listModels 读回）——「哪个模型好」是部署事实，不该由插件猜；
+//   · 需要覆盖时由 preset config 的 modelPreference 显式给出（浅合并，见下）。
+// 插件逻辑里不再出现任何模型 id 字面量。
+const MODEL_PREFERENCE = {}
 
-// ── 2026-08-17（外部审查 5.6「硬编码偏好」技术债最小配置化）────────────────
-// 上述三表是默认偏好；插件 config 可覆盖（agent.cordis.yml 该行 config 传
-// crossProviderOrder / genericCrossOrder / modelPreference 的任意子集，浅合并
-// 到默认表）。动机：模型线升级（如新增 glm-5.5）只改 preset config 或默认表
-// 一处，不必改解析逻辑。行为默认零变化（不传 config = 旧表）。
-// 运行时可变副本：模块级纯函数读默认表；apply 内合并 config 后经闭包传入
+// ── 偏好表配置化（2026-08-17 起；2026-09-10 起默认表清空）──────────────────
+// provider 顺序与模型顺序均可由插件 config 覆盖（agent.cordis.yml 该行 config
+// 传 crossProviderOrder / genericCrossOrder / fallbackProviderOrder /
+// modelPreference 的任意子集，浅合并到默认值）。
+// 未配置时：模型序 = 目录序；provider 序 = 已注册目录序（跨厂商仍保证异厂商，
+// 因为 vendorOf 由 provider id 前缀推导，不是名单）。
+// 运行时可变副本：模块级纯函数读默认值；apply 内合并 config 后经闭包传入
 // 解析路径（orderedModels/crossProviderOrder 经 options 注入，测试可覆盖）。
 function mergePreferences(config) {
   const cfg = config || {}
@@ -115,6 +127,8 @@ function mergePreferences(config) {
     genericCrossOrder: Array.isArray(cfg.genericCrossOrder) ? [...cfg.genericCrossOrder] : [...GENERIC_CROSS_ORDER],
     fallbackProviderOrder: Array.isArray(cfg.fallbackProviderOrder) ? [...cfg.fallbackProviderOrder] : [...FALLBACK_PROVIDER_ORDER],
     modelPreference: { ...MODEL_PREFERENCE, ...(cfg.modelPreference || {}) },
+    visionProviderHint: Array.isArray(cfg.visionProviderHint) ? [...cfg.visionProviderHint] : [...VISION_PROVIDER_HINT],
+    thinkerProviderHint: Array.isArray(cfg.thinkerProviderHint) ? [...cfg.thinkerProviderHint] : [...THINKER_PROVIDER_HINT],
   }
 }
 
@@ -337,6 +351,57 @@ function registeredProviders(llm) {
   }
 }
 
+/**
+ * 配置偏好对**真实目录**的自查（零成本、只读，不改行为）——2026-09-10 加，
+ * 成因：本仓曾把 zai-coding-cn/glm-4.7 钉进 subagent_lite 的 agentOptions，
+ * 而该模型在本机 catalog 里根本不存在 → 机械档整个不可用，且没有任何提示，
+ * 直到第一次真的派发才报 UNKNOWN_MODEL。
+ * 这里把「配置里写了但目录里没有」的 id 一次列全并 warn：下次厂商改线/换机器，
+ * 挂载时就能看见，而不是等某档位静默失效。
+ * 契约：任何探测异常都只返回空数组（绝不因自查失败影响路由——自查是提示，
+ * 不是前置依赖）。
+ * @param {object} llm - ctx 的 llm 服务（无则跳过）。
+ * @param {object} prefs - mergePreferences 产物。
+ * @returns {Promise<string[]>} 形如 'zai-coding-cn/glm-4.7（目录无此模型）' 的条目。
+ */
+async function auditPreferenceIds(llm, prefs) {
+  const findings = []
+  if (llm === undefined || prefs === undefined) return findings
+  try {
+    const registered = registeredProviders(llm)
+    // 1) provider 级名单：未注册 / 无任何可解析模型
+    const providerLists = [
+      ['crossProviderOrder', Object.values(prefs.crossProviderOrder || {}).flat()],
+      ['genericCrossOrder', prefs.genericCrossOrder || []],
+      ['fallbackProviderOrder', prefs.fallbackProviderOrder || []],
+      ['visionProviderHint', prefs.visionProviderHint || []],
+      ['thinkerProviderHint', prefs.thinkerProviderHint || []],
+    ]
+    for (const [key, list] of providerLists) {
+      for (const provider of new Set(list)) {
+        if (!registered.includes(provider)) findings.push(`${key}: provider "${provider}" 未注册`)
+      }
+    }
+    // 2) modelPreference：逐个模型对目录核实（只在 provider 已注册时才问目录）
+    for (const [provider, ids] of Object.entries(prefs.modelPreference || {})) {
+      if (!registered.includes(provider)) { findings.push(`modelPreference: provider "${provider}" 未注册`); continue }
+      let listed
+      try {
+        listed = await llm.listModels(provider)
+      } catch {
+        continue // 目录不可达：不是配置错误，跳过（路由层有自己的探测失败语义）
+      }
+      const known = new Set((Array.isArray(listed) ? listed : []).map((m) => (m && m.id) || m))
+      for (const id of ids) {
+        if (!known.has(id)) findings.push(`modelPreference: ${provider}/${id}（目录无此模型）`)
+      }
+    }
+  } catch {
+    return findings // 自查永不影响路由
+  }
+  return findings
+}
+
 /** provider 内模型排序：偏好表 ∩ 目录 在前，其余按目录序追加。
  * prefs 可注入（mergePreferences 产物；默认读模块级 MODEL_PREFERENCE）。 */
 function orderedModels(provider, listedIds, prefs) {
@@ -406,12 +471,11 @@ async function resolveCrossRoute(llm, parentProvider, signal, prefs, isHealthy =
   return undefined
 }
 
-/** vision：zai-vision 优先（仅当已注册），其后任何健康 provider 中第一个声明 image 输入的模型。 */
+/** vision：优先配置的 provider 提示（默认无，= 目录序），其后任何健康 provider 中第一个声明 image 输入的模型。 */
 async function resolveVisionRoute(llm, signal, prefs, isHealthy = () => true) {
   const registered = registeredProviders(llm)
-  const order = registered.includes('zai-vision')
-    ? ['zai-vision', ...registered.filter((p) => p !== 'zai-vision')]
-    : registered
+  const hint = (prefs && prefs.visionProviderHint) || VISION_PROVIDER_HINT
+  const order = [...hint.filter((p) => registered.includes(p)), ...registered.filter((p) => !hint.includes(p))]
   for (const provider of order) {
     if (!isHealthy(provider)) continue
     const hit = await pickModel(llm, provider, { wantImage: true, signal, prefs })
@@ -420,13 +484,13 @@ async function resolveVisionRoute(llm, signal, prefs, isHealthy = () => true) {
   return undefined
 }
 
-/** thinker：deepseek 系健康 provider（deepseek-official 首选，其余 deepseek-* 目录序兜底）。 */
+/** thinker：优先配置的 provider 提示（默认无），候选仍是目录里的 **deepseek 同族**
+ * （族由 vendorOf 前缀推导；无同族 → undefined，由 decideTierAction 降级环境默认路由）。 */
 async function resolveThinkerRoute(llm, signal, prefs, isHealthy = () => true) {
   const registered = registeredProviders(llm)
-  const rest = registered.filter((p) => p !== 'deepseek-official' && vendorOf(p) === 'deepseek')
-  const order = registered.includes('deepseek-official')
-    ? ['deepseek-official', ...rest]
-    : rest
+  const hint = (prefs && prefs.thinkerProviderHint) || THINKER_PROVIDER_HINT
+  const family = registered.filter((p) => vendorOf(p) === THINKER_VENDOR)
+  const order = [...hint.filter((p) => family.includes(p)), ...family.filter((p) => !hint.includes(p))]
   for (const provider of order) {
     if (!isHealthy(provider)) continue
     const hit = await pickModel(llm, provider, { signal, prefs })
@@ -481,7 +545,7 @@ function crossFailText(parentProvider, registered) {
 /** vision 失败信息：附配置建议，避免 spawn 后才被 read_image 门禁弹回。 */
 function visionFailText(registered) {
   const list = registered.length > 0 ? registered.join(', ') : '无'
-  return `kix-route: subagent_vision 需要声明 image 输入的模型，当前目录均未声明（已注册 provider：${list}）。本部署无识图能力：请在 settings.yaml 配置视觉模型（如 zai-vision 的 glm-4.6v），或请用户改用文字描述 / 给出图片路径外的人工处理方案。`
+  return `kix-route: subagent_vision 需要声明 image 输入的模型，当前目录均未声明（已注册 provider：${list}）。本部署无识图能力：请在 settings.yaml 给任一 provider 的 models 条目加 input: [ text, image ]，或请用户改用文字描述 / 给出图片路径外的人工处理方案。`
 }
 
 /** thinker 彻底失败（无 deepseek 且无环境默认路由，极端边界）。 */
@@ -499,6 +563,29 @@ module.exports = {
     const parents = new Map()
     const notified = new WeakSet()
     const prefs = mergePreferences(config)
+    // 配置偏好 vs 真实目录：挂载后自查一次（只读；发现死 id 只 warn，不改行为）。
+    // 逐层防御：ctx.get / ctx.logger / 审计本身任何一步抛错都必须被吞掉——
+    // 这个钩子挂在 agent/request 上，漏一个异常就会把整条请求链打断，而它的
+    // 全部价值只是「早一点提醒」，绝不能换来「请求失败」。
+    const auditOnce = (() => {
+      let done = false
+      return async () => {
+        if (done) return
+        done = true
+        let llm
+        try {
+          llm = ctx.get('llm')
+        } catch { return }
+        try {
+          const findings = await auditPreferenceIds(llm, prefs)
+          if (findings.length) {
+            try {
+              ctx.logger.warn(`kix-route: 配置偏好含目录中不存在的条目（不影响运行，仅失去该偏好）：${findings.join('; ')}`)
+            } catch { /* logger 缺失/抛错同样吞掉：提示失败不能升级成请求失败 */ }
+          }
+        } catch { /* 自查永不影响路由 */ }
+      }
+    })()
     const health = createProviderHealthCache(config && config.providerCircuitTtlMs)
     const requestedFailovers = Number(config && config.crossProviderFailovers)
     const maxCrossProviderFailovers = Number.isFinite(requestedFailovers)
@@ -600,6 +687,7 @@ module.exports = {
     }, true)
 
     ctx.on('agent/request', async (payload, next) => {
+      void auditOnce() // 首次请求时对目录自查一次配置偏好（只 warn，不阻塞/不改路由）
       const resolved = await next()
       if (resolved === undefined) return resolved
       const agent = payload.agent
@@ -722,6 +810,7 @@ module.exports.__internals = {
   resolveThinkerRoute,
   resolveFallbackRoute,
   mergePreferences,
+  auditPreferenceIds,
   sentinelTierOf,
   decideTierAction,
   quotaFailureOf,

@@ -10,6 +10,12 @@
 // 门禁均不变。残余风险如实保留：原生 fs/network/child_process 不再逐动作审计，
 // 且 worker.terminate() 不保证回收程序派生的 OS 进程。
 //
+// v19（2026-09-11）：kix_capability_call 解开内层 GitHub MCP 写。
+// DSH 0.1.2-rc.1 restrict 是执行 ACL，capability_call 对被 deny 的 MCP 必须
+// 省略 agent 走全局 execute，内层 pre-execute 看不到 kix-guards。GitHub 写
+// main/缺 branch 改在外层 capability_call 上 unwrap args.tool，沿用既有
+// checkGitHubWrite。直呼 mcp__github__* 路径保留（restrict 若关闭仍拦）。
+//
 // v15（2026-08-20，哲学自检 F1 裁决）：commit 预算线从硬 DENY 降为**结算 steer**
 // （放行 + post 成功注入一次对账提醒，v12 控制平面同款 pending 机制），硬帽 fuse
 // （COMMIT_HARD_CAP，不可配）保留硬 DENY。同时删除 v14 的
@@ -1067,6 +1073,21 @@ function resolveSprintContextPaths(docsRoot, currentSprint) {
   return out
 }
 
+// v19：把 kix_capability_call 的内层 GitHub 工具摊开，供门禁 5 与 denyMemo 共用。
+// DSH 0.1.2-rc.1 下 MCP 代理走全局 execute，外层 capability_call 才看得到本监听器。
+function githubCallTarget(name, args, prefixRe) {
+  const re = prefixRe || /^mcp__github__/
+  if (name === 'kix_capability_call' && args && typeof args.tool === 'string' && re.test(args.tool)) {
+    const inner = args.arguments
+    const innerArgs = inner && typeof inner === 'object' && !Array.isArray(inner) ? inner : {}
+    return { name: args.tool, args: innerArgs }
+  }
+  if (name && re.test(name)) {
+    return { name, args: args && typeof args === 'object' && !Array.isArray(args) ? args : {} }
+  }
+  return null
+}
+
 module.exports = {
   name: 'kix-guards',
   inject: ['tools'],
@@ -1106,9 +1127,9 @@ module.exports = {
       'cordis_define', 'cordis_run', 'cordis_stop', 'cordis_undefine',
       // SQL 工具：v3 起入白名单（否则门禁 1 的 /run|exec/ 正则先拒，门禁 4 死代码）
       'sql', 'sql_execute', 'run_sql',
-      // kix-focus 渐进披露（2026-08-16）：发现目录 + 代理调用入口。call 的
-      // 内部子调用（tools.execute）走完整 pre-execute，门禁对每个被代理工具
-      // 依然拦截；此处显式白名单防御未来正则变化误伤（名字本身不含 exec/run）。
+      // kix-focus 渐进披露：发现目录 + 代理入口。MCP 代理走全局 execute，
+      // 本监听器看不到内层 MCP；GitHub 写靠 unwrap kix_capability_call.tool。
+      // 白名单只防门禁 1 正则误伤（名字本身不含 exec/run）。
       'kix_capability_search', 'kix_capability_call',
       // PTC/Code Mode 呈现（mode: both）：run_code 是保留传输；KIX 不扫描
       // 其代码体，原生 Node 副作用与 bash 同级信任。SDK 子分派仍走完整
@@ -1306,7 +1327,8 @@ module.exports = {
       let memoKey = null
       if (TERMINAL_TOOLS.has(tool) && text) memoKey = 'term::' + normalizeMemo(text)
       else if (EDIT_TOOLS.has(tool) && pathArg) memoKey = 'edit::' + normalizeMemo(pathArg)
-      else if (name && GH_RE.test(name)) memoKey = 'ghub::' + name + '::' + stableArgs(args)
+      const ghCall = githubCallTarget(name, args, GH_RE)
+      if (!memoKey && ghCall) memoKey = 'ghub::' + ghCall.name + '::' + stableArgs(ghCall.args)
       if (memoKey && denyMemo.has(memoKey)) {
         return DENY(`BLAST RADIUS: 该操作此前已被拒绝（${denyMemo.get(memoKey)}）。禁止重复尝试；如确需执行，请向用户说明原因并等待其明确指示。`)
       }
@@ -1369,8 +1391,9 @@ module.exports = {
       }
 
       // 5. MCP GitHub 远程写保护（v9：mutation 软约束；write main/缺 branch 仍 deny）
-      if (name && GH_RE.test(name)) {
-        const decision = checkGitHubWrite(name, args)
+      // v19：capability_call 内层 GitHub 写与直呼走同一 checkGitHubWrite。
+      if (ghCall) {
+        const decision = checkGitHubWrite(ghCall.name, ghCall.args)
         if (decision) return decision
       }
 
@@ -1444,6 +1467,7 @@ module.exports.__internals = {
   normalizeMemo,
   stableArgs,
   escapeRegex,
+  githubCallTarget,
   executableJsSurface,
   COMMIT_HARD_CAP,
   COMMIT_BUDGET_DEFAULT,

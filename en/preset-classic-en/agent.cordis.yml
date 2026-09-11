@@ -33,7 +33,7 @@
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
-    text: |-
+    text: &kix_persona |-
       You are a coding agent powered by the {{model}} model, running on the DeepSeek Harness. Your working directory is {{cwd}}.
 
       You run on kixParadigm, an AI self-orchestration minimal paradigm. Model reasoning is primary; tools fill known blind spots; fewer constraints work better; the paradigm is a tool, not a goal. Plugins and on-demand resources carry mechanisms; this resident layer carries thinking anchors.
@@ -100,6 +100,7 @@
 
       ## Resources
       `instructions/kixparadigm-core.instructions.md`; `prompts/kixpower-*`; `memories/*.md` (orchestration lessons ①-⑬ + candidates live in `memories/orchestration-lessons.md` — consult before dispatch/audit/review-type decisions); skills live in the session catalog. Deep-mechanism docs stay Chinese in this edition (TRANSLATION-STATUS.md).
+    prefix: *kix_persona
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
   config:
@@ -309,12 +310,32 @@
         toolName: subagent
         backgroundMode: continuable
         maxDepth: 2
+        # ── 原生模型选型（2026-09-10）──────────────────────────────────────
+        # 融合而非并列：通用档改用 DSH 原生能力——本行每次调用可显式给
+        # provider / model / reasoning_effort，并注册原生发现工具
+        # list_subagent_models（返回真实目录里的 provider、模型与 reasoning
+        # efforts）。省掉「另配一套目录 API」的必要。
+        # 为何只在本行开：list_subagent_models 是全局工具名，同一 scope 内
+        # 只能有一个实例拥有选型（dsh-tool-subagent README「At most one
+        # instance ... may own model selection」）。三个路由档位继续用
+        # kix-route 哨兵做**默认值**（保证不退化），需要跨档位显式选型时走
+        # 通用档 + 参数。
+        # 生效前提（两处都在）：host 挂 @deepseek-ai/dsh-tool-subagent/
+        # model-selection-settings；settings.yaml 的 subagent-model-selection
+        # .enabled=true 且 allowedModels 非空（空白名单会在挂载时 throw）。
+        modelSelectionSettings: true
         # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
         # bash/read/grep/glob; exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call all ZERO uses) — child
-        # orchestration-surface trim. The deny list holds 9 permanently
+        # orchestration-surface trim. The deny list holds 8 permanently
         # mounted orchestration names only (restrict throws on unknown
-        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # names). `subagent` is NOT one of them: dsh-subagent mounts the
+        # parent composition through composeFrom(childCtx, parent.ctx), so
+        # the name lands in the CHILD's own layer, and an own-layer name is
+        # never in restrictableNames — keeping it here throws on every
+        # dispatch. Nested dispatch is refused by kix-cost's tools.guard
+        # plus the harness maxDepth. kix-cost admits only depth-1
+        # subagent_lite evidence and
         # guards every other conditional tier/goal/workflow. Denied names vanish
         # array and the system TypeScript mirror. run_code is NOT in the
         # deny list: it is the reserved Code Mode transport — restrict
@@ -326,7 +347,7 @@
         # (capability_call) all stay — this trims the orchestration plane
         # children never own, not capability.
         toolFilter:
-          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+          deny: [ exit_plan_mode, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           # v5.8 budget cap: completion-side (thinking+answer) safety ceiling (s1 budget forcing)
           maxTokens: 65536
@@ -340,12 +361,15 @@
     # to ~5.9k (measured, ↓83%). 2026-08-17 WSL2 E2E fix: the hardcoded `pwsh`
     # (a Windows tool) made tools.restrict() report "unknown global tool" on Linux
     # deployments, breaking the lite tier → platform-conditional via
-    # `!!js process.platform`. Model tier (preferred zai-coding-cn/glm-4.7): **auto-selected** —
-    # this preset ships to different environments, so `plugins/kix-cost.js` probes
-    # the preferred route on the child's first request; if unavailable (provider or
-    # model missing) it falls back to the environment default route (deepseek
-    # high). Other deployments may repoint this row's agentOptions.provider/model
-    # to their own cheap model. 8K cap prevents runaways. Mechanical = read/
+    # `!!js process.platform`. Model tier: **route not pinned** — agentOptions
+    # carries no provider/model, so the child inherits the parent Agent's route
+    # through the spawn provider's inheritance semantics (deepseek-flash / high
+    # on this deployment) and ships to any environment unchanged. What separates
+    # lite from the ordinary tier is the persona (~60-token mechanical shadow),
+    # the 4-tool filter, and the 8K budget cap (`plugins/kix-cost.js`
+    # isLiteTier), not a different vendor — so no specific cheap model has to be
+    # registered. Before 2026-09-10 this row pinned zai-coding-cn/glm-4.7.
+    # 8K cap prevents runaways. Mechanical = read/
     # retrieve/verify only — no judgment, no file writes; otherwise use `subagent`.
     # Ordinary dispatch → `subagent` (inherits main model, high, 64K cap);
     # hard/cross-vendor verification → `subagent_cross` (auto inverted-vendor, 64K cap);
@@ -369,8 +393,12 @@
         toolFilter:
           allow: [ read, grep, glob, !!js "process.platform === 'win32' ? 'pwsh' : 'bash'" ]
         agentOptions:
-          provider: zai-coding-cn
-          model: glm-4.7
+          # 不钉 provider/model：子代理默认继承父代理路由（spawn provider 的
+          # 继承语义，见 dsh-subagent-spawn-in-process README「inherits the
+          # parent's ... provider, model, reasoning effort」）。lite 档的区分度
+          # 由 8K 预算帽承载（plugins/kix-cost.js isLiteTier = maxTokens<=8192），
+          # 不依赖某个特定厂商模型存在。2026-09-10：原钉 zai-coding-cn/glm-4.7
+          # 在本机未注册（catalog 只有 glm-5.3 / glm-5.3-flash）→ 机械档不可用。
           maxTokens: 8192
 
     # ── max deep-thinking tier (v5.8): tasks that need max still get max ──────
@@ -395,9 +423,15 @@
         # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
         # bash/read/grep/glob; exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call all ZERO uses) — child
-        # orchestration-surface trim. The deny list holds 9 permanently
+        # orchestration-surface trim. The deny list holds 8 permanently
         # mounted orchestration names only (restrict throws on unknown
-        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # names). `subagent` is NOT one of them: dsh-subagent mounts the
+        # parent composition through composeFrom(childCtx, parent.ctx), so
+        # the name lands in the CHILD's own layer, and an own-layer name is
+        # never in restrictableNames — keeping it here throws on every
+        # dispatch. Nested dispatch is refused by kix-cost's tools.guard
+        # plus the harness maxDepth. kix-cost admits only depth-1
+        # subagent_lite evidence and
         # guards every other conditional tier/goal/workflow. Denied names vanish
         # array and the system TypeScript mirror. run_code is NOT in the
         # deny list: it is the reserved Code Mode transport — restrict
@@ -409,7 +443,7 @@
         # (capability_call) all stay — this trims the orchestration plane
         # children never own, not capability.
         toolFilter:
-          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+          deny: [ exit_plan_mode, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           model: kix-route:thinker
           maxTokens: 131072
@@ -442,9 +476,15 @@
         # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
         # bash/read/grep/glob; exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call all ZERO uses) — child
-        # orchestration-surface trim. The deny list holds 9 permanently
+        # orchestration-surface trim. The deny list holds 8 permanently
         # mounted orchestration names only (restrict throws on unknown
-        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # names). `subagent` is NOT one of them: dsh-subagent mounts the
+        # parent composition through composeFrom(childCtx, parent.ctx), so
+        # the name lands in the CHILD's own layer, and an own-layer name is
+        # never in restrictableNames — keeping it here throws on every
+        # dispatch. Nested dispatch is refused by kix-cost's tools.guard
+        # plus the harness maxDepth. kix-cost admits only depth-1
+        # subagent_lite evidence and
         # guards every other conditional tier/goal/workflow. Denied names vanish
         # array and the system TypeScript mirror. run_code is NOT in the
         # deny list: it is the reserved Code Mode transport — restrict
@@ -456,7 +496,7 @@
         # (capability_call) all stay — this trims the orchestration plane
         # children never own, not capability.
         toolFilter:
-          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+          deny: [ exit_plan_mode, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           model: kix-route:cross
           maxTokens: 65536
@@ -484,9 +524,15 @@
         # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
         # bash/read/grep/glob; exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call all ZERO uses) — child
-        # orchestration-surface trim. The deny list holds 9 permanently
+        # orchestration-surface trim. The deny list holds 8 permanently
         # mounted orchestration names only (restrict throws on unknown
-        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # names). `subagent` is NOT one of them: dsh-subagent mounts the
+        # parent composition through composeFrom(childCtx, parent.ctx), so
+        # the name lands in the CHILD's own layer, and an own-layer name is
+        # never in restrictableNames — keeping it here throws on every
+        # dispatch. Nested dispatch is refused by kix-cost's tools.guard
+        # plus the harness maxDepth. kix-cost admits only depth-1
+        # subagent_lite evidence and
         # guards every other conditional tier/goal/workflow. Denied names vanish
         # array and the system TypeScript mirror. run_code is NOT in the
         # deny list: it is the reserved Code Mode transport — restrict
@@ -498,7 +544,7 @@
         # (capability_call) all stay — this trims the orchestration plane
         # children never own, not capability.
         toolFilter:
-          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+          deny: [ exit_plan_mode, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           model: kix-route:vision
           # vision models commonly cap output at 4K (settings zai-vision maxTokens 4096);
@@ -516,9 +562,15 @@
         # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
         # bash/read/grep/glob; exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call all ZERO uses) — child
-        # orchestration-surface trim. The deny list holds 9 permanently
+        # orchestration-surface trim. The deny list holds 8 permanently
         # mounted orchestration names only (restrict throws on unknown
-        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # names). `subagent` is NOT one of them: dsh-subagent mounts the
+        # parent composition through composeFrom(childCtx, parent.ctx), so
+        # the name lands in the CHILD's own layer, and an own-layer name is
+        # never in restrictableNames — keeping it here throws on every
+        # dispatch. Nested dispatch is refused by kix-cost's tools.guard
+        # plus the harness maxDepth. kix-cost admits only depth-1
+        # subagent_lite evidence and
         # guards every other conditional tier/goal/workflow. Denied names vanish
         # array and the system TypeScript mirror. run_code is NOT in the
         # deny list: it is the reserved Code Mode transport — restrict
@@ -530,7 +582,7 @@
         # (capability_call) all stay — this trims the orchestration plane
         # children never own, not capability.
         toolFilter:
-          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+          deny: [ exit_plan_mode, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         agentOptions:
           # v5.8 budget cap: context-inheriting children get the same ceiling
           maxTokens: 65536
@@ -553,9 +605,15 @@
         # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
         # bash/read/grep/glob; exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call all ZERO uses) — child
-        # orchestration-surface trim. The deny list holds 9 permanently
+        # orchestration-surface trim. The deny list holds 8 permanently
         # mounted orchestration names only (restrict throws on unknown
-        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # names). `subagent` is NOT one of them: dsh-subagent mounts the
+        # parent composition through composeFrom(childCtx, parent.ctx), so
+        # the name lands in the CHILD's own layer, and an own-layer name is
+        # never in restrictableNames — keeping it here throws on every
+        # dispatch. Nested dispatch is refused by kix-cost's tools.guard
+        # plus the harness maxDepth. kix-cost admits only depth-1
+        # subagent_lite evidence and
         # guards every other conditional tier/goal/workflow. Denied names vanish
         # array and the system TypeScript mirror. run_code is NOT in the
         # deny list: it is the reserved Code Mode transport — restrict
@@ -567,7 +625,7 @@
         # (capability_call) all stay — this trims the orchestration plane
         # children never own, not capability.
         toolFilter:
-          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+          deny: [ exit_plan_mode, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         persona: |-
           You are kixpower-reviewer: an independent read-only adversarial reviewer.
           Hard constraints:
@@ -623,9 +681,15 @@
         # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
         # bash/read/grep/glob; exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call all ZERO uses) — child
-        # orchestration-surface trim. The deny list holds 9 permanently
+        # orchestration-surface trim. The deny list holds 8 permanently
         # mounted orchestration names only (restrict throws on unknown
-        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # names). `subagent` is NOT one of them: dsh-subagent mounts the
+        # parent composition through composeFrom(childCtx, parent.ctx), so
+        # the name lands in the CHILD's own layer, and an own-layer name is
+        # never in restrictableNames — keeping it here throws on every
+        # dispatch. Nested dispatch is refused by kix-cost's tools.guard
+        # plus the harness maxDepth. kix-cost admits only depth-1
+        # subagent_lite evidence and
         # guards every other conditional tier/goal/workflow. Denied names vanish
         # array and the system TypeScript mirror. run_code is NOT in the
         # deny list: it is the reserved Code Mode transport — restrict
@@ -637,7 +701,7 @@
         # (capability_call) all stay — this trims the orchestration plane
         # children never own, not capability.
         toolFilter:
-          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+          deny: [ exit_plan_mode, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         persona: |-
           You are kixpower-qa (Ivy): acceptance testing, bug filing, and QA
           signoff — never business source code.
@@ -670,9 +734,15 @@
         # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
         # bash/read/grep/glob; exit_plan_mode/ask_user_question/
         # kix_tool_activate/kix_capability_call all ZERO uses) — child
-        # orchestration-surface trim. The deny list holds 9 permanently
+        # orchestration-surface trim. The deny list holds 8 permanently
         # mounted orchestration names only (restrict throws on unknown
-        # names); kix-cost admits only depth-1 subagent_lite evidence and
+        # names). `subagent` is NOT one of them: dsh-subagent mounts the
+        # parent composition through composeFrom(childCtx, parent.ctx), so
+        # the name lands in the CHILD's own layer, and an own-layer name is
+        # never in restrictableNames — keeping it here throws on every
+        # dispatch. Nested dispatch is refused by kix-cost's tools.guard
+        # plus the harness maxDepth. kix-cost admits only depth-1
+        # subagent_lite evidence and
         # guards every other conditional tier/goal/workflow. Denied names vanish
         # array and the system TypeScript mirror. run_code is NOT in the
         # deny list: it is the reserved Code Mode transport — restrict
@@ -684,7 +754,7 @@
         # (capability_call) all stay — this trims the orchestration plane
         # children never own, not capability.
         toolFilter:
-          deny: [ exit_plan_mode, subagent, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
+          deny: [ exit_plan_mode, subagent_cross, interrupt_agent, send_message, list_agents, ask_user_question, kix_tool_activate, kix_tool_deactivate ]
         persona: |-
           You are kixpower-dev (Nova frontend / Sage backend / Milo design —
           one contract, three hats): the coding member on the CEO team.
@@ -865,6 +935,11 @@
 # unit tests: node plugins/kix-cost.test.js.
 - id: kix-cost
   name: ./plugins/kix-cost.js
+  config:
+    # Target vendor family for effort normalization (a provider-id prefix; since
+    # 2026-09-10 the plugin no longer compares one exact provider id). Delete the
+    # block to keep the built-in `deepseek` default.
+    effortVendor: deepseek
 
 # ── kix-route (subagent routing layer): sentinel model name → live-route resolution ──
 # Tool rows no longer pin (provider, model): the cross/vision/thinker rows pin
@@ -887,6 +962,24 @@
     providerCircuitTtlMs: 300000
     crossProviderFailovers: 2
     fallbackProviderOrder: [ su2api, zai-coding-cn, deepseek-official ]
+    # ── Routing preferences = facts of THIS deployment (moved out of the plugin
+    # default tables on 2026-09-10). The plugin ships no model or provider ids of
+    # its own; every id below exists in this machine's settings.yaml. Point them
+    # at your own catalog, or delete the whole block (unset = catalog order, which
+    # works on any deployment, at the cost of the local cost/vendor preference).
+    modelPreference:
+      zai-coding-cn: [ glm-5.3, glm-5.3-flash ]   # this machine's zai catalog holds exactly these
+    crossProviderOrder:
+      zhipu: [ deepseek-official ]      # parent on the zai family -> cross over to deepseek
+      deepseek: [ zai-coding-cn ]
+      grok: [ zai-coding-cn ]
+      xai: [ zai-coding-cn ]
+    genericCrossOrder: [ su2api, zai-coding-cn, deepseek-official ]
+    # Tier provider hints (optional; unset = catalog order). Capability checks stay
+    # catalog-driven: vision demands a declared image input modality, thinker a
+    # deepseek-family provider prefix.
+    visionProviderHint: [ zai-vision ]
+    thinkerProviderHint: [ deepseek-official ]
 
 # ── presentation（PTC/Code Mode 融入）───────────────────────────────────────
 # `both` = native 工具 schema 与 Code Mode SDK（run_code + tools.* 绑定）并存，

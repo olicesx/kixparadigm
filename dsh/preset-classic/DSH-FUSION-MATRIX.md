@@ -35,7 +35,7 @@ DSH 的事件面比 VS Code hooks 更完整、更结构化。**kix 插件目前�
 | **kix-cost lite fallback 多轮 bug** | ✅ 属实（源码复核：只缓存 `'fallback'` 标签不缓存回退路由，第二轮回到不可用首选路由） | **已修复**：缓存 `fallbackRoute` 本身（provider/model/effort），后续轮次直接应用；环境默认也不可得时保持首选路由让适配器响亮报错。+4 多轮回归断言（28 全过） |
 | **capability_call 无分组白名单**（"知道名字即可代理"） | ⚠️ 属实但为**设计权衡**，评估后**不做** | 决策记录写进 kix-focus.js 源码注释：① 执行面防线已闭环（restrict 后直呼 UNKNOWN_TOOL，capability_call 是唯一通路且走完整 pre-execute 门禁）② 会话级白名单会误拦长尾动态工具（>0% 误报）③ discovery≠authorization 的正解在门禁层（已有），不在目录层。规则是负债：无已知盲点不加预防性规则 |
 | **search 不返回参数名** | ✅ 属实（`projectToolMeta` 存在但未接入 execute——死代码技术债） | **已修复**：query 命中时各组附带 `matchedTools` 元数据（name/description 截断/参数名，每组上限 5；空 query 目录浏览模式不投影控制 token）。+5 断言（66 全过） |
-| （附带）**route 模型偏好硬编码** | ✅ 属实（升级模型要改插件代码） | **最小配置化**：`mergePreferences(config)` 浅合并默认表，agent.cordis.yml 该行 config 可传 `crossProviderOrder/genericCrossOrder/modelPreference` 任意子集；不传 = 行为零变化（默认表原样）。+8 断言（67 全过）；zai 表顺手补 `glm-5.5` 候选位 |
+| （附带）**route 模型偏好硬编码** | ✅ 属实（升级模型要改插件代码） | **最小配置化**：`mergePreferences(config)` 浅合并默认表，agent.cordis.yml 该行 config 可传 `crossProviderOrder/genericCrossOrder/modelPreference` 任意子集；不传 = 行为零变化（默认表原样）。+8 断言（67 全过）；zai 表顺手补 `glm-5.5` 候选位。**2026-09-10 更新**：插件默认表已整体清空（不再内置任何模型/厂商 id）——不传 = 目录序，本机偏好搬进 agent.cordis.yml 的 `kix-route` 行 config |
 
 ---
 
@@ -123,7 +123,7 @@ Event 'agent/request-error'  (mode: waterfall)
 ```
 
 ### kix 现状
-`kix-cost.js` 在 `agent/request` 做**路由**（lite 档首选/回退），但**失败恢复**（`agent/request-error`）未接——模型调用失败时，kix 没有自己的恢复策略（依赖 harness 默认 retryPolicy）。
+`kix-cost.js` 在 `agent/request` 做**路由**（lite 档路由回退，默认休眠——lite 不钉路由时继承父代理），但**失败恢复**（`agent/request-error`）未接——模型调用失败时，kix 没有自己的恢复策略（依赖 harness 默认 retryPolicy）。
 
 ### 遗漏了什么（融合价值）
 「跨厂商路由的失败恢复」：kix 核心信念之一是跨厂商模型验证 + 路由回退。`agent/request-error` 是「主模型调用失败 → 按 kix 策略换厂商重试」的原生落点。例如：deepseek 主路由超时/失败 → 返回 `{kind:'retry'}` 前先把 `agent.request` 的下次配置切到 zai 系（配合 kix-route 的哨兵机制）。

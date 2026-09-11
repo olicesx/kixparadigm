@@ -18,7 +18,7 @@ kixparadigm/                      ← 本 preset
 │   ├── kix-orchestration.js      ← 编排交接门禁（sprint marker/plan/progress/blocker 校验，2026-08-16）
 │   ├── kix-focus.js              ← 极简+渐进披露（restrict 裁剪 + capability_search/call，2026-08-16）
 │   ├── kix-browser.js            ← 原生浏览器自动化（17 action，CDP attach/launch 兜底，按需激活零常驻税，2026-08-18）
-│   ├── kix-cost.js               ← 成本分层（子代理思考强度归一化 + lite 自动选型）
+│   ├── kix-cost.js               ← 成本分层（子代理思考强度归一化 + lite 档路由回退，默认休眠）
 │   ├── kix-route.js              ← 子代理路由（cross/vision/thinker 哨兵解析）
 │   ├── kix-commands.js           ← /kixpower-* 原生命令
 │   └── kix-stalled.js            ← 停滞检测（opt-in）
