@@ -240,22 +240,29 @@
     - id: compaction-basic
       name: '@deepseek-ai/dsh-compaction-basic'
       config:
-        # v5.9 (2026-08-17, ledger-measured): the default 0.8 on a 1M window is
-        # an 800K threshold — the kixpower remediation session climbed to 466K
-        # without ever triggering it, burning 100.8M re-read tokens through
-        # O(N²) context growth. Global drop to 0.45; the two measured 1M-window
-        # models pinned at 0.18 (=180K, below every kix-budget dynamic budget
-        # line, so this backstop fires first). Unlisted models fall back to 0.45
-        # while kix-budget's dynamic budget (window-tiered ratio: ≤128K→0.85,
-        # ≤400K→0.65, ≤1M→0.40, >1M→0.35) still tracks the real window.
-        thresholdRatio: 0.45
-        modelPolicies:
-          - provider: deepseek-official
-            model: deepseek-v4-pro
-            thresholdRatio: 0.18
-          - provider: zai-coding-cn
-            model: glm-5.3
-            thresholdRatio: 0.18
+        # 甜点策略：阈值 = 上限 × 每模型溢出安全，保留预算同样封顶
+        #     T = min(maxThresholdTokens 200K, 0.8 × W)
+        #     R = min(maxRetainTokens   64K, 0.044 × W)
+        # 64K–4M 任何窗口自动落到甜点，新模型/新厂商零配置适配，故 modelPolicies 为空。
+        #
+        # 依赖 kix-compaction-cap-patch.mjs 给引擎加的两个绝对字段；未打补丁的进程会
+        # 因未知配置键中止挂载。dsh-web.service 的 drop-in kix-cap-patch.conf 在每次
+        # 启动时自愈补丁（防 dsh 升级覆盖 node_modules）。落地/回滚流程见
+        # docs/kix-context-management.md，脚本在 scripts/context-budget/。
+        #
+        # 血统：默认 0.8 在 1M = 800K 阈值，kixpower 整改会话爬到 466K 从未触发，上下文
+        # O(N²) 累积烧掉 100.8M 重读 token；v5.9 全局降到 0.45 并对两个 1M 模型钉 0.18。
+        # 但 0.45 在 1M=450K 仍从不管，而 0.18(180K) 与继承的 retain 0.16(160K) 只剩 20K
+        # 可压区间 → session-c3370a1e 在 21 步里触发 41 次压缩、每次对 prompt 中位变化
+        # +50 token（等于没压）。2026-09-12 本机标定（8-needle + 序数检索）：deepseek-flash
+        # / glm-5.3 在 20K–400K 全对，未测到拐点；同负载 27 请求下 200K 上限 = 2.63M/2.80M
+        # 累计 prompt、256K = 3.57M、400K = 4.68M，三者召回与压缩保真全 PASS → 取三条独立
+        # 约束（成本随上限单调 / 可压带 R ≤ 0.4(T−F)，F≈23K / 有效利用 ~20%）的交点 200K。
+        thresholdRatio: 0.8
+        maxThresholdTokens: 200000
+        retainRatio: 0.044
+        maxRetainTokens: 64000
+        modelPolicies: []
 
     - id: command-compact
       name: '@deepseek-ai/dsh-command-compact'

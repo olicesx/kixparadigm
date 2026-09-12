@@ -47,3 +47,6 @@ temp_zstd.txt
 test_fix.txt
 tmp_test_temp.txt
 tmp_*.txt
+# Python 字节码（脚本无第三方依赖，缓存不入库）
+__pycache__/
+*.pyc
