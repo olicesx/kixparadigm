@@ -11,6 +11,9 @@ en/bin/*.js text eol=lf
 scripts/install-lib.js text eol=lf
 en/scripts/install-lib.js text eol=lf
 skills/*/scripts/*.mjs text eol=lf
+scripts/context-budget/*.mjs text eol=lf
+scripts/context-budget/*.py text eol=lf
+scripts/context-budget/*.sh text eol=lf
 
 # 二进制文件（禁止文本转换）
 *.png binary
