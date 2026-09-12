@@ -240,20 +240,29 @@
     - id: compaction-basic
       name: '@deepseek-ai/dsh-compaction-basic'
       config:
-        # v5.9（㉑，2026-08-17 账本实测）：默认 0.8 在 1M 窗口 = 800K 阈值，
-        # kixpower 整改会话爬到 466K 仍从未触发 → 上下文 O(N²) 累积烧掉
-        # 100.8M 重读 token。全局降到 0.45；两个实测 1M 窗口模型钉 0.18
-        #（=180K，低于 kix-budget 全部动态预算线，兜底先触发）。新模型未枚举时回退 0.45，
-        # kix-budget 的动态预算（窗口分档比例：≤128K→0.85、≤400K→0.65、≤1M→0.40、>1M→0.35）
-        # 仍按真实窗口生效。
-        thresholdRatio: 0.45
-        modelPolicies:
-          - provider: deepseek-official
-            model: deepseek-v4-pro
-            thresholdRatio: 0.18
-          - provider: zai-coding-cn
-            model: glm-5.3
-            thresholdRatio: 0.18
+        # 甜点策略：阈值 = 上限 × 每模型溢出安全，保留预算同样封顶
+        #     T = min(maxThresholdTokens 200K, 0.8 × W)
+        #     R = min(maxRetainTokens   64K, 0.044 × W)
+        # 64K–4M 任何窗口自动落到甜点，新模型/新厂商零配置适配，故 modelPolicies 为空。
+        #
+        # 依赖 kix-compaction-cap-patch.mjs 给引擎加的两个绝对字段；未打补丁的进程会
+        # 因未知配置键中止挂载。dsh-web.service 的 drop-in kix-cap-patch.conf 在每次
+        # 启动时自愈补丁（防 dsh 升级覆盖 node_modules）。落地/回滚流程见
+        # docs/kix-context-management.md，脚本在 scripts/context-budget/。
+        #
+        # 血统：默认 0.8 在 1M = 800K 阈值，kixpower 整改会话爬到 466K 从未触发，上下文
+        # O(N²) 累积烧掉 100.8M 重读 token；v5.9 全局降到 0.45 并对两个 1M 模型钉 0.18。
+        # 但 0.45 在 1M=450K 仍从不管，而 0.18(180K) 与继承的 retain 0.16(160K) 只剩 20K
+        # 可压区间 → session-c3370a1e 在 21 步里触发 41 次压缩、每次对 prompt 中位变化
+        # +50 token（等于没压）。2026-09-12 本机标定（8-needle + 序数检索）：deepseek-flash
+        # / glm-5.3 在 20K–400K 全对，未测到拐点；同负载 27 请求下 200K 上限 = 2.63M/2.80M
+        # 累计 prompt、256K = 3.57M、400K = 4.68M，三者召回与压缩保真全 PASS → 取三条独立
+        # 约束（成本随上限单调 / 可压带 R ≤ 0.4(T−F)，F≈23K / 有效利用 ~20%）的交点 200K。
+        thresholdRatio: 0.8
+        maxThresholdTokens: 200000
+        retainRatio: 0.044
+        maxRetainTokens: 64000
+        modelPolicies: []
 
     - id: command-compact
       name: '@deepseek-ai/dsh-command-compact'

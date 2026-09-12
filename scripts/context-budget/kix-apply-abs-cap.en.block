@@ -1,0 +1,34 @@
+    - id: compaction-basic
+      name: '@deepseek-ai/dsh-compaction-basic'
+      config:
+        # Sweet-spot policy: threshold = cap × per-model overflow safety, retention
+        # capped the same way
+        #     T = min(maxThresholdTokens 200K, 0.8 × W)
+        #     R = min(maxRetainTokens   64K, 0.044 × W)
+        # Every window from 64K to 4M lands on the sweet spot automatically, so new
+        # models and new vendors need zero configuration — hence modelPolicies is empty.
+        #
+        # Depends on the two absolute fields added to the engine by
+        # kix-compaction-cap-patch.mjs; an unpatched process aborts the mount on the
+        # unknown config keys. The dsh-web.service drop-in kix-cap-patch.conf re-applies
+        # the patch on every start (a dsh upgrade would replace node_modules). Landing and
+        # rollback: docs/kix-context-management.md, scripts under scripts/context-budget/.
+        #
+        # Lineage: the default 0.8 on a 1M window is an 800K threshold — the kixpower
+        # remediation session climbed to 466K without ever triggering it, burning 100.8M
+        # re-read tokens through O(N²) context growth; v5.9 dropped it globally to 0.45 and
+        # pinned two 1M models at 0.18. But 0.45 never fires at 1M=450K either, and
+        # 0.18 (180K) against an inherited retain of 0.16 (160K) left only a 20K
+        # compactable band → session-c3370a1e fired 41 compactions inside 21 steps, each
+        # moving the prompt median by +50 tokens (i.e. not compacting at all).
+        # 2026-09-12 local calibration (8-needle + ordinal retrieval): deepseek-flash and
+        # glm-5.3 stay fully correct from 20K to 400K with no knee; on the same 27-request
+        # workload a 200K threshold costs 2.63M/2.80M cumulative prompt tokens, 256K 3.57M,
+        # 400K 4.68M, with recall and compaction fidelity PASS in all three → the sweet spot
+        # is the intersection of three independent constraints (cost rises monotonically with
+        # the cap / compactable band R ≤ 0.4(T−F) with F≈23K / effective utilisation ~20%).
+        thresholdRatio: 0.8
+        maxThresholdTokens: 200000
+        retainRatio: 0.044
+        maxRetainTokens: 64000
+        modelPolicies: []
