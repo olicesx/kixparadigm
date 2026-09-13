@@ -39,10 +39,11 @@
   "scripts": {
     "postinstall": "node scripts/install-lib.js --quiet",
     "test:installer": "node --test scripts/install-lib.test.js scripts/sync-dsh-preset.test.js",
+    "test:runtime-patch": "node --test scripts/patch-dsh-runtime.test.js",
     "test:consistency": "node scripts/check-dsh-consistency.cjs",
     "test:vision": "node --test dsh/vision-bridge/test.js",
     "test:pressures": "node scripts/audit-selection-pressure-history.cjs --check && node --test scripts/audit-selection-pressure-history.test.js scripts/audit-delegation-history.test.js",
-    "test": "npm run test:installer && node scripts/check-dsh-consistency.cjs && npm run test:pressures && node --test dsh/vision-bridge/test.js && cd dsh/preset/plugins && node --test",
+    "test": "npm run test:installer && npm run test:runtime-patch && node scripts/check-dsh-consistency.cjs && npm run test:pressures && node --test dsh/vision-bridge/test.js && cd dsh/preset/plugins && node --test",
     "audit:pressures": "node scripts/audit-selection-pressure-history.cjs",
     "verify:vision": "node scripts/verify-vision-bridge-resolution.cjs",
     "verify:guards": "node scripts/verify-guards.js"

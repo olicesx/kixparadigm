@@ -1,5 +1,37 @@
 # Changelog
 
+## 未发布（2026-09-11）会话历史可用性补丁回填 + 0.1.5 迁移兼容
+
+### 升级即失效的补丁回填（`scripts/patch-dsh-runtime.js`）
+
+DSH 升级替换整个 `node_modules`；2026-09-10 手工打的 5 处补丁只存在于
+`/usr/local/lib/dsh-0.1.2-rc.1/node_modules/...`，0.1.5 升级后全部失效——直接表现为
+「很多历史会话打不开」。本次把补丁做成**幂等脚本入库**（7 条 hunk，逐条锚点唯一性断言，
+`--check` 兼作升级后准入检查；`npm test` 的 `test:runtime-patch` 会在未重跑补丁时失败）：
+
+- `dsh-session`：`Session.append` 落盘 `{ ignorable: true }` 信封标记（旧实现只读 surface 字段，
+  标记被丢弃 → 插件事件变成「未知且非 ignorable」）。
+- `dsh-session-persistence`：当前格式读取路径接受白名单插件审计事件。
+- `dsh-session-format-v0-to-v1` / `-v1-to-v2` / `-v2-to-v3`：迁移链把 `web/glm-search-mcp-request`
+  当 opaque/log-only 行带过并补 `ignorable`。**0.1.5 新增的迁移层在 v0 阶段拒绝未知历史事件，
+  注释明确 "even when ignorable"**，所以原补丁（修的是 persistence 层）不足以修复本次故障。
+
+### 0.1.5 迁移对「退役旧词汇」的兼容（实测驱动，fail-closed）
+
+同一套 v0→v1→v2→v3 链还拒绝两类 0.1.2 时代能正常打开的日志：
+
+- `subagent/descriptor` **version 2**：0.1.2 与 0.1.5 都把非 v3 描述符 fold 成 `undefined`（inert），
+  0.1.5 迁移却在 v0 阶段拒绝整个日志 → 1099 个会话（全部早于 2026-09-09 08:11 装入 0.1.2-rc.1）。
+- 早期 kix 注入写的 `form: gate/debug`（与 notice 同形、无消费者读该字段）→ 13 个会话。
+
+两处都按「已知值放行、未知值仍拒绝」的窄白名单处理（descriptor `version: 4`、未知 form 仍 refuse）。
+
+**实测（本机 `~/.dsh/sessions`，走 DSH 自己的 `sessionFormatCatalog.createRestore` 完整迁移链）**：
+补丁前 **1603 个 v0 会话中 1112 个读不了**（descriptor v2 1099 / 插件审计事件 151（81 个同时命中）/
+退役 inbox form 13）；补丁后 **1603/1603 全部还原，0 失败**。正负样本见
+`scripts/patch-dsh-runtime.test.js`（11 断言：合成 v0 工件 + `append`/`validateStoredEvents` 单点），
+无安装运行时自动 skip。写盘前留 `<file>.orig-1.5` 备份可回退；生效需重启 `dsh-web`。
+
 ## v1.3.16（2026-09-11）DSH 0.1.5-rc.1 原生适配 + MCP 代理对齐 restrict ACL
 
 ### DSH 0.1.5-rc.1 原生适配（preset 挂载失败修复）
