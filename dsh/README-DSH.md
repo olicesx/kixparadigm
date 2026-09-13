@@ -112,6 +112,58 @@ own layer**），所以 own-layer 的 `subagent` 不在可 restrict 名单里，
 - 子代理派发 `subagent_lite` 成功：`echo kix-subagent-ok` 原样返回，exit 0，`autoActivated=true`
 - 同一 preset 在 `0.1.2-rc.1` 隔离实例上同样列出 7 个 kix 工具（改动向后兼容）
 
+## 会话历史可用性补丁（`scripts/patch-dsh-runtime.js`，2026-09-11）
+
+**DSH 升级会替换整个 `node_modules`；装在安装副本里的补丁会被静默绕过。** 2026-09-10 手工打过的
+5 处补丁（`dsh-session` / `dsh-session-persistence` / `dsh-api-session-controller` / `dsh-workspace`，
+只存在于 `/usr/local/lib/dsh-0.1.2-rc.1/node_modules/...`）在 0.1.5 升级后全部失效——这就是
+「历史会话打不开」的来源。因此本仓把补丁做成**幂等脚本**，升级后重跑一次：
+
+```bash
+node scripts/patch-dsh-runtime.js --check   # 自检：缺哪条 / 锚点是否漂移（缺失退出码 1）
+node scripts/patch-dsh-runtime.js           # 应用缺失条目（幂等，逐条锚点唯一性断言）
+systemctl restart dsh-web                   # Node 已缓存模块，必须重启才生效
+```
+
+`npm test` 内置 `test:runtime-patch`（11 断言）：**升级后没重跑补丁，它会失败**——那是信号不是噪音。
+
+### 七条 hunk 修什么
+
+| hunk | 包 | 作用 |
+|---|---|---|
+| `session-append-ignorable` | `dsh-session` | `Session.append(type, data, { ignorable: true })` 真正写进事件信封（旧实现只读 surface 字段，标记被丢弃） |
+| `persistence-admit-legacy-plugin-events` | `dsh-session-persistence` | 当前格式（v3）读取路径接受白名单插件审计事件 |
+| `v0/v1/v2-migration-admit-legacy-plugin-events` | `dsh-session-format-v0-to-v1` `-v1-to-v2` `-v2-to-v3` | 迁移链把白名单事件当 opaque/log-only 行带过，并在 v1 阶段补 `ignorable: true` |
+| `v0-descriptor-v2-admission` | `dsh-session-format-v0-to-v1` | `subagent/descriptor` v2 不再让整个日志不可读（0.1.2 与 0.1.5 都把非 v3 描述符 fold 成 `undefined`，即 inert；未知版本仍拒绝） |
+| `v0-retired-inbox-forms` | `dsh-session-format-v0-to-v1` | 早期 kix 注入写的 `form: gate/debug`（与 notice 同形、无消费者）按 notice 规则校验；未知 form 仍拒绝 |
+
+三处「旧词汇」白名单刻意**fail-closed**：只有实测存在的值被放行，未知值仍旧拒绝
+（`web/glm-search-mcp-request` / descriptor `version: 2` / form `gate`、`debug`）。
+
+### 为什么必须打（实测）
+
+- 0.1.5 之前，v0 日志由 0.1.2 原生读取，**没有任何格式迁移层**；0.1.5 新增
+  `dsh-session-format-*` 迁移链，对「不是已发布 v0 清单内」的事件一律拒绝，v0 阶段
+  连 `ignorable` 标记也不放行（注释原文 *"even when ignorable"*）。
+- 本机 `~/.dsh/sessions` 实测：补丁前 **1603 个 v0 会话里 1112 个读不了**
+  （descriptor v2 1099、插件审计事件 151（其中 81 个同时命中 descriptor）、退役 inbox form 13）；
+  其中 0.1.5 升级后新产生的会话也会继续踩插件审计事件那条（`append` 丢标记 → v3 读取拒绝）。
+- 补丁后同一套扫描（DSH 自己的 `sessionFormatCatalog.createRestore(...)` 走完整
+  v0→v1→v2→v3 链）：**1603/1603 全部还原，0 失败**；8 个 v3 文件按当前格式直读。
+- 正/负样本在 `scripts/patch-dsh-runtime.test.js`：合成 v0 工件既验证放行，也验证
+  未知类型/未知描述符版本/未知 form 仍旧拒绝（防「一刀切放开」）。
+
+### 恢复方式
+
+脚本首次改写某文件前会留 `<file>.kix-orig` 备份（本例还额外留了一份 `.orig-1.5`）；要回退到
+原版 0.1.5，把备份复制回 `lib/index.js` 再重启即可（或重装 `dsh-0.1.5-rc.1`）。
+`--check` 同时是升级后的准入检查。
+
+```bash
+for b in /usr/local/lib/dsh-0.1.5-rc.1/node_modules/@deepseek-ai/*/lib/index.js.kix-orig; do cp "$b" "${b%.kix-orig}"; done
+systemctl restart dsh-web
+```
+
 ## DSH 0.1.2 原生能力对接（2026-09-09 实测）
 
 本机安装 `0.1.1-rc.2`；npm latest = `0.1.2-rc.1`、alpha = `0.1.5-alpha.1`。隔离 DSH_HOME + 0.1.2-rc.1 实测：kix 预设零改动即可加载并跑通（system prompt 含 kixParadigm/三通道/需求三检，9 个 kix 机制工具全部注册）。三处对接：
