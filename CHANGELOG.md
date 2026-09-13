@@ -1,8 +1,8 @@
 # Changelog
 
-## 未发布（2026-09-11）会话历史可用性补丁回填 + 0.1.5 迁移兼容
+## v1.3.17（2026-09-13）会话历史补丁入库 + 闭环取证经验沉淀
 
-### 升级即失效的补丁回填（`scripts/patch-dsh-runtime.js`）
+### 会话历史可用性补丁回填 + 0.1.5 迁移兼容（`scripts/patch-dsh-runtime.js`）
 
 DSH 升级替换整个 `node_modules`；2026-09-10 手工打的 5 处补丁只存在于
 `/usr/local/lib/dsh-0.1.2-rc.1/node_modules/...`，0.1.5 升级后全部失效——直接表现为
@@ -25,6 +25,12 @@ DSH 升级替换整个 `node_modules`；2026-09-10 手工打的 5 处补丁只�
 - 早期 kix 注入写的 `form: gate/debug`（与 notice 同形、无消费者读该字段）→ 13 个会话。
 
 两处都按「已知值放行、未知值仍拒绝」的窄白名单处理（descriptor `version: 4`、未知 form 仍 refuse）。
+
+### kix 范式经验沉淀（三档 memories 同步）
+
+tgguard 闭环取证实证写入 default / classic / English classic 三档 `memories/ai-agent-practices.md`：
+旧实现先证红再收回归测试、mock 镜像真实外部约束、断言 wire/边界、副作用先验目标与作用域、
+证据边界显式化。preset-null 保持空（消融对照不注入）。
 
 **实测（本机 `~/.dsh/sessions`，走 DSH 自己的 `sessionFormatCatalog.createRestore` 完整迁移链）**：
 补丁前 **1603 个 v0 会话中 1112 个读不了**（descriptor v2 1099 / 插件审计事件 151（81 个同时命中）/
