@@ -136,3 +136,55 @@ test('a replaced service instance is overridden again', () => {
   assert.equal(second.connection.requestRejection(req('127.0.0.1:3080')), undefined)
   assert.equal(second.connection.authenticatedUrl('http://127.0.0.1:3080'), 'http://127.0.0.1:3080/')
 })
+
+// 2026-09-16 dsh.internal.example 迁移：免认证面 = 回环 + 显式列名 LAN 主机（dsh.internal.example / 192.0.2.10）。
+test('trusted LAN hostnames join the auth-free surface, by exact name only', () => {
+  for (const host of ['dsh.internal.example', 'LABS.LAN', '192.0.2.10']) {
+    assert.equal(plugin.isAuthFreeHostname(host), true, `${host} should be auth-free`)
+  }
+  for (const host of [
+    'dsh.internal.example.evil.com',   // 后缀不命中
+    'evil-dsh.internal.example',       // 前缀不命中
+    'dsh.internal.examplex',
+    '192.0.2.11',        // 相邻 IP 不命中
+    '192.0.2.10.evil.com',
+    '0.0.0.0',
+    '',
+    undefined,
+    42,
+  ]) {
+    assert.equal(plugin.isAuthFreeHostname(host), false, `${String(host)} must stay upstream`)
+  }
+})
+
+test('LAN authority: 401 becomes a pass, 403 fence survives, upstream LAN stays 401', () => {
+  const { ctx, connection } = fakeCtx()
+  plugin.apply(ctx)
+
+  assert.equal(connection.requestRejection(req('dsh.internal.example:33236')), undefined)
+  assert.equal(connection.requestRejection(req('192.0.2.10:33236')), undefined)
+  assert.equal(connection.requestRejection(req('evil.example')), 403)
+  assert.equal(connection.requestRejection(req('192.168.1.9:33236')), 401)
+})
+
+test('LAN authority: index passes without token and printed url is clean', () => {
+  const { ctx, connection } = fakeCtx()
+  plugin.apply(ctx)
+  const res = { writeHead: () => {}, end: () => {} }
+
+  assert.equal(connection.authorizeIndex(req('dsh.internal.example:33236'), res), true)
+  assert.equal(connection.authorizeIndex(req('192.168.1.9:33236'), res), false)
+  assert.equal(plugin.isAuthFreeUrl('http://dsh.internal.example:33236/?token=whatever'), true)
+  assert.equal(
+    connection.authenticatedUrl('http://dsh.internal.example:33236'),
+    'http://dsh.internal.example:33236/',
+  )
+  assert.equal(
+    connection.authenticatedUrl('http://192.0.2.10:33236'),
+    'http://192.0.2.10:33236/',
+  )
+  assert.equal(
+    connection.authenticatedUrl('http://192.168.1.9:33236'),
+    'http://192.168.1.9:33236/?token=upstream-launch-token',
+  )
+})
