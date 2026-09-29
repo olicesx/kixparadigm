@@ -21,6 +21,19 @@ kix-settle/discipline 通知）是迁移器在加载时改写成 `plugin:X` 的�
 `assertV4RowAdmission` 逐 kind 验证注入行可准入，并用退役形状对照组证明校验器在位。
 一次性修复脚本 `scripts/fix-v4-source-kinds.cjs`（幂等，可重跑校验）。
 
+**端到端实证（2026-09-29 13:26，重启后 live）**：经 kix-browser（CDP attach）驱动真实 Web GUI
+选 kixparadigm 发消息：两轮均 completed；第二轮写入工作区 `.js` 后 **kix-discipline 与
+kix-settle 的注入通知均被 v4 准入接受并落盘**（会话文件 seq 41/42，`source.kind =
+"plugin:kix-discipline"` / `"plugin:kix-settle"`），且模型在回合内读到通知并按其要求补跑语法
+检查——注入链路（steer → inbox-splice → 准入 → 持久化 → 模型消费）全通。
+
+**伴随修复（宿主侧，非仓库文件）**：`/root/.dsh/node-ipv4-preload.cjs` 的
+`Socket.prototype.connect` 补丁会把 Node `net.connect` 的归一化元组（带私有
+`normalizedArgsSymbol` 的 `[options, cb]` 数组）当普通对象重建，符号丢失 →
+`ERR_MISSING_ARGS`：凡走 `http.get/request(字符串URL)` 的路径全挂（实证：playwright-core
+`connectOverCDP` 必败 → kix-browser 在 dsh web 内 CDP attach 不可用）。修法：元组分支原引用
+透传、只对 `options[0]` 原位补 `family:4`。需重启 dsh web 后在会话内生效。
+
 ## v1.3.18（2026-09-29）DSH 0.2.0 收口：roster 描述回归 + kix-focus 重入热修回填 + 回归夹具换代
 
 ### 严重：安装器标记区整段替换吞掉宿主设置行 → 重启后模型列表清空（已修）
