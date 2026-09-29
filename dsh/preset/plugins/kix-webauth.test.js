@@ -33,19 +33,23 @@ function fakeConnection() {
   }
 }
 
-function fakeCtx({ bindHost = '127.0.0.1', connection = fakeConnection() } = {}) {
+function fakeCtx({ bindHost = '127.0.0.1', connection = fakeConnection(), trustedHosts = [] } = {}) {
   const logs = []
   const ctx = {
     logger: { info: (m) => logs.push(m), warn: () => {}, debug: () => {} },
     inject: (services, cb) => {
-      assert.deepEqual(services, ['connection', 'webServer'])
-      cb({ connection, webServer: { host: bindHost } })
+      assert.deepEqual(services, ['connection', 'webServer', 'webRuntime'])
+      cb({ connection, webServer: { host: bindHost }, webRuntime: { trustedHosts } })
     },
   }
   return { ctx, connection, logs }
 }
 
 const req = (host, cookie) => ({ method: 'GET', url: '/', headers: { host, ...(cookie ? { cookie } : {}) } })
+
+// 信任面夹具：示例主机名 + RFC 5737 文档用 IP——本仓不含任何真实部署主机名/网段，
+// 真实信任面由启动行的 --trusted-host 提供（见插件头部注释）。
+const TRUSTED = ['dsh.internal.example', '192.0.2.10']
 
 test('loopback hostname classification matches upstream rules', () => {
   for (const host of ['127.0.0.1', '127.1.2.3', 'localhost', '[::1]', '::1', 'LOCALHOST']) {
@@ -137,28 +141,50 @@ test('a replaced service instance is overridden again', () => {
   assert.equal(second.connection.authenticatedUrl('http://127.0.0.1:3080'), 'http://127.0.0.1:3080/')
 })
 
-// 2026-09-16 dsh.internal.example 迁移：免认证面 = 回环 + 显式列名 LAN 主机（dsh.internal.example / 192.0.2.10）。
+// 2026-09-16 内网迁移（主机名在本仓已脱敏为示例）：免认证面 = 回环 + 宿主信任面
+// （--trusted-host -> ctx.webRuntime.trustedHosts）。
 test('trusted LAN hostnames join the auth-free surface, by exact name only', () => {
-  for (const host of ['dsh.internal.example', 'LABS.LAN', '192.0.2.10']) {
-    assert.equal(plugin.isAuthFreeHostname(host), true, `${host} should be auth-free`)
+  for (const host of ['dsh.internal.example', 'DSH.INTERNAL.EXAMPLE', '192.0.2.10']) {
+    assert.equal(plugin.isAuthFreeHostname(host, TRUSTED), true, `${host} should be auth-free`)
   }
   for (const host of [
-    'dsh.internal.example.evil.com',   // 后缀不命中
-    'evil-dsh.internal.example',       // 前缀不命中
+    'dsh.internal.example.evil.com', // 后缀不命中
+    'evil-dsh.internal.example',     // 前缀不命中
     'dsh.internal.examplex',
-    '192.0.2.11',        // 相邻 IP 不命中
+    '192.0.2.11',                    // 相邻 IP 不命中
     '192.0.2.10.evil.com',
     '0.0.0.0',
     '',
     undefined,
     42,
   ]) {
-    assert.equal(plugin.isAuthFreeHostname(host), false, `${String(host)} must stay upstream`)
+    assert.equal(plugin.isAuthFreeHostname(host, TRUSTED), false, `${String(host)} must stay upstream`)
   }
 })
 
+test('trusted entries accept host:port and bracketed IPv6, ignoring the port', () => {
+  assert.equal(plugin.isAuthFreeHostname('dsh.internal.example', ['dsh.internal.example:33236']), true)
+  assert.equal(plugin.isAuthFreeHostname('[::1]', ['[::1]:33236']), true)
+  assert.deepEqual(
+    [...plugin.trustedHostnamesOf(['A.example:1', '[::1]:2', '', 42, 'bad host'])],
+    ['a.example', '[::1]'],
+  )
+})
+
+test('no built-in LAN hosts: without a host trust face only loopback is auth-free', () => {
+  // 脱敏断言：插件源码不含任何部署主机名/网段——信任面为空时 LAN 一律走上游认证
+  assert.equal(plugin.isAuthFreeHostname('dsh.internal.example', []), false)
+  assert.equal(plugin.isAuthFreeHostname('dsh.internal.example', undefined), false)
+  assert.equal(plugin.isAuthFreeHostname('192.0.2.10'), false)
+
+  const { ctx, connection } = fakeCtx() // trustedHosts 缺省为空
+  plugin.apply(ctx)
+  assert.equal(connection.requestRejection(req('dsh.internal.example:33236')), 401)
+  assert.equal(connection.requestRejection(req('127.0.0.1:33236')), undefined)
+})
+
 test('LAN authority: 401 becomes a pass, 403 fence survives, upstream LAN stays 401', () => {
-  const { ctx, connection } = fakeCtx()
+  const { ctx, connection } = fakeCtx({ trustedHosts: TRUSTED })
   plugin.apply(ctx)
 
   assert.equal(connection.requestRejection(req('dsh.internal.example:33236')), undefined)
@@ -168,13 +194,13 @@ test('LAN authority: 401 becomes a pass, 403 fence survives, upstream LAN stays 
 })
 
 test('LAN authority: index passes without token and printed url is clean', () => {
-  const { ctx, connection } = fakeCtx()
+  const { ctx, connection } = fakeCtx({ trustedHosts: TRUSTED })
   plugin.apply(ctx)
   const res = { writeHead: () => {}, end: () => {} }
 
   assert.equal(connection.authorizeIndex(req('dsh.internal.example:33236'), res), true)
   assert.equal(connection.authorizeIndex(req('192.168.1.9:33236'), res), false)
-  assert.equal(plugin.isAuthFreeUrl('http://dsh.internal.example:33236/?token=whatever'), true)
+  assert.equal(plugin.isAuthFreeUrl('http://dsh.internal.example:33236/?token=whatever', TRUSTED), true)
   assert.equal(
     connection.authenticatedUrl('http://dsh.internal.example:33236'),
     'http://dsh.internal.example:33236/',

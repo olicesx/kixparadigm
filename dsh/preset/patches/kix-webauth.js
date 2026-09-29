@@ -9,18 +9,25 @@
 //   - requestRejection：保留 Host/Origin 反 DNS-rebinding 栅栏（403 原样返回），只吞掉 401；
 //   - authorizeIndex：免认证请求直接放行 index（不再写 401、不再 mint cookie、不再 303）；
 //   - authenticatedUrl：免认证地址返回干净 URL（启动行/自动开浏览器不再带 ?token=）。
-// 免认证 Host 面（isAuthFreeHostname）：回环 + 显式列名的 LAN 主机（见下方
-// TRUSTED_LAN_HOSTNAMES）。其余情况（绑定非回环、Host 不在面内）行为与上游完全一致。
+// 免认证 Host 面（isAuthFreeHostname）：回环 + 宿主信任面里显式列名的主机。其余情况
+// （绑定非回环、Host 不在面内）行为与上游完全一致。
 //
-// 2026-09-16 用户决策（dsh.internal.example 迁移）：部署迁到 dsh.internal.example 后经 socat relay 访问，
-// 浏览器 Host 永远非回环，原"仅回环"规则等于永远要 token。免认证面扩展为
-// 「回环 + dsh.internal.example + 192.0.2.10」——显式列名，不做后缀/通配（子域与近似域不命中）；
-// bind 仍必须是回环（relay 后面的 dsh 依旧只听 127.0.0.1，条件不动）。
-// 取舍：LAN 内任何设备打开页面即可驱动该 agent（与 danger-full-access 同一信任域）。
+// 2026-09-16 用户决策（内网迁移；主机名/IP 按发布要求在本仓脱敏为示例）：部署迁到内网
+// 主机后经 socat relay 访问，浏览器 Host 永远非回环，原"仅回环"规则等于永远要 token。
+// 免认证面扩展为「回环 + 宿主显式信任的 authority」——显式列名，不做后缀/通配（子域与
+// 近似域不命中，见测试用例）；bind 仍必须是回环（relay 后面的 dsh 依旧只听 127.0.0.1，
+// 条件不动）。取舍：LAN 内任何设备打开页面即可驱动该 agent（与 danger-full-access 同
+// 一信任域）。
+//
+// 信任面为什么复用宿主权威（--trusted-host → ctx.webRuntime.trustedHosts）而不是本插件
+// 自己的常量名单：上游 Host/Origin 栅栏先于 token 判定，本插件只吞 401、403 原样放行
+// ——不在宿主 trustedHosts 里的 Host 根本到不了这里。私有名单只会与宿主漂移，且会把
+// 部署主机名写进仓库。
 //
 // 为什么必须挂在 profile 层（不是预设行）：`ctx.connection` 是宿主服务，且预设是 lazy
 // mount——首个会话之前 index 请求就已经需要认证了。挂载见
-// dsh/preset/patches/kix-webhook.runtime-overlay.yml 的 kix-webauth 行（`--patch` 覆盖层）。
+// dsh/preset/patches/kix-webhook.runtime-overlay.yml 的 kix-webauth 行（`--patch` 覆盖层；
+// 该行因需绝对路径而默认注释，启用时取消注释并填本机检出路径）。
 //
 // 本文件与 overlay 同层：部署面资产，不随预设组成物化进 agent realm，因此不放 plugins/
 // ——那里的文件按语言中立镜像约定必须四根一致，而部署面插件只服务本机 default 档。
@@ -29,13 +36,13 @@
 // 安全边界（不要把它读成"关掉鉴权"）：
 //   - 绑 127.0.0.1 时外部不可达；跨站请求仍被 Host/Origin 栅栏挡下（403）；
 //   - 非 JSON 请求体、未信任 authority 的路径一行未改，仍由上游处理；
-//   - 加 --trusted-host 或对外绑定不会扩大本插件（bind 必须回环）；免认证面只认
-//     显式列名 + 回环，改面 = 改本文件（有测试与决策记录）；
-//   - 单用户信任域里，本插件等价于"同机 + 列名 LAN 内任何设备可驱动该 agent"——
-//     用户显式接受的取舍（与 danger-full-access 同一信任域），不是默认安全姿态。
+//   - 免认证面 = 回环 + 宿主显式信任面（--trusted-host）；对外绑定本身不扩大本插件
+//     （bind 必须回环），改面 = 改启动行而不是改代码；
+//   - 单用户信任域里，本插件等价于"同机 + 宿主列名的 LAN 主机上任何设备可驱动该
+//     agent"——用户显式接受的取舍（与 danger-full-access 同一信任域），不是默认安全姿态。
 //
-// 规则是负债：不做配置项、不缓存判定结果——判定就是纯函数；列名集合只在有真实
-// 部署需要时增加。
+// 规则是负债：本插件不加私有配置项（信任面复用宿主已有的 --trusted-host）、不缓存判定
+// 结果——判定就是纯函数，信任名单每次现读。
 
 'use strict'
 
@@ -94,31 +101,51 @@ function isLoopbackUrl(baseUrl) {
   }
 }
 
-// 免认证 LAN 主机面：显式列名，不做后缀/通配——dsh.internal.example.evil.com、evil-dsh.internal.example、
-// 192.0.2.11 一律不命中。要加机器 = 加一行 + 补测试 + 留决策记录。
-const TRUSTED_LAN_HOSTNAMES = new Set(['dsh.internal.example', '192.0.2.10'])
+/**
+ * 宿主信任面条目 → hostname 集合：接受裸主机名、`host:port`、IPv6 方括号形式；端口被
+ * 忽略（与上游 isTrustedApiRequest 的「port-less 条目匹配任意端口」同语义）。
+ * 只做显式列名匹配，不做后缀/通配——`a.example.lan.evil.com`、`evil-a.example.lan`、
+ * 相邻 IP 一律不命中（见测试）。
+ * @param {unknown} entries - `ctx.webRuntime.trustedHosts`
+ * @returns {Set<string>}
+ */
+function trustedHostnamesOf(entries) {
+  const hosts = new Set()
+  if (!Array.isArray(entries)) return hosts
+  for (const entry of entries) {
+    if (typeof entry !== 'string' || entry === '') continue
+    try {
+      const host = new URL(`http://${entry}`).hostname
+      if (host !== '') hosts.add(host.toLowerCase())
+    } catch {
+      /* 非法 authority：忽略该条 */
+    }
+  }
+  return hosts
+}
 
 /**
- * 免认证 hostname 判定：回环 或 显式列名的 LAN 主机（2026-09-16 dsh.internal.example 迁移）。
+ * 免认证 hostname 判定：回环 或 宿主信任面里显式列名的主机（2026-09-16 内网迁移）。
  * @param {unknown} hostname - WHATWG URL hostname（IPv6 保留方括号）或裸主机名
+ * @param {unknown} trustedEntries - 宿主信任面条目（--trusted-host / LAN 派生字面量）
  * @returns {boolean}
  */
-function isAuthFreeHostname(hostname) {
+function isAuthFreeHostname(hostname, trustedEntries) {
   return (
     isLoopbackHostname(hostname) ||
-    (typeof hostname === 'string' && TRUSTED_LAN_HOSTNAMES.has(hostname.toLowerCase()))
+    (typeof hostname === 'string' && trustedHostnamesOf(trustedEntries).has(hostname.toLowerCase()))
   )
 }
 
-/** @param {unknown} request @returns {boolean} */
-function isAuthFreeRequest(request) {
-  return isAuthFreeHostname(requestHostname(request))
+/** @param {unknown} request @param {unknown} trustedEntries @returns {boolean} */
+function isAuthFreeRequest(request, trustedEntries) {
+  return isAuthFreeHostname(requestHostname(request), trustedEntries)
 }
 
-/** @param {unknown} baseUrl @returns {boolean} */
-function isAuthFreeUrl(baseUrl) {
+/** @param {unknown} baseUrl @param {unknown} trustedEntries @returns {boolean} */
+function isAuthFreeUrl(baseUrl, trustedEntries) {
   try {
-    return isAuthFreeHostname(new URL(String(baseUrl)).hostname)
+    return isAuthFreeHostname(new URL(String(baseUrl)).hostname, trustedEntries)
   } catch {
     return false
   }
@@ -138,11 +165,11 @@ function cleanUrl(baseUrl) {
 }
 
 /**
- * 在回环部署上接管 `ctx.connection` 的三个认证入口（免认证面 = 回环 + 列名 LAN 主机）。
+ * 在回环部署上接管 `ctx.connection` 的三个认证入口（免认证面 = 回环 + 宿主信任面）。
  * @param {object} ctx - 宿主插件上下文
  */
 function apply(ctx) {
-  ctx.inject(['connection', 'webServer'], (scope) => {
+  ctx.inject(['connection', 'webServer', 'webRuntime'], (scope) => {
     const connection = scope.connection
     const bindHost = scope.webServer === undefined ? undefined : scope.webServer.host
     if (connection === undefined || connection === null) return
@@ -152,6 +179,16 @@ function apply(ctx) {
     }
     if (OVERRIDDEN.has(connection)) return
     OVERRIDDEN.add(connection)
+
+    // 信任名单现读：webRuntime 可能晚于 connection 就绪，闭包里快照会读到空表
+    const trustedEntries = () => {
+      try {
+        const runtime = scope.webRuntime
+        return runtime === undefined || runtime === null ? [] : runtime.trustedHosts
+      } catch {
+        return [] // 服务尚未 provide（例如非 web 组合）：退化为仅回环
+      }
+    }
 
     const original = {
       requestRejection: connection.requestRejection.bind(connection),
@@ -163,16 +200,19 @@ function apply(ctx) {
       const rejection = original.requestRejection(request)
       // 403（Host/Origin 栅栏）与 undefined（已放行）原样返回；只吞免认证请求的 401。
       if (rejection !== 401) return rejection
-      return isAuthFreeRequest(request) ? undefined : rejection
+      return isAuthFreeRequest(request, trustedEntries()) ? undefined : rejection
     }
     connection.authorizeIndex = (request, response) =>
-      isAuthFreeRequest(request) ? true : original.authorizeIndex(request, response)
+      isAuthFreeRequest(request, trustedEntries())
+        ? true
+        : original.authorizeIndex(request, response)
     connection.authenticatedUrl = (baseUrl) =>
-      isAuthFreeUrl(baseUrl) ? cleanUrl(baseUrl) : original.authenticatedUrl(baseUrl)
+      isAuthFreeUrl(baseUrl, trustedEntries()) ? cleanUrl(baseUrl) : original.authenticatedUrl(baseUrl)
 
+    const listed = [...trustedHostnamesOf(trustedEntries())].join(' / ')
     ctx.logger.info(
-      `kix-webauth: 回环部署（${String(bindHost)}）已免 token，含列名 LAN 主机 ` +
-        `${[...TRUSTED_LAN_HOSTNAMES].join(' / ')}；其余 Host 仍走上游认证`,
+      `kix-webauth: 回环部署（${String(bindHost)}）已免 token，含宿主信任面 ` +
+        `${listed === '' ? '（空，仅回环）' : listed}；其余 Host 仍走上游认证`,
     )
   })
 }
@@ -184,6 +224,7 @@ module.exports = {
   requestHostname,
   isLoopbackRequest,
   isLoopbackUrl,
+  trustedHostnamesOf,
   isAuthFreeHostname,
   isAuthFreeRequest,
   isAuthFreeUrl,
