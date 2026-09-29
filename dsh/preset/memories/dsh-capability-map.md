@@ -186,6 +186,8 @@
 - **roster 描述**：0.2.0 的 preset 由 profile `cordis.patch.yml` 声明，registry **不读 `preset.yml`**；描述只认声明里的 `config.description`，缺失即渲染 `No description.`（用户可见形态：「kix 范式的描述都没了」）。承载：安装器 `renderPresetPatchBlock()` 从各变体 `preset.yml` 读值写进声明（走 JSON string，`——`/`（）` 是合法 YAML 标量）。
 - **`tools/change` 同步 emit**：`layers.effect` 在 append 后**同步** emit `tools/change`；`kix-focus` 的增量裁剪必须在 `restrict()` **之前**预登记 `denied`，否则同步重入者 fresh 恒为同批非空 → 无限递归（实锤 6330 帧栈爆）。失败时回滚预登记。回归断言在 `kix-focus.test.js` 第 11 节；注意**首调不重入**（监听器未注册），测法必须显式 dispatch `tools/change`，否则假绿。
 
+- **`settings.yaml` 一次性导入的落点**：0.2.0 退役 `settings.yaml`，`dsh-settings` 在 boot 时把它整份导入当前 profile（`configEditor.update`，YAML AST 追加），行落在**尾注释之前 = kix 标记区内部**。故安装器只许重写自有 `- insert:` 块，标记区内的顶层用户行必须原样移出（2026-09-29 实测：整段替换吞掉 `llm-pi-ai` 四 provider / `llm-deepseek` / `ui-theme` / `subagent-model-selection` 约 200 行，宿主重启后模型列表清空；恢复 = `.imported` 复制回 `settings.yaml` 重启走导入）。
+
 ## 会话考古/萃取技术（2026-08-19 实战提炼：GUI 列表不可见但数据完好案）
 
 - **会话存储结构**：`~/.dsh/sessions/--<workspace-path>--/<session-id>/session.jsonl.zstd`（zstd 压缩 JSONL，`zstdcat` 解读）；GUI 列表索引在 `~/.dsh/storages/workspace.json`（工作区→sessionIds+archived 名单）与 `session_projcache.json`（每会话 rows：sessionStats/title/tokenUsage/sessionListMetadata 等）

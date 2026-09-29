@@ -2,6 +2,30 @@
 
 ## v1.3.18（2026-09-29）DSH 0.2.0 收口：roster 描述回归 + kix-focus 重入热修回填 + 回归夹具换代
 
+### 严重：安装器标记区整段替换吞掉宿主设置行 → 重启后模型列表清空（已修）
+
+**事故**：`upsertPresetBlock()` 找到 `# BEGIN/END kix-presets` 后整段替换标记区。而 0.2.0 的
+`dsh-settings` 把退役的 `settings.yaml` **一次性导入当前 profile**（`importLegacyDocument` →
+`configEditor.update(ns, values)`），configEditor 用 YAML AST 追加行、落点就在**尾注释之前**——
+也就是 kix 标记区**内部**。于是执行一次 `kixparadigm install` 就删掉了这些导入行：本机实测被吞
+`llm-pi-ai`（zai-vision / su2api / grok / zai-coding-cn 四个 provider 全表）、`ui-theme`、
+`llm-deepseek`（主模型 catalog + image 声明）、`agent-presets`、`subagent-model-selection`，约
+200 行；`settings.yaml` 已改名 `.imported` 不再被读，宿主重启后模型列表即为空。用户可见症状：
+「我们之前设置的模型不见了」。
+
+**判定证据**：合成一份「标记区内含外来行」的 patch 调 `upsertPresetBlock` → 外来行全丢（复现）；
+隔离 0.2.0 实例把 `.imported` 复制回 `settings.yaml` 重启 → 八个 section 全部重新导入为 patch 行
+（`grep '^- id:'` 得 agent-default-model / ui-settings-general / permission / llm-pi-ai / ui-theme /
+llm-deepseek，provider 名齐全），且确认导入行确实落在 BEGIN..END 之间——**这就是触发条件**。
+
+**修法**：新增 `splitMarkerRegion()`——只重写自有 `- insert:` 块（缩进行），标记区内的顶层行一律
+视为外来行**原样保留并移出标记区**（保持相对顺序），先移出再写，下一次 upsert 不再看见它们；
+`removePresetDeclarations()` 卸载路径同源处理，不替用户删配置；检测到外来行时打印计数告警。
++1 回归用例（外来行保留 / 移出标记区 / 二次 upsert 幂等）。
+
+**恢复**：`settings.yaml.imported` → `settings.yaml` 后重启宿主，走产品自身的一次性导入路径即可
+全量还原（隔离实例已实测；live 侧已就位，备份 `cordis.patch.yml.pre-model-restore-*`）。
+
 ### 用户可见回归：0.2.0 上 preset 描述全部消失（已修）
 
 0.2.0 的 preset 由 profile 的 `cordis.patch.yml` 声明，**不再扫描 `.agent-presets/`、也不再读

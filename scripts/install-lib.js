@@ -370,6 +370,59 @@ function renderPresetPatchBlock() {
   ].join('\n')
 }
 
+/**
+ * Split the text between the kix preset markers into our own insert block and
+ * anything the host's settings layer left there.
+ *
+ * `dsh-settings` imports the removed `settings.yaml` into the active profile and
+ * the configuration editor keeps appending those rows *before* the trailing
+ * comment block — which lands them between BEGIN and END. Replacing the whole
+ * marked region would delete them (2026-09-29: the imported `llm-pi-ai`
+ * providers, `ui-theme`, `llm-deepseek` and `subagent-model-selection` rows,
+ * ~200 lines, were swallowed; after the next host restart the model list was
+ * empty). Only our own `- insert:` list is ours to rewrite; foreign rows are
+ * preserved verbatim.
+ *
+ * @param {string} region text after the BEGIN marker and before the END marker
+ * @returns {{ own: string[], foreign: string[] }} classified lines
+ */
+function splitMarkerRegion(region) {
+  const own = []
+  const foreign = []
+  let inOwnInsert = false
+  let seenForeign = false
+  for (const line of region.split('\n')) {
+    if (seenForeign) {
+      foreign.push(line)
+      continue
+    }
+    if (!inOwnInsert) {
+      if (line.trim() === '' || /^\s*#/.test(line)) {
+        own.push(line)
+        continue
+      }
+      if (/^- insert:\s*$/.test(line)) {
+        own.push(line)
+        inOwnInsert = true
+        continue
+      }
+      seenForeign = true
+      foreign.push(line)
+      continue
+    }
+    // Our insert list is a sequence of indented rows; the first column-0 line
+    // that is neither blank nor a comment ends it and starts the foreign part.
+    if (line.trim() === '' || /^\s/.test(line)) {
+      own.push(line)
+      continue
+    }
+    inOwnInsert = false
+    seenForeign = true
+    foreign.push(line)
+  }
+  return { own, foreign }
+}
+
 function upsertPresetBlock(text, block) {
   const newline = text.includes('\r\n') ? '\r\n' : '\n'
   const rendered = `${block.replace(/\n/g, newline).trimEnd()}${newline}`
@@ -379,11 +432,17 @@ function upsertPresetBlock(text, block) {
     if (start === -1 || stop < start) throw new Error('kix preset markers are missing or out of order')
     const after = stop + PRESET_PATCH_END.length
     const tail = text.slice(after).replace(/^\r?\n/, '')
-    const next = `${text.slice(0, start)}${rendered}${tail}`
-    return { text: next.endsWith(newline) ? next : `${next}${newline}`, changed: next !== text }
+    const { foreign } = splitMarkerRegion(text.slice(start + PRESET_PATCH_BEGIN.length, stop))
+    // Foreign rows move outside the markers so the next upsert cannot see them
+    // as part of our region. Their relative order is preserved.
+    const foreignText = foreign.join('\n').replace(/\s+$/, '')
+    const body = foreignText.length === 0 ? rendered : `${rendered}${foreignText}${newline}`
+    const next = `${text.slice(0, start)}${body}${tail}`
+    const foreignCount = foreign.filter((line) => /^- /.test(line)).length
+    return { text: next.endsWith(newline) ? next : `${next}${newline}`, changed: next !== text, foreignCount }
   }
   if (text.trim() === '' || text.trim() === '[]') {
-    return { text: rendered, changed: true }
+    return { text: rendered, changed: true, foreignCount: 0 }
   }
   const lines = text.split(/\r?\n/)
   const semantic = lines.filter((line) => {
@@ -394,7 +453,7 @@ function upsertPresetBlock(text, block) {
     const index = lines.findIndex((line) => line.trim() === '[]')
     lines.splice(index, 1, ...rendered.trimEnd().split(/\r?\n/))
     const next = lines.join(newline)
-    return { text: next.endsWith(newline) ? next : `${next}${newline}`, changed: true }
+    return { text: next.endsWith(newline) ? next : `${next}${newline}`, changed: true, foreignCount: 0 }
   }
   if (semantic.some((line) => line.trim() === '---' || line.trim() === '...')) {
     throw new Error('cordis.patch.yml must contain one top-level YAML array; refusing to modify an unrecognized document')
@@ -430,6 +489,9 @@ function installPresetDeclarations(log) {
     const current = fs.existsSync(patch) ? fs.readFileSync(patch, 'utf8') : '[]\n'
     const merged = upsertPresetBlock(current, block)
     if (!fs.existsSync(patch) || merged.changed) fs.writeFileSync(patch, merged.text, 'utf8')
+    if (merged.foreignCount > 0) {
+      log.warn(`${patch} 的标记区里有 ${merged.foreignCount} 条非 kix 行（宿主设置层导入的配置），已原样移出标记区，未删除`)
+    }
     log.ok(`preset 声明已写入 ${patch}`)
     wrote += 1
   }
@@ -446,7 +508,12 @@ function removePresetDeclarations(log) {
     const stop = text.indexOf(PRESET_PATCH_END)
     if (start === -1 || stop < start) continue
     const after = stop + PRESET_PATCH_END.length
-    const rest = `${text.slice(0, start)}${text.slice(after)}`.replace(/\n{3,}/g, '\n\n')
+    // 与 upsert 同源：标记区里可能有宿主设置层导入的用户行，卸载只移除 kix 声明，
+    // 不替用户删配置（2026-09-29 吞掉 llm-pi-ai providers 的同型事故）。
+    const { foreign } = splitMarkerRegion(text.slice(start + PRESET_PATCH_BEGIN.length, stop))
+    const foreignText = foreign.join('\n').replace(/\s+$/, '')
+    const kept = foreignText.length === 0 ? '' : `${foreignText}\n`
+    const rest = `${text.slice(0, start)}${kept}${text.slice(after)}`.replace(/\n{3,}/g, '\n\n')
     fs.writeFileSync(patch, restoreEmptyPatchRoot(rest), 'utf8')
     log.ok(`已从 ${patch} 移除 preset 声明`)
   }

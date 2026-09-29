@@ -6,7 +6,7 @@ const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 const { spawnSync } = require('node:child_process')
-const { hasOtherPresetOwner, installPreset, installVisionBridge, mergeVisionBridgePatch, uninstall, copyTree, ensureDefaultSkillsShelf, ensureDefaultShelf, presetResolutionRoot, missingBarePackages, renderPresetPatchBlock } = require('./install-lib.js')
+const { hasOtherPresetOwner, installPreset, installVisionBridge, mergeVisionBridgePatch, uninstall, copyTree, ensureDefaultSkillsShelf, ensureDefaultShelf, presetResolutionRoot, missingBarePackages, renderPresetPatchBlock, upsertPresetBlock } = require('./install-lib.js')
 
 const DEFAULT_PATCH = [
   '# Your patch layer for this dsh profile, applied after every bundle layer:',
@@ -537,6 +537,50 @@ test('a variant without preset.yml omits description instead of writing an empty
 
   assert.doesNotMatch(block, /description:/)
   assert.match(block, /id: kixparadigm-classic/)
+})
+
+test('upsertPresetBlock preserves foreign rows the settings layer left inside the markers', () => {
+  // 出生证明（2026-09-29 实测）：dsh-settings 的一次性导入 + 配置编辑器会把用户行
+  // 追加在尾注释之前，即 BEGIN..END 之间。整段替换会连它们一起删掉——本机被吞掉的
+  // 是 llm-pi-ai providers / ui-theme / llm-deepseek / subagent-model-selection
+  // 约 200 行，宿主重启后模型列表清空。此用例锁死「只换自有 insert 块，外来行移出标记区」。
+  const block = [
+    '# BEGIN kix-presets kixparadigm,kixparadigm-classic',
+    '# DSH >= 0.1.7 does not scan .agent-presets/.',
+    '- insert:',
+    '    - id: preset-kixparadigm',
+    "      name: '@deepseek-ai/dsh-agent-preset'",
+    '# END kix-presets kixparadigm,kixparadigm-classic',
+  ].join('\n')
+  const before = [
+    '- id: mcp-github',
+    '  name: mcp-github',
+    '# BEGIN kix-presets kixparadigm,kixparadigm-classic',
+    '# DSH >= 0.1.7 does not scan .agent-presets/.',
+    '- insert:',
+    '    - id: preset-kixparadigm',
+    "      name: '@deepseek-ai/dsh-agent-preset'",
+    '- id: llm-pi-ai',
+    '  config:',
+    '    providers:',
+    '      zai-vision:',
+    '        baseURL: https://example.invalid',
+    '- id: subagent-model-selection',
+    '  enabled: true',
+    '# END kix-presets kixparadigm,kixparadigm-classic',
+    '- id: tail-row',
+  ].join('\n') + '\n'
+
+  const first = upsertPresetBlock(before, block)
+
+  assert.match(first.text, /id: llm-pi-ai/)
+  assert.match(first.text, /zai-vision/)
+  assert.match(first.text, /id: subagent-model-selection/)
+  assert.match(first.text, /id: tail-row/)
+  assert.match(first.text, /id: mcp-github/)
+  const end = first.text.indexOf('# END kix-presets')
+  assert.ok(first.text.indexOf('id: llm-pi-ai') > end, '外来行必须移出标记区，下一次 upsert 才不会再吃它们')
+  assert.equal(upsertPresetBlock(first.text, block).changed, false, '第二次 upsert 必须幂等')
 })
 
 test('installPreset declares after the isolated 0.1.7 runtime is adapted', (t) => {

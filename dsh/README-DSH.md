@@ -107,12 +107,15 @@ preset 由 profile 的 `cordis.patch.yml` 里一行 `@deepseek-ai/dsh-agent-pres
 根因形态：上游把自带 preset 放在包内 `node_modules/@deepseek-ai/dsh-web-app/presets/`，裸包名天然可解析；
 kix 的 preset 在 `$DSH_HOME` 下（树外）。差异来自**位置**，不是声明格式。
 
-**两处 0.2.0 契约随 v1.3.18 收口**（2026-09-29 实测）：
+**三处 0.2.0 契约随 v1.3.18 收口**（2026-09-29 实测）：
 
 | 契约 | 0.2.0 事实 | kix 落点 |
 |---|---|---|
 | roster 描述 | preset 由 profile patch 声明，registry **不再读 `preset.yml`**；描述只认 `config.description`（缺失时客户端渲染 `No description.`） | 安装器 `renderPresetPatchBlock()` 从各变体安装目录的 `preset.yml` 读 description 写进声明（单一事实源仍是 `preset.yml`） |
 | `tools/change` 时序 | `layers.effect` 在 append 后**同步** emit `tools/change` | `kix-focus` 必须在 `restrict()` **之前**预登记 `denied`（否则同步重入看到 fresh 恒非空 → 无限递归，6330 帧栈爆 `RangeError`）；抛错回滚，失败名字留给定时重试 |
+| `settings.yaml` 一次性导入 | boot 时把该文件**整份**导入当前 profile（`configEditor.update` 走 YAML AST 追加），行落在**尾注释之前 = kix 标记区内部**；导入后文件改名 `.imported` 不再被读 | 安装器只重写自有 `- insert:` 块：标记区内的顶层用户行原样移出（`splitMarkerRegion`），卸载路径同源；检测到即告警。**整段替换会吞掉用户配置**——2026-09-29 实测吞掉 `llm-pi-ai` 四 provider / `llm-deepseek` / `ui-theme` / `subagent-model-selection` 约 200 行，重启后模型列表清空；恢复 = `.imported` 复制回 `settings.yaml` 再重启 |
+
+**配置恢复路径（runbook）**：`$DSH_HOME/settings.yaml` 被导入后改名 `settings.yaml.imported`，此后宿主只认 profile patch 里的行。若这些行被误删（例如安装器旧版整段替换），把 `.imported` 复制回 `settings.yaml` 并重启即可——boot 时的一次性导入会按 section id 逐条 upsert 回 profile patch（隔离 0.2.0 实例实测：8 个 section 全量还原，含 `llm-pi-ai` 四 provider、`llm-deepseek`、`ui-theme`、`subagent-model-selection`）。
 
 **实测证据**（隔离 `DSH_HOME=/tmp/kix-dsh020-home` + `KIX_DSH_PREFIX=/tmp/kix-dsh020`，npm 平铺安装的 0.2.0-rc.1）：
 
