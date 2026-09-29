@@ -153,6 +153,19 @@ const PRESSURE_REGISTRY = [
     observability: 'Audit reports inline program wrappers, large direct results, and native call clusters without turning counts into quotas.',
     retirement: 'Delete or narrow after two matched behavior probes show no net context, round-trip, or control-flow benefit.',
   },
+  {
+    id: 'closure-pricing',
+    marker: '方案可闭合性定价：',
+    proof: { file: 'dsh/preset/memories/verification-lessons.md', contains: '检测面需要枚举不完的集合时' },
+    carriers: ['choice-pressure', 'memory'],
+    support: [
+      'dsh/preset/agent.cordis.yml',
+      'dsh/preset/memories/verification-lessons.md',
+      'dsh/preset/plugins/kix-webhook.js',
+    ],
+    observability: 'Model-judged: no mechanical detector for mechanism shape yet. Both supporting incidents are replayable (the kix-webhook fence tests; the stage-gate critique in verification-lessons ⑦), and the audit could later flag enumeration-shaped guard proposals in spec contracts — until then this entry tracks a judgment, not a check.',
+    retirement: 'Delete after two matched tasks where the judgment never changed the chosen mechanism (e.g. an enumeration-shaped guard shipped and held up), or once a detector makes the shape mechanically observable and the wording redundant.',
+  },
 ]
 
 // 死亡/退役条款的可结算计数：条款写在 persona/plugin 注释里，但没有人统计过
