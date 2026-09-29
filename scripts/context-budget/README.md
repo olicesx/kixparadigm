@@ -32,9 +32,11 @@ R = min(maxRetainTokens   64K, 0.044 × W)    压缩时逐字保留的尾部
 ## 用法
 
 ```bash
-# 装补丁（dsh 升级覆盖 node_modules 后需重跑；drop-in 会在每次启动自愈）
-node scripts/context-budget/kix-compaction-cap-patch.mjs --check
-node scripts/context-budget/kix-compaction-cap-patch.mjs --apply
+# 装补丁。不写 DSH_COMPACTION_PKG / KIX_DSH_PREFIX 时只接受 PATH 上能解析到
+# dsh-agent-preset-registry 的 dsh（>= 0.1.7，含 pnpm workspace）。没有 registry
+# 会拒绝，不会打 0.1.5。KIX_DSH_PREFIX 可以是安装根、dsh 包目录或 lib/bin.js。
+DSH_COMPACTION_PKG=/path/to/dsh-compaction-basic node scripts/context-budget/kix-compaction-cap-patch.mjs --check
+DSH_COMPACTION_PKG=/path/to/dsh-compaction-basic node scripts/context-budget/kix-compaction-cap-patch.mjs --apply
 
 # 真码断言（需要本机装了该 bundle；缺了会 SKIP 而不是失败）
 node scripts/context-budget/kix-compaction-cap-patch.test.mjs

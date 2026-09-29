@@ -121,6 +121,56 @@
    - **kix-focus 注入兼容路径**：qa/dev/reviewer 已常驻直呼；旧 prompt 经 `kix_capability_call` 分派时，工作区存在 `docs/.kixpower-current-sprint` 即自动把契约行注入/修正为 marker 值（纯函数 `injectSprintContractLine`/`readActiveSprint`，返回值带 `sprintInjected` 供模型感知）。部署 E2E 复验：模型按指令**故意省略契约行与 Sprint 字样** → capability_call 返回 `sprintInjected: 1` → kix-orchestration 门禁按注入行触发（`docs/sprint-1/` 缺 plan/progress 的 remind notice）——机械兜底闭环实证。
    - **kix-orchestration v10.1 容错**（直呼路径兜底）：`extractHandoffMeta` 无契约行时从 Tri-Block `[CONTEXT]` 段容错解析 `Sprint N`（范围收窄防误触发，契约行永远优先；激活后模型可直呼 subagent_qa 不经 capability_call，故直呼路径也需兜底）。当前单元回归：kix-focus **123 组**、kix-orchestration **115 组**全绿。
 
+## §6 DSH 0.2.0 mechanism delta (measured 2026-09-29 on an isolated instance: 0.1.5-rc.1 → 0.2.0-rc.1)
+
+> Trigger = the "update condition" in this file's header: a DSH version bump. Everything below is **mechanism fact**, sourced from per-package comparison of the installed trees plus end-to-end measurement on an isolated 0.2.0 instance. Equivalent content is filed as §6 in the default preset (`dsh/preset`) and §8 in `dsh/preset-classic`.
+
+### 6.1 Retired / renamed (**old facts are void**)
+
+| 0.1.x | 0.2.0 | Impact |
+|---|---|---|
+| `dsh-code-runtime` / `-worker-thread` | `dsh-ptc-runtime` / `-node` + `dsh-workflow-ptc` | "Code Runtime = worker-thread, typeless execution of model code" is void: script fan-out now runs on the **PTC runtime**. kix already mounts `dsh-workflow-ptc` (renamed in 0.1.7) |
+| `dsh-workflow-worker-thread` | same as above | the workflow executor is no longer worker-thread |
+| `dsh-agent-presets` (plural) | `dsh-agent-preset` + `-registry` | declaration contract, see 6.3 |
+| `dsh-settings-file` | `dsh-config-editor` | settings persistence now goes through config-editor via profile patch + Loader reconciliation |
+| `cordis-plugin-hmr` | `dsh-hmr` | pure rename |
+
+### 6.2 `settings.yaml` contract change (**directly affects kix's user-facing guidance**)
+
+- On first start, 0.2.0 **imports `$DSH_HOME/settings.yaml` into the active profile and renames it `settings.yaml.imported`**; the host no longer reads that file afterwards.
+- So "go edit `~/.dsh/settings.yaml`" is a **dead instruction** on 0.2.0 — the user would edit a file nothing reads. Correct targets: the profile's `cordis.patch.yml`, or the GUI settings panel.
+- kix carrier: the three user-facing failure texts in `kix-route.js` now name both generations (constant `SETTINGS_HINT`), pinned by assertions in `kix-route.test.js`.
+
+### 6.3 Preset declaration contract (0.2.0 form)
+
+- The profile's `cordis.patch.yml` receives one `insert` row `{id: preset-<id>, name: '@deepseek-ai/dsh-agent-preset', config: {id, order, plugins: [...]}}`; registry row `agent-preset-registry`, `config.default: standard`.
+- The preset directory `$DSH_HOME/.agent-presets/<id>/` is **outside any node_modules**, while `cordis:include` takes that directory itself as baseUrl → bare `@deepseek-ai/*` imports do not resolve and need a resolvable node_modules linked in as the resolution root; relative `./plugins/*.js` is unaffected.
+
+### 6.4 New mechanisms and kix's verdicts (negative space made explicit)
+
+| New mechanism | What it is | kix verdict |
+|---|---|---|
+| `dsh-tool-present` | explicit declaration of the workspace files delivered this turn | **not mounted**. Aligned with the delivery discipline, but mounting adds a tool schema to every request (measured ≈6838 tokens of tools surface); wait for a real "delivered file not found" counterexample |
+| `dsh-tool-ralph` | fresh-agent loop | **not mounted**; see 档三-12 (worker self-reports completion, which conflicts with three-channel verification) |
+| `dsh-plugin-manager` | plugin/bundle management shared by host, CLI and Web | not mounted; kix has its own capability shelf and two parallel sets would coexist |
+| `dsh-workspace-changes` | per-turn workspace changes (git snapshots + whole-file captures) | candidate: would give settlement mechanical change evidence, but the host's own standard preset does not mount it either |
+| `dsh-experimental-auto-review` | per-tool LLM authorization review (Auto permission preset) | **deliberately unused**: replaces a deterministic permission boundary with an LLM judgment, conflicting with kix's "mechanical safety boundary, zero false positives" |
+| `dsh-experimental-agent-team` | native multi-agent teams | unused; overlaps existing orchestration (subagent / kixpower) |
+| `dsh-mcp-resources` | MCP resource discovery and reading | not mounted (the host standard preset does not mount it by default either) |
+| `dsh-compaction-image-offload` | over-budget request images replaced by placeholders, then retried | not mounted; overlaps the vision-bridge route |
+
+### 6.5 Session format V4: **measured, and NOT a defect** (negative result, so nobody re-patches it)
+
+- 0.2.0 adds `dsh-session-format-v3-to-v4`, whose `assertV4RetiredSyntax` throws `format v4 rejects retired event type` for `tool/code-dispatch*` with `ignorable !== true`; the V2→V3 stage carries an equivalent gate, `assertV3EventAdmission`.
+- Measured: a real V0 session (`a7a5991e…`, 1652 lines) containing bare `tool/code-dispatch-start` / `tool/code-dispatch` (**no** `ignorable`) was copied into an isolated 0.2.0 instance, and `session/projections` **returned normally** (asOfSeq 343, projections complete).
+- Reason: the v0→v1 stage renames `tool/code-dispatch*` to `tool/ptc-dispatch*`, so by V4 it is an already-released type and the gate never fires.
+- **Method-level lesson**: feeding **unmigrated** raw rows straight into `assertV4RowAdmission` yields a **false positive**. Gate assertions must run the full migration chain or the real load path, or the conclusion inverts. kix's session-patch suite needs **no** new V4 hunk.
+
+### 6.6 Roster description and `tools/change` timing (two 0.2.0 contracts, closed 2026-09-29)
+
+- **Roster description**: 0.2.0 declares presets from the profile `cordis.patch.yml` and **never reads `preset.yml`**; the description comes only from `config.description` on the declaration, and a missing value renders `No description.` (the user-visible symptom: "the kix paradigm descriptions are gone"). Carrier: the installer's `renderPresetPatchBlock()` reads each variant's `preset.yml` and writes the value into the declaration (as a JSON string, so `——` / `（）` stay a legal YAML scalar).
+- **`tools/change` is emitted synchronously**: `layers.effect` emits `tools/change` right after append. `kix-focus`'s incremental restrict must pre-register `denied` **before** calling `restrict()`; otherwise the synchronous re-entrant call still sees the same non-empty `fresh` set and recurses forever (measured: 6330-frame stack blow-up). Roll the pre-registration back on failure. Regression assertions live in section 11 of `kix-focus.test.js`; note the **first call never re-enters** (no listener yet), so a test must dispatch `tools/change` explicitly or it passes vacuously.
+
 ## Session archaeology / extraction technique (2026-08-19, from the "GUI list invisible but data intact" case)
 
 - **Session storage layout**: `~/.dsh/sessions/--<workspace-path>--/<session-id>/session.jsonl.zstd` (zstd-compressed JSONL, read via `zstdcat`); GUI list indexes live in `~/.dsh/storages/workspace.json` (workspace → sessionIds + archived list) and `session_projcache.json` (per-session rows: sessionStats/title/tokenUsage/sessionListMetadata etc.)

@@ -177,18 +177,18 @@
 
 # ── goals ───────────────────────────────────────────────────────────────────
 
-# Only the model-facing tool. The goal SERVICE, its session driver, and the
-# `/goal` command stay on the host plane: the Gateway serves the goal domain as
-# Remote endpoints whose receiver comes from a generated descriptor, so it
-# resolves `goals` on the host and an entry-local realm here would hide it. The
-# registry is keyed by session anyway, so one host instance serves every
-# session. What a preset chooses is whether its agent can call the goal tool.
-# 2026-08-15 trimming decision: goal is low-frequency heavy → disabled by
-# default (main-agent surface keeps only paradigm essentials; restrict cannot
-# trim scope tools, so disabled is the only trimming lever). As of 2026-08-17
-# first use auto-activates: kix_capability_call { tool: create_goal } mounts
-# and runs it (or kix_tool_activate { tool: goal } pre-activates). No restart
-# needed for either.
+# The goal SERVICE and its session driver stay on the host plane: the Gateway
+# serves the goal domain as Remote endpoints, and an entry-local realm here
+# would hide `goals`. Web disables the host `command-goal` and `tool-goal`
+# rows because presets own both. Omitting `command-goal` means `/` never lists
+# goal, and GoalBar stays blank — it renders nothing until a goal exists, and
+# the only create path is `/goal <objective>`.
+# The model tool stays disabled: low-frequency, first use auto-activates via
+# kix_capability_call { tool: create_goal } or kix_tool_activate { tool: goal }.
+# The human command is not a model tool and does not enter model history.
+- id: command-goal
+  name: '@deepseek-ai/dsh-command-goal'
+
 - id: tool-goal
   name: '@deepseek-ai/dsh-tool-goal'
   disabled: true
@@ -642,6 +642,13 @@
             information gap; propagate review_stage/review_policy/artifact_root to the tree.
           - Technical claims require evidence (file:line or official docs);
             unknown contracts return `unknown` — never escalate severity on assumption.
+          - Configuration-axis duty: evidence holds only under the configuration
+            that produced it. Diff the production defaults against the fixture
+            config axis by axis (MTU / stack & implementation choice / toggles /
+            timeouts / buffers / route modes / dependency versions); any
+            difference no case covers is a blind spot — return it as disputed
+            evidence, never wave it through because tests are green and other
+            lenses already reviewed.
           Adversarial duty in three layers (devil's advocate; run all three
           before any claim is accepted):
           - L1 rebuttal rehearsal: what is the author's most likely technical
@@ -727,6 +734,12 @@
             gates + playthrough; incomplete evidence → no PASS; touching any
             test/fixture after verification → REVERIFY_REQUIRED, never a
             direct PASS; CONDITIONAL only means CI-pending.
+          - Config-parity gate: green holds only under the fixture config.
+            Diff the production defaults against the fixture axis by axis
+            (MTU / stack / toggles / timeouts / buffers / route modes /
+            dependency versions); an undeclared or uncovered difference →
+            CONDITIONAL, never PASS. A change with no configuration surface
+            needs one sentence, no more.
           Report with tables: gate results / verdict / issue list.
         agentOptions:
           maxTokens: 65536
@@ -813,11 +826,13 @@
     # workflow/ralph depend on workflowEngine (provided inside this isolate
     # realm); a dynamically mounted fiber outside the realm cannot resolve it,
     # so activation fails honestly — remove `disabled` and restart when needed.
-    # The worker row MUST stay inside this realm: moving it to the agent root
+    # The workflow-ptc row MUST stay inside this realm: moving the worker out
     # broke the UI after restart (empty commands/list, settings Failed to
     # fetch, polling storm, workspace selection broken) — reverted 2026-08-16.
-    - id: workflow-worker-thread
-      name: '@deepseek-ai/dsh-workflow-worker-thread'
+    # From 0.1.7 the package is dsh-workflow-ptc. ptcRuntime and sandboxPolicy
+    # come from the host bundle; do not insert them here.
+    - id: workflow-ptc
+      name: '@deepseek-ai/dsh-workflow-ptc'
       config:
         provider: spawn
 

@@ -28,11 +28,19 @@ process.on('exit', () => { try { fs.rmSync(PROBE, { force: true }); } catch {} }
 
 const { resolveConfig, resolveTargetPolicy, resolveCompactSpec, BasicCompactionEngine } = await import(PROBE);
 
-const spec = (cfg, provider, model, W) =>
-  resolveCompactSpec(resolveTargetPolicy(resolveConfig(cfg), { provider, model }), W);
+const engine = fs.readFileSync(INDEX, 'utf8');
+const v017 = engine.includes('pressureBudgetTokens');
+// 0.1.7 subtracts headroom before the ratio, and maxTokens defaults to that
+// headroom (0 is illegal). Keep headroom at 1 so the absolute cap, not the
+// headroom budget, is what these cases measure. Test 9 keeps the default.
+const cfgFor = (base) => (v017 ? { headroomTokens: 1, ...base } : base);
+const spec = (cfg, provider, model, W) => {
+  const policy = resolveTargetPolicy(resolveConfig(cfg), { provider, model });
+  return v017 ? resolveCompactSpec(policy, W, 0) : resolveCompactSpec(policy, W);
+};
 
 // 1. cap binds on a 1M window
-const capped = { thresholdRatio: 0.8, maxThresholdTokens: 200_000 };
+const capped = cfgFor({ thresholdRatio: 0.8, maxThresholdTokens: 200_000 });
 assert.equal(spec(capped, 'zai-coding-cn', 'glm-5.3', 1_000_000).thresholdTokens, 200_000);
 console.log('OK 1M  cap binds: 0.8*1M=800000 -> min(cap) =', spec(capped, 'zai-coding-cn', 'glm-5.3', 1_000_000).thresholdTokens);
 
@@ -45,11 +53,11 @@ assert.equal(spec(capped, 'zai-vision', 'glm-4.6v', 131_072).thresholdTokens, 10
 console.log('OK 131K ratio binds: 0.8*131072=104857 < cap = 104857');
 
 // 4. per-model override can raise the cap for a proven long-context route
-const perModel = {
+const perModel = cfgFor({
   thresholdRatio: 0.8,
   maxThresholdTokens: 200_000,
   modelPolicies: [{ provider: 'openai', model: 'gpt-5.5', maxThresholdTokens: 400_000 }],
-};
+});
 assert.equal(spec(perModel, 'openai', 'gpt-5.5', 1_000_000).thresholdTokens, 400_000);
 assert.equal(spec(perModel, 'zai-coding-cn', 'glm-5.3', 1_000_000).thresholdTokens, 200_000);
 console.log('OK per-model override: gpt-5.5 -> 400000, others stay at 200000');
@@ -62,7 +70,7 @@ console.log('OK backward compat: unchanged 0.45 ratio path = 450000');
 
 // 6. a cap equal to/below retain is rejected (the livelock guard)
 assert.throws(
-  () => spec({ thresholdRatio: 0.8, maxThresholdTokens: 200_000, retainTokens: 200_000 }, 'zai-coding-cn', 'glm-5.3', 1_000_000),
+  () => spec(cfgFor({ thresholdRatio: 0.8, maxThresholdTokens: 200_000, retainTokens: 200_000 }), 'zai-coding-cn', 'glm-5.3', 1_000_000),
   /must be less than threshold/,
 );
 console.log('OK guard: retainTokens >= capped threshold is rejected');

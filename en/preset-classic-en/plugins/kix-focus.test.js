@@ -1048,6 +1048,81 @@ function makeRetryInstance() {
   } finally { ft.restore() }
 }
 
+// ── 11. restrict 同步重入（DSH 0.2.0 layers.effect 同步 emit tools/change）──
+// 出生证明（2026-09-29 0.2.0-rc.1 实锤，loader composeError 重载 entry 后永动、
+// 6330 帧栈爆 RangeError）：0.2.0 的 layers.effect 在 append 后同步
+// emit("tools/change")，applyRestrict 经 tools/change 监听器同步重入。若 denied
+// 在 restrict() 之后才登记，重入者看到的 fresh 恒为同一批非空 → 无限同步递归。
+// 重入必须由**已注册监听器**的那次 dispatch 触发（首次 apply 时监听器还没挂，
+// 所以首调永不重入——这一点让「只在 apply 里放同步 emit」的测法假绿，故此处
+// 显式 dispatch）。本 section 锁死预登记语义 + 失败回滚（名字删回，留给定时重试）。
+section('restrict 同步重入（0.2.0 同步 emit tools/change）')
+
+function makeReentrantInstance({ fail = false } = {}) {
+  const reentrantListeners = {}
+  const effectDisposers = []
+  const logs = []
+  let restrictCalls = 0
+  const globals = [{ name: 'mcp__probe__alpha', description: 'x' }]
+  const emitChange = () => { for (const cb of reentrantListeners['tools/change'] || []) cb() }
+  const ctx2 = {
+    tools: {
+      schemas: (scope) => (scope === undefined ? globals : []),
+      register: () => () => {},
+      get: () => undefined,
+      guard: () => () => {},
+      execute: async () => ({ isError: false }),
+      restrict() {
+        restrictCalls += 1
+        // 兜住失控递归：旧实现的现场是 RangeError（栈爆），这里换成可判定的计数
+        if (restrictCalls > 200) throw new Error('probe: restrict 重入未收敛')
+        // 镜像 0.2.0：restrict 注册 layer effect 时同步 emit tools/change
+        emitChange()
+        if (fail) throw new Error('probe: restrict refused')
+        return () => {}
+      },
+    },
+    get: () => undefined,
+    logger: { info: () => {}, warn: (m) => logs.push('W:' + m), error: () => {} },
+    on(event, cb) { (reentrantListeners[event] ||= []).push(cb) },
+    effect(cb) { effectDisposers.push(cb()); return () => {} },
+    plugin: () => ({ dispose: async () => {}, state: 2 }),
+  }
+  return { ctx: ctx2, globals, emitChange, logs, effectDisposers, restrictCalls: () => restrictCalls }
+}
+
+// A. 成功路径：同步重入者 fresh 为空直接返回，一次 dispatch 只多一次 restrict
+{
+  const inst = makeReentrantInstance()
+  plugin.apply(inst.ctx, { resolvePkg: (p) => p })
+  await ok('首调（监听器未挂）restrict 调用一次', inst.restrictCalls() === 1)
+  inst.globals.push({ name: 'mcp__probe__beta', description: 'y' })
+  let emitError = null
+  try { inst.emitChange() } catch (e) { emitError = e }
+  if (emitError !== null) console.log('       emitChange threw: ' + (emitError && emitError.message))
+  await ok('同步重入不抛 RangeError/未收敛', emitError === null)
+  await ok('同步重入下 restrict 恰好 +1（重入者 fresh 为空）', inst.restrictCalls() === 2)
+  await ok('同步重入不产生 restrict 失败 warn', inst.logs.every((l) => !l.includes('restrict 失败')))
+}
+
+// B. 失败路径：预登记回滚，名字留给定时重试
+{
+  const ft = installFakeTimers()
+  try {
+    const inst = makeReentrantInstance({ fail: true })
+    plugin.apply(inst.ctx, { resolvePkg: (p) => p })
+    await ok('失败路径首调 restrict 一次', inst.restrictCalls() === 1)
+    await ok('失败后注册 3s 重试定时器', ft.live().length === 1 && ft.live()[0].ms === 3000)
+    inst.globals.push({ name: 'mcp__probe__beta', description: 'y' })
+    let emitError = null
+    try { inst.emitChange() } catch (e) { emitError = e }
+    if (emitError !== null) console.log('       emitChange threw: ' + (emitError && emitError.message))
+    await ok('抛错路径同步重入仍收敛（restrict 恰好 +1）', emitError === null && inst.restrictCalls() === 2)
+    ft.tick()
+    await ok('重试 tick 再次调用 restrict（回滚后名字仍待重试）', inst.restrictCalls() === 3)
+  } finally { ft.restore() }
+}
+
 // ── 清理临时工作区（2026-08-17：与 kix-orchestration.test 同款纪律）──────
 for (const ws of sprintWorkspaces) fsKix.rmSync(ws, { recursive: true, force: true })
 

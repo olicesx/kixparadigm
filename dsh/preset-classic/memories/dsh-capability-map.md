@@ -192,6 +192,56 @@
 - **修复建议**：`dsh-tool-cordis` 的 `input` 参数应声明为 `type: "object"` + `additionalProperties: true`（或补描述「必须传对象」），使工具层 schema 与方法层 inputSchema 一致。属官方包，本地不 patch。
 - **报告状态**：可与 7.1 合并反馈 DeepSeek 官方。
 
+## §8 DSH 0.2.0 机制增量（2026-09-29 隔离实例实测：0.1.5-rc.1 → 0.2.0-rc.1）
+
+> 触发条件=本文件头部「更新条件」：DSH 版本升级。以下均为**机制事实**，来源为安装包逐包对照 + 隔离 0.2.0 实例端到端实测。默认档（`dsh/preset`）同内容编在其 §6；两档 §1 表格的作废格已各自加指针。
+
+### 8.1 退役 / 改名（**旧事实作废**）
+
+| 0.1.x | 0.2.0 | 影响 |
+|---|---|---|
+| `dsh-code-runtime` / `-worker-thread` | `dsh-ptc-runtime` / `-node` + `dsh-workflow-ptc` | 「Code Runtime=worker-thread 剥类型执行」作废：脚本扇出改走 **PTC runtime**。kix 侧用的已是 `dsh-workflow-ptc`（0.1.7 起改名） |
+| `dsh-workflow-worker-thread` | 同上 | workflow 执行器不再是 worker-thread |
+| `dsh-agent-presets`（复数） | `dsh-agent-preset` + `-registry` | 声明契约见 8.3 |
+| `dsh-settings-file` | `dsh-config-editor` | 设置持久化改由 config-editor 走 profile patch + Loader 对账 |
+| `cordis-plugin-hmr` | `dsh-hmr` | 纯改名 |
+
+### 8.2 `settings.yaml` 契约变更（**kix 的用户指引直接受影响**）
+
+- 0.2.0 首启把 `$DSH_HOME/settings.yaml` **导入当前 profile 后改名 `settings.yaml.imported`**，此后宿主不再读它。
+- 所以「去改 `~/.dsh/settings.yaml`」在 0.2.0 上是**失效指引**——用户会去改一个已不被读取的文件。正确落点：profile 的 `cordis.patch.yml`，或 GUI 设置面板。
+- kix 承载：`kix-route.js` 三条面向用户的失败文案已改为两代并陈（常量 `SETTINGS_HINT`），断言钉在 `kix-route.test.js`。
+
+### 8.3 preset 声明契约（0.2.0 形态）
+
+- profile 的 `cordis.patch.yml` 里 `insert` 一行 `{id: preset-<id>, name: '@deepseek-ai/dsh-agent-preset', config: {id, order, plugins: [...]}}`；registry 行 `agent-preset-registry`，`config.default: standard`。
+- preset 目录 `$DSH_HOME/.agent-presets/<id>/` **不在任何 node_modules 内**，而 `cordis:include` 以该目录自身为 baseUrl → 裸包 `@deepseek-ai/*` 不可解析，需链接一个可解析的 node_modules 作解析根；相对 `./plugins/*.js` 不受影响。
+
+### 8.4 新增机制与 kix 取舍（负空间明确）
+
+| 新机制 | 是什么 | kix 取舍 |
+|---|---|---|
+| `dsh-tool-present` | 显式声明本回合交付的工作区文件 | **未挂**。与交付纪律同向，但挂载即给每个请求加 tool schema（实测 tools 面 ≈6838 token）；待有「交付文件找不到」的真实反例再加 |
+| `dsh-tool-ralph` | fresh-agent 循环 | **不挂**，理由见档三-12（worker 自报非独立评估，与三通道验证冲突） |
+| `dsh-plugin-manager` | 宿主/CLI/Web 共用插件与 bundle 管理 | 未挂。kix 已有自己的能力货架，避免两套并存 |
+| `dsh-workspace-changes` | 逐回合工作区变更（git 快照 + 整文件捕获） | 候选。可为结算提供机械变更证据，但宿主 standard 亦未默认挂载 |
+| `dsh-experimental-auto-review` | 逐工具 LLM 授权审查（Auto 权限档） | **明确不用**：以 LLM 判断替代确定性权限边界，与 kix「机械安全边界 + 0 误报」相性冲突 |
+| `dsh-experimental-agent-team` | 原生多 agent 团队 | 未用。与既有编排（subagent / kixpower）职责重叠 |
+| `dsh-mcp-resources` | MCP 资源发现与读取 | 未挂（宿主 standard 亦未默认挂） |
+| `dsh-compaction-image-offload` | 超预算请求图片改占位符后重试 | 未挂。与 vision-bridge 路线重叠 |
+
+### 8.5 会话格式 V4：**已实测不构成故障**（负结果，防止重复打补丁）
+
+- 0.2.0 新增 `dsh-session-format-v3-to-v4`，其中 `assertV4RetiredSyntax` 对 `tool/code-dispatch*` 且 `ignorable !== true` 抛 `format v4 rejects retired event type`；V2→V3 另有同义门 `assertV3EventAdmission`。
+- 实测：一份含裸 `tool/code-dispatch-start`/`tool/code-dispatch`（**无** `ignorable`）的真实 V0 会话（`a7a5991e…`，1652 行）拷入隔离 0.2.0 实例后，`session/projections` **正常返回**（asOfSeq 343，投影完整）。
+- 原因：v0→v1 阶段把 `tool/code-dispatch*` 改名为 `tool/ptc-dispatch*`，到 V4 时已是已发布类型，门禁不触发。
+- **方法层教训**：直接把**未迁移**的原始行喂 `assertV4RowAdmission` 会得到**假阳性**。门禁断言必须走完整迁移链或真实加载路径，否则结论会反。kix 会话补丁套件**不需要**新增 V4 hunk。
+
+### 8.6 roster 描述与 `tools/change` 时序（两处 0.2.0 契约，2026-09-29 收口）
+
+- **roster 描述**：0.2.0 的 preset 由 profile `cordis.patch.yml` 声明，registry **不读 `preset.yml`**；描述只认声明里的 `config.description`，缺失即渲染 `No description.`（用户可见形态：「kix 范式的描述都没了」）。承载：安装器 `renderPresetPatchBlock()` 从各变体 `preset.yml` 读值写进声明（走 JSON string，`——`/`（）` 是合法 YAML 标量）。
+- **`tools/change` 同步 emit**：`layers.effect` 在 append 后**同步** emit `tools/change`；`kix-focus` 的增量裁剪必须在 `restrict()` **之前**预登记 `denied`，否则同步重入者 fresh 恒为同批非空 → 无限递归（实锤 6330 帧栈爆）。失败时回滚预登记。回归断言在 `kix-focus.test.js` 第 11 节；注意**首调不重入**（监听器未注册），测法必须显式 dispatch `tools/change`，否则假绿。
+
 ## 会话考古/萃取技术（2026-08-19 实战提炼：GUI 列表不可见但数据完好案）
 
 - **会话存储结构**：`~/.dsh/sessions/--<workspace-path>--/<session-id>/session.jsonl.zstd`（zstd 压缩 JSONL，`zstdcat` 解读）；GUI 列表索引在 `~/.dsh/storages/workspace.json`（工作区→sessionIds+archived 名单）与 `session_projcache.json`（每会话 rows：sessionStats/title/tokenUsage/sessionListMetadata 等）

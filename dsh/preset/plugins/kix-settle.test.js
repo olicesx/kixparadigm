@@ -97,6 +97,16 @@ function foreground(exitCode = 0, extra = {}) {
 function background(jobId) { return { kind: 'background', jobId } }
 function job(id, status, detail) { return { text: '', job: { id, status, detail } } }
 
+// exec.args 形状（2026-09-24 审查发现）：kix-discipline 兼容两种事件形状，
+// settle 此前只读 arguments——运行时传 args 时编辑与后台 job 全部漏记账。
+function postWithArgsShape(agent, name, args, value, isError = false) {
+  return postExecute(
+    { name, args, callId: name + '-args-call', agent },
+    { isError, value },
+    () => Promise.resolve({ kind: 'accept' }),
+  )
+}
+
 function surface(text) {
   return { events: [{ type: 'assistant/message', data: { message: { content: [{ type: 'text', text }] } } }] }
 }
@@ -193,6 +203,71 @@ await ok('失败的 edit/write 调用不伪装已发生 mutation', async () => {
   await post(agent, 'edit', { file_path: path.join(sessionRoot, 'src', 'failed.js') }, undefined, true)
   await stop(agent)
   return steered.length === 0
+})
+await ok('exec.args 形状的编辑与验证同样记账（审查发现回归）', async () => {
+  const agent = unsampledAgent('args-shape')
+  steered.length = 0
+  await postWithArgsShape(agent, 'edit', { file_path: path.join(sessionRoot, 'src', 'args.js') }, undefined, false)
+  await postWithArgsShape(agent, 'bash', { command: 'go test ./...' }, foreground(0), false)
+  await stop(agent)
+  return steered.length === 0
+})
+await ok('exec.args 形状的后台 job 终态成功可清账', async () => {
+  const agent = unsampledAgent('args-bg')
+  steered.length = 0
+  await postWithArgsShape(agent, 'edit', { file_path: path.join(sessionRoot, 'src', 'argsbg.js') }, undefined, false)
+  await postWithArgsShape(agent, 'bash', { command: 'go test ./...' }, background('args-job-1'), false)
+  await postWithArgsShape(agent, 'job_output', { job_id: 'args-job-1' }, job('args-job-1', 'completed', 'exit code: 0'), false)
+  await stop(agent)
+  return steered.length === 0
+})
+await ok('新 edit generation 的未验证交付可再次结算提醒（代际节流）', async () => {
+  const agent = unsampledAgent('gen-remind')
+  steered.length = 0
+  await sourceEdit(agent, path.join(sessionRoot, 'src', 'gen1.js'))
+  await stop(agent)
+  const firstReminded = steered.length === 1 && steered[0].content[0].text.includes('源码/测试编辑')
+  steered.length = 0
+  await post(agent, 'bash', { command: 'go test ./...' }, foreground(0))
+  await stop(agent)
+  const verifiedSilent = steered.length === 0
+  steered.length = 0
+  await sourceEdit(agent, path.join(sessionRoot, 'src', 'gen2.js'))
+  await stop(agent)
+  return firstReminded && verifiedSilent && steered.length === 1
+})
+await ok('settle 挂载即认领实现结算（discipline 让渡标记）', async () => {
+  const disciplineModule = require(path.join(__dirname, 'kix-discipline.js'))
+  return disciplineModule.__internals.__settleActive === true
+})
+await ok('双挂载集成：同一事件流下「未验证交付」只由 settle 单发（生产形态）', async () => {
+  // 真实挂载顺序（agent.cordis.yml：kix-discipline 先、kix-settle 后）。
+  // 此前双发实弹：mihomo 会话 3 分钟内收到 discipline no-test + settle 结算
+  // + lint 三条；让渡后同一事件流只剩 settle 结算（+ discipline lint，与结算
+  // 不重复）。
+  const disciplineListeners = {}
+  const ctxD = {
+    logger: { info() {}, warn() {}, error() {} },
+    get(name) { if (name === 'sandboxPolicy') return { workspaceRoot: sessionRoot }; return undefined },
+    on(event, cb) { (disciplineListeners[event] ||= []).push(cb) },
+    effect() {},
+    tools: { register() { return () => {} } },
+    commands: { register() { return () => {} } },
+  }
+  const disciplineModule = require(path.join(__dirname, 'kix-discipline.js'))
+  disciplineModule.apply(ctxD, {})
+  const agent = unsampledAgent('dual-mount')
+  const editArgs = { file_path: path.join(sessionRoot, 'src', 'dual.js') }
+  // 两个插件的 pre/post 都要看到同一次编辑（真实事件派发形态）
+  const exec = { name: 'edit', arguments: editArgs, callId: 'dual-edit', agent }
+  await disciplineListeners['tools/pre-execute'][0](exec, () => Promise.resolve({ kind: 'allow' }))
+  steered.length = 0
+  await disciplineListeners['tools/post-execute'][0](exec, { isError: false, value: { path: editArgs.file_path } }, () => Promise.resolve({ kind: 'accept' }))
+  await postExecute(exec, { isError: false, value: { path: editArgs.file_path } }, () => Promise.resolve({ kind: 'accept' }))
+  await turnStopping({ agent, turn: 1, signal: undefined })
+  await disciplineListeners['agent/turn-stopping'][0]({ agent, turn: 1, signal: undefined })
+  const implReminders = steered.filter((m) => JSON.stringify(m).includes('源码/测试编辑') || JSON.stringify(m).includes('测试未通过或未运行'))
+  return implReminders.length === 1 && JSON.stringify(implReminders[0]).includes('kix-settle')
 })
 await ok('Go test foreground exit0 清账', async () => {
   const agent = mkAgent('go-green')

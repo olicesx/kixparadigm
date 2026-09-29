@@ -68,7 +68,7 @@ const PRESSURE_REGISTRY = [
   {
     id: 'minimal-code-path',
     marker: '写码前：',
-    proof: { file: 'dsh/preset/plugins/kix-discipline.js', contains: 'if (hadEdits && !hadTests) {' },
+    proof: { file: 'dsh/preset/plugins/kix-discipline.js', contains: 'if (hadEdits && !hadTests && !settleOwnsImplReminder) {' },
     carriers: ['choice-pressure', 'mechanism', 'memory'],
     support: [
       'dsh/preset/plugins/kix-discipline.js',

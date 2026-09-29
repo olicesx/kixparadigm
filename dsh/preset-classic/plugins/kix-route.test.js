@@ -373,6 +373,11 @@ async function main() {
     // thinker 文案必须点名 agentDefaultModel 与 settings.yaml（可行动指引）
     const tmsg = thinkerFailText()
     check('thinkerFailText：点名 agentDefaultModel + settings.yaml', tmsg.includes('agentDefaultModel') && tmsg.includes('settings.yaml'))
+    // 0.2.0 首启即把 settings.yaml 导入当前 profile 并改名 .imported（2026-09-29 实测）：
+    // 三条失败文案都必须同时给出新落点，否则模型会把「去改一个已不存在的文件」
+    // 原样转述给用户——这是指引层的版本漂移，不是文档问题
+    const hint020 = (m) => m.includes('.imported') && m.includes('cordis.patch.yml')
+    check('失败文案：三条均给出 0.2.0 落点（.imported + profile patch）', hint020(msg) && hint020(vmsg) && hint020(tmsg))
   }
 
   // ══ listener 级集成（假 ctx 捕获 handler，覆盖此前零覆盖的不变量）═══════

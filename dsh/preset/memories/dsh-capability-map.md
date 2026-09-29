@@ -13,17 +13,17 @@
 | 域 | 代表包 | 关键机制（供索引） |
 |---|---|---|
 | 事件溯源核心 | dsh-session / scope / projection / reference | 会话日志仅追加唯一真源，LLM 历史是派生 surface；压缩=表层遮蔽不删日志；"model-visible ⟺ logged"；scope 父链是统一隔离原语（明确非沙箱）；投影缓存"陈旧但不错"（stateVersion 失效锚点，fail-soft） |
-| Agent 循环 | dsh-agent / agent-loop / presets / agent-instructions | 接口/唯一具体循环/插件三层分离，门禁沙箱权限恢复全在 `agent/*` + `tools/*` 事件流水线的插件层；preset=agent.cordis.yml 目录，roster 常驻挂载一次，会话按 scope 父链加入；AGENTS.md 基线 + 嵌套发现，`</system-reminder>` 字面转义 |
+| Agent 循环 | dsh-agent / agent-loop / presets / agent-instructions | 接口/唯一具体循环/插件三层分离，门禁沙箱权限恢复全在 `agent/*` + `tools/*` 事件流水线的插件层；preset=agent.cordis.yml 目录（**0.2.0 声明契约见 §6.3**），roster 常驻挂载一次，会话按 scope 父链加入；AGENTS.md 基线 + 嵌套发现，`</system-reminder>` 字面转义 |
 | 工具流水线 | dsh-tools / tool-fs / str-replace / ask-user / todo / web / skill / jobs / timeout-policy | 每次调用：pre-execute(allow/deny/ask) → 单调 guard → execute(超时/重试包装) → post-execute(可替换 content/附加上下文) → finalize → result；门禁拒绝不可被下游撤销；"工具不做策略、策略不入工具"；timeoutMs=协作承诺（signal 通知，终止留各能力本地）；KV cache 前缀稳定性是一等设计约束 |
 | 沙箱安全 | dsh-sandbox* / fs-sandbox / fs-observation / shell* / approval / permission-presets | 三档 read-only/workspace-write/danger-full-access 跨 fs/bash/pwsh/terminal 共享单一 `ctx.sandboxPolicy` + 唯一 writableRoots；无 runner 一律 `SANDBOX_UNAVAILABLE` fail-closed 绝不降级；写前必读是机械门禁（FS_NOT_OBSERVED）；升权=严格更宽 + justification + 一次性授权（allowed-once，审计失败即 reject）；Windows ACL 如实报 enforcement:'partial' |
-| 子代理编排 | dsh-subagent* / tool-subagent* / workflow* / tool-workflow / goal* / tool-ralph | 委派边界权限固定：快照父级沙箱覆盖 + 审批钉死 'never' + 带来源事件写入子级日志（策略可仅凭日志重建，冷恢复不重捕获）；delegationDepth 持久单调；可继续子级 inbox 唯一 FIFO；workflow=worker-thread 跑脚本扇出（fatal 错误总逸出不降级为 null，子 agent 失败返回 null 交脚本）；goal=事件溯源 + 写前 invariant + 严格回放双层校验，**续行启用绝不持久化**（session-start 即 disarm）；blocked 机械下限 3 轮与语义判断分离；ralph=fresh-agent 循环，完成/阻塞是 worker 自报（官方明示非独立评估），跨 Round 只有有界结构化交接 |
+| 子代理编排 | dsh-subagent* / tool-subagent* / workflow* / tool-workflow / goal* / tool-ralph | 委派边界权限固定：快照父级沙箱覆盖 + 审批钉死 'never' + 带来源事件写入子级日志（策略可仅凭日志重建，冷恢复不重捕获）；delegationDepth 持久单调；可继续子级 inbox 唯一 FIFO；workflow=worker-thread 跑脚本扇出（**0.2.0 改为 PTC runtime，见 §6.1**）（fatal 错误总逸出不降级为 null，子 agent 失败返回 null 交脚本）；goal=事件溯源 + 写前 invariant + 严格回放双层校验，**续行启用绝不持久化**（session-start 即 disarm）；blocked 机械下限 3 轮与语义判断分离；ralph=fresh-agent 循环，完成/阻塞是 worker 自报（官方明示非独立评估），跨 Round 只有有界结构化交接 |
 | 上下文管理 | compaction* / output-retention / spill* / checkpoint-policy | "表层替换、日志不可变"：compaction/pruner 只改模型可见表层（surfaceOp: replace），原始事件永留日志；四层预算：工具输出层(有界返回)→已落日志层(pruner 剪枝)→会话层(token 压力+工具配对平衡边界)→溢出兜底；崩溃一致性=可检测遗留状态（合成 closer 关开放轮次，TOOL_OUTCOME_UNKNOWN 要求验证而非盲重试）；/compact 命令零 token 不进模型历史 |
 | 持久化查询 | persistence* / query-sqlite / storage* / schedule / telemetry* / credentials* / settings* | 事件溯源脊柱：调度提醒/FTS 索引/遥测投影/查询表层全是可丢弃可重建投影；崩溃恢复=追加合成 closer 替代截断；设置三层(schema默认→base→user，update 只写 user 层)；凭据四层(env>受管文件>.env×2)配置只存引用(`apiKeyEnv`)，按操作解析，0600 是审慎不是边界（README 原话）；原子写统一模式（临时文件+fsync+rename+防符号链接） |
 | LLM 层 | dsh-llm / llm-deepseek / llm-pi-ai / llm-retry / mcp-client / persona / system-prompt / time-context | 注册表+策略外置（适配器注册时捕获重试策略，执行权归 llm-retry 在 agent 轮次边界重放）；resolveModelInfo 权威回答 contextWindow 等能力元数据，catalog 只是建议非白名单；system-prompt=段+order+scope 遮蔽+waterfall+complete 段+严格变量插值（插值失败宁可抛错）；动态配置每操作重读 thunk 免重启生效；MCP 工具名确定性 hash 64 字符 |
 | Web/宿主 | host-webserver / apiproxy / client-web / client-runtime / hmr / commands / cmdline | 通信=HTTP POST 双向 + 两条只下行 WebSocket（任一断整代重建，无网络 SSE 回退）；四象限消息联合 rpcId 只回显；插件加载=__DSH_BOOT__ 启动图→bundle 只注册 factory 惰性物化→cordis fiber 治理；HMR=SSE rebuilt 帧串行队列，依赖方靠激活 epoch 级联；命令平面：/compact /export /goal /feedback 结果绝不进模型历史、零 token、recordInput 可选 |
 | 用户命令平面 | dsh-commands / command-compact / command-goal / command-feedback / native-command | ctx.commands 注册表：小写名称+描述+可中止处理器；agent.ctx 下注册精确限定该 agent 遮蔽同名全局；command/run+done 日志事件对（无轮次包裹、检查点排空）；未知斜杠命令被适配器拒绝而非变成模型提示词；零 token 零前缀污染 |
 | 动态插件 | tool-cordis / cordis-host-runner / cordis-client-runner / client-ui-cordis | cordis_define/run/stop/undefine/inspect 操作实时运行时；双半（host vm 沙箱 + 浏览器 UI）；纯内存不跨重启不落盘不自动转正式插件；**vm 不是安全边界**（官方：视同 bash 访问）；官方单独做成 cordis preset 且文件头明写 TRUST 声明；运行中包可注册工具/提示词/监听器 |
-| 基建 | invariants / atomic-write / typert* / jobs* / code-runtime* / workspace / attachment / brand / api-gateway / api-remotes | Seam 三件套拆包（Service Definition/Provider/Consumer 政策插件）贯穿全部能力；fiber/effect 生命周期唯一权威，注册随 fiber 释放撤销；统一"模型代码=敌对对等方"信任模型（端口逐条验证、防符号链接预置、owner 隔离是安全边界）；invariant 配套把开发期不变量变运行时断言；Code Runtime=worker-thread 剥类型执行模型程序（vm 非沙箱，价值=不占事件循环+terminate+空 env） |
+| 基建 | invariants / atomic-write / typert* / jobs* / code-runtime* / workspace / attachment / brand / api-gateway / api-remotes | Seam 三件套拆包（Service Definition/Provider/Consumer 政策插件）贯穿全部能力；fiber/effect 生命周期唯一权威，注册随 fiber 释放撤销；统一"模型代码=敌对对等方"信任模型（端口逐条验证、防符号链接预置、owner 隔离是安全边界）；invariant 配套把开发期不变量变运行时断言；Code Runtime=worker-thread 剥类型执行模型程序（vm 非沙箱，价值=不占事件循环+terminate+空 env）（**0.2.0 退役，见 §6.1**） |
 
 ## 任务形态 → 机制映射（2026-08-17 实测固化，WSL2 E2E）
 
@@ -135,6 +135,56 @@
 - **代码级定位（高置信，对照安装目录源码）**：两层 schema 不一致——工具参数层把 `input` 声明为 `type: "json"`（编译成注解-only 节点，模型看不到类型提示）；方法校验层用方法自身 inputSchema（`{type:"object",...}`）校验 `input ?? {}` → 非 plain record 报 `"input" must be an object`。
 - **规避**：明确要求模型把 `input` 传成**对象**（如 `{"service":"..."}` 而非 `'{"service":"..."}'`）；或先不传 input 走目录导航，再按需单查。
 - **修复建议**：`dsh-tool-cordis` 的 `input` 参数应声明为 `type: "object"` + `additionalProperties: true`。属官方包，本地不 patch。
+
+## §6 DSH 0.2.0 机制增量（2026-09-29 隔离实例实测：0.1.5-rc.1 → 0.2.0-rc.1）
+
+> 触发条件=本文件头部「更新条件」：DSH 版本升级。以下均为**机制事实**，来源为安装包逐包对照 + 隔离 0.2.0 实例端到端实测。
+
+### 6.1 退役 / 改名（**旧事实作废**，§1 对应格已加指针）
+
+| 0.1.x | 0.2.0 | 影响 |
+|---|---|---|
+| `dsh-code-runtime` / `-worker-thread` | `dsh-ptc-runtime` / `-node` + `dsh-workflow-ptc` | 「Code Runtime=worker-thread 剥类型执行」作废：脚本扇出改走 **PTC runtime**。kix 侧用的已是 `dsh-workflow-ptc`（0.1.7 起改名） |
+| `dsh-workflow-worker-thread` | 同上 | workflow 执行器不再是 worker-thread |
+| `dsh-agent-presets`（复数） | `dsh-agent-preset` + `-registry` | 声明契约见 6.3 |
+| `dsh-settings-file` | `dsh-config-editor` | 设置持久化改由 config-editor 走 profile patch + Loader 对账 |
+| `cordis-plugin-hmr` | `dsh-hmr` | 纯改名 |
+
+### 6.2 `settings.yaml` 契约变更（**kix 的用户指引直接受影响**）
+
+- 0.2.0 首启把 `$DSH_HOME/settings.yaml` **导入当前 profile 后改名 `settings.yaml.imported`**，此后宿主不再读它。
+- 所以「去改 `~/.dsh/settings.yaml`」在 0.2.0 上是**失效指引**——用户会去改一个已不被读取的文件。正确落点：profile 的 `cordis.patch.yml`，或 GUI 设置面板。
+- kix 承载：`kix-route.js` 三条面向用户的失败文案已改为两代并陈（常量 `SETTINGS_HINT`），断言钉在 `kix-route.test.js`。
+
+### 6.3 preset 声明契约（0.2.0 形态）
+
+- profile 的 `cordis.patch.yml` 里 `insert` 一行 `{id: preset-<id>, name: '@deepseek-ai/dsh-agent-preset', config: {id, order, plugins: [...]}}`；registry 行 `agent-preset-registry`，`config.default: standard`。
+- preset 目录 `$DSH_HOME/.agent-presets/<id>/` **不在任何 node_modules 内**，而 `cordis:include` 以该目录自身为 baseUrl → 裸包 `@deepseek-ai/*` 不可解析，需链接一个可解析的 node_modules 作解析根；相对 `./plugins/*.js` 不受影响。
+
+### 6.4 新增机制与 kix 取舍（负空间明确）
+
+| 新机制 | 是什么 | kix 取舍 |
+|---|---|---|
+| `dsh-tool-present` | 显式声明本回合交付的工作区文件 | **未挂**。与交付纪律同向，但挂载即给每个请求加 tool schema（实测 tools 面 ≈6838 token）；待有「交付文件找不到」的真实反例再加 |
+| `dsh-tool-ralph` | fresh-agent 循环 | **不挂**，理由见 §1 档三-12（worker 自报非独立评估，与三通道验证冲突） |
+| `dsh-plugin-manager` | 宿主/CLI/Web 共用插件与 bundle 管理 | 未挂。kix 已有自己的能力货架，避免两套并存 |
+| `dsh-workspace-changes` | 逐回合工作区变更（git 快照 + 整文件捕获） | 候选。可为结算提供机械变更证据，但宿主 standard 亦未默认挂载 |
+| `dsh-experimental-auto-review` | 逐工具 LLM 授权审查（Auto 权限档） | **明确不用**：以 LLM 判断替代确定性权限边界，与 kix「机械安全边界 + 0 误报」相性冲突（属档三张力） |
+| `dsh-experimental-agent-team` | 原生多 agent 团队 | 未用。与既有编排（subagent / kixpower）职责重叠 |
+| `dsh-mcp-resources` | MCP 资源发现与读取 | 未挂（宿主 standard 亦未默认挂） |
+| `dsh-compaction-image-offload` | 超预算请求图片改占位符后重试 | 未挂。与 vision-bridge 路线重叠 |
+
+### 6.5 会话格式 V4：**已实测不构成故障**（负结果，防止重复打补丁）
+
+- 0.2.0 新增 `dsh-session-format-v3-to-v4`，其中 `assertV4RetiredSyntax` 对 `tool/code-dispatch*` 且 `ignorable !== true` 抛 `format v4 rejects retired event type`；V2→V3 另有同义门 `assertV3EventAdmission`。
+- 实测：一份含裸 `tool/code-dispatch-start`/`tool/code-dispatch`（**无** `ignorable`）的真实 V0 会话（`a7a5991e…`，1652 行）拷入隔离 0.2.0 实例后，`session/projections` **正常返回**（asOfSeq 343，投影完整）。
+- 原因：v0→v1 阶段把 `tool/code-dispatch*` 改名为 `tool/ptc-dispatch*`，到 V4 时已是已发布类型，门禁不触发。
+- **方法层教训**：直接把**未迁移**的原始行喂 `assertV4RowAdmission` 会得到**假阳性**（我第一轮据此误判需要 V4 补丁）。门禁断言必须走完整迁移链或真实加载路径，否则结论会反。kix 会话补丁套件**不需要**新增 V4 hunk。
+
+### 6.6 roster 描述与 `tools/change` 时序（两处 0.2.0 契约，2026-09-29 收口）
+
+- **roster 描述**：0.2.0 的 preset 由 profile `cordis.patch.yml` 声明，registry **不读 `preset.yml`**；描述只认声明里的 `config.description`，缺失即渲染 `No description.`（用户可见形态：「kix 范式的描述都没了」）。承载：安装器 `renderPresetPatchBlock()` 从各变体 `preset.yml` 读值写进声明（走 JSON string，`——`/`（）` 是合法 YAML 标量）。
+- **`tools/change` 同步 emit**：`layers.effect` 在 append 后**同步** emit `tools/change`；`kix-focus` 的增量裁剪必须在 `restrict()` **之前**预登记 `denied`，否则同步重入者 fresh 恒为同批非空 → 无限递归（实锤 6330 帧栈爆）。失败时回滚预登记。回归断言在 `kix-focus.test.js` 第 11 节；注意**首调不重入**（监听器未注册），测法必须显式 dispatch `tools/change`，否则假绿。
 
 ## 会话考古/萃取技术（2026-08-19 实战提炼：GUI 列表不可见但数据完好案）
 
