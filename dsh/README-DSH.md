@@ -85,6 +85,54 @@ node --test dsh\vision-bridge\test.js           # vision-bridge 纯逻辑回归
 
 preset 挂载校验（roster `standingKeyFor`）在 DSH 会话内用 cordis 工具集执行。
 
+## DSH 0.2.0-rc.1 适配（2026-09-29 实测，preset 声明与模块解析根）
+
+0.2.0-rc.1 把 agent preset 的**声明与解析契约**又改了一次：`.agent-presets/` 目录不再被扫描，
+preset 由 profile 的 `cordis.patch.yml` 里一行 `@deepseek-ai/dsh-agent-preset` 声明，再用
+`cordis:include` 指向 `$DSH_HOME/.agent-presets/<id>/agent.cordis.yml`。
+
+| # | 变更 | 影响面 | 修法 |
+|---|---|---|---|
+| 1 | preset 必须声明才可见 | 目录扫描失效 | 安装器按 profile bundle 判定：含 `dsh-web-app` / `dsh-agent-preset-registry` 才写声明，headless 跳过 |
+| 2 | `cordis:include` 把模块解析基准改到 preset 目录 | preset 内每条 `@deepseek-ai/*` 导入失败，registry 报整棵 `never started`（同目录相对 `./plugins/*.js` 正常） | 安装器在 preset 目录建 `node_modules` 符号链接，指向 `presetResolutionRoot()` 选出的那层；一层都选不出就抛错，不写声明 |
+| 3 | `settings.yaml` 启动时导入 profile 并改名 `.imported` | doctor 在 0.2.0 上误报「未配置」 | doctor 同时检查根文件、`.imported` 与各 profile 的 `cordis.patch.yml`（**剔除 YAML 注释行**后再匹配 provider 名，否则安装器自己写的 bridge 注释会让门禁恒真） |
+
+根的选法不是「第一个含 `dsh-persona` 的 `node_modules`」：npm 可能因版本冲突把 persona 嵌进
+`@deepseek-ai/dsh/node_modules/`，那一层解析不到 preset 真正需要的其余 20+ 个包，选中它等于把
+`never started` 原样搬回来。现行判据是**「解析不到的裸包名最少的那层胜出，同分取最近祖先」**，
+必查集合由各 variant 的 `agent.cordis.yml` 里的 `@deepseek-ai/*` 字面量推导（不扫插件目录，
+那里有测试夹具的假包名 `@deepseek-ai/definitely-not-installed-xyz`）。仍有缺包时**只告警不中止**
+——缺的可能是该 DSH 版本本就没有的可选件，中止会让整个安装不可用；doctor 会把缺包名单列为失败项。
+
+根因形态：上游把自带 preset 放在包内 `node_modules/@deepseek-ai/dsh-web-app/presets/`，裸包名天然可解析；
+kix 的 preset 在 `$DSH_HOME` 下（树外）。差异来自**位置**，不是声明格式。
+
+**三处 0.2.0 契约随 v1.3.18 收口**（2026-09-29 实测）：
+
+| 契约 | 0.2.0 事实 | kix 落点 |
+|---|---|---|
+| roster 描述 | preset 由 profile patch 声明，registry **不再读 `preset.yml`**；描述只认 `config.description`（缺失时客户端渲染 `No description.`） | 安装器 `renderPresetPatchBlock()` 从各变体安装目录的 `preset.yml` 读 description 写进声明（单一事实源仍是 `preset.yml`） |
+| `tools/change` 时序 | `layers.effect` 在 append 后**同步** emit `tools/change` | `kix-focus` 必须在 `restrict()` **之前**预登记 `denied`（否则同步重入看到 fresh 恒非空 → 无限递归，6330 帧栈爆 `RangeError`）；抛错回滚，失败名字留给定时重试 |
+| `settings.yaml` 一次性导入 | boot 时把该文件**整份**导入当前 profile（`configEditor.update` 走 YAML AST 追加），行落在**尾注释之前 = kix 标记区内部**；导入后文件改名 `.imported` 不再被读 | 安装器只重写自有 `- insert:` 块：标记区内的顶层用户行原样移出（`splitMarkerRegion`），卸载路径同源；检测到即告警。**整段替换会吞掉用户配置**——2026-09-29 实测吞掉 `llm-pi-ai` 四 provider / `llm-deepseek` / `ui-theme` / `subagent-model-selection` 约 200 行，重启后模型列表清空；恢复 = `.imported` 复制回 `settings.yaml` 再重启 |
+
+**配置恢复路径（runbook）**：`$DSH_HOME/settings.yaml` 被导入后改名 `settings.yaml.imported`，此后宿主只认 profile patch 里的行。若这些行被误删（例如安装器旧版整段替换），把 `.imported` 复制回 `settings.yaml` 并重启即可——boot 时的一次性导入会按 section id 逐条 upsert 回 profile patch（隔离 0.2.0 实例实测：8 个 section 全量还原，含 `llm-pi-ai` 四 provider、`llm-deepseek`、`ui-theme`、`subagent-model-selection`）。
+
+**实测证据**（隔离 `DSH_HOME=/tmp/kix-dsh020-home` + `KIX_DSH_PREFIX=/tmp/kix-dsh020`，npm 平铺安装的 0.2.0-rc.1）：
+
+- 修前 `agentPresets/list`：kix 两份各 26 行 `never started`，宿主 standard/ptc/minimal/cordis 四份干净。
+- 加解析链接后同一接口：六份**全部无 `broken`**（该接口内部会跑 registry 的 `diagnostic()`）。
+- 该实例上一轮真实模型回复：preset `kixparadigm`，system 9825 token / tools 6838 token，回复 `pong`，`toolMs=0`。
+- 补丁锚点：压缩上限 1 处 + 会话 8 条 hunk 在 0.2.0-rc.1 上**全部 applied**，无 anchor miss；会话格式仍为 **V4**，未新增 v4 hunk。
+- 正在运行的 0.1.5（`/usr/local/lib/dsh-0.1.5-rc.1`、`/root/.dsh`）全程未被修改。
+
+回归门禁：`npm run test:installer`（已把 `scripts/dsh-runtime-resolve.test.js` 接进来）覆盖
+`installPreset links preset resolution for a flat npm install`（断言从 preset 目录解析与从 dsh 包解析**等价**，
+且 `resolutionMissing` 为空）与 `presetResolutionRoot 取能解析最多裸包的那层，不被内嵌 persona 骗到`。
+
+en 包（`kixparadigm-en`）单独发布时 `__dirname/../..` 不指向本仓 `scripts/`，故
+`dsh-runtime-resolve.js` / `patch-dsh-runtime.js` / `context-budget/kix-compaction-cap-patch.mjs`
+必须随包同行，并由一致性门禁锁成字节相同；否则 0.2.0 上直接 `找不到压缩/会话补丁脚本` 拒绝安装。
+
 ## DSH 0.1.5-rc.1 适配（2026-09-11 实测，两处破坏性变更）
 
 0.1.2-rc.1 下零改动可跑的 preset，在 0.1.5-rc.1 上**完全挂不上**：preset 挂载抛错 →

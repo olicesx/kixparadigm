@@ -75,9 +75,16 @@ const spliced = (form) => ({
 
 /** Drive DSH's own v0 -> v1 -> v2 -> v3 chain over one synthetic artifact. */
 async function migrate(event) {
-  const { sessionFormatCatalog } = await load('dsh-session-format-catalog')
+  const formats = await load('dsh-session-format-catalog')
+  // DSH 0.2.0 adds v3 -> v4 and refuses to build that edge without explicit
+  // historical child facts: an empty array declares "this parent has no
+  // children". 0.1.x has no such entry point, so fall back to the shared
+  // catalog there. Fixtures stay version-agnostic; only the catalog does not.
+  const catalog = typeof formats.createSessionFormatCatalogWithChildren === 'function'
+    ? formats.createSessionFormatCatalogWithChildren([])
+    : formats.sessionFormatCatalog
   const { header, events } = v0Artifact(event)
-  const restore = sessionFormatCatalog.createRestore(header, { recovery: 'strict', validation: 'transformed' })
+  const restore = catalog.createRestore(header, { recovery: 'strict', validation: 'transformed' })
   for (const row of events) restore.decodeRow(row)
   return restore.finish()
 }
@@ -129,7 +136,10 @@ test('the plugin allowlist does not drift between the packages that declare it',
 
 test('v0 migration admits the plugin audit event and stamps the ignorable marker', { skip: noRuntime }, async () => {
   const artifact = await migrate(PLUGIN_EVENT)
-  const admitted = artifact.events.filter((event) => event.type === PLUGIN_TYPE)
+  // DSH 0.2.0 的 v3 -> v4 把插件审计事件改名为 `plugin:<type>`（ignorable 原样
+  // 保留）；0.1.x 保持原名。两种形态都算「被放行并盖上标记」——断言认的是语义，
+  // 不把某一代的命名钉死。
+  const admitted = artifact.events.filter((event) => event.type === PLUGIN_TYPE || event.type === `plugin:${PLUGIN_TYPE}`)
   assert.equal(admitted.length, 1)
   assert.equal(admitted[0].ignorable, true, 'the migration must re-emit the admitted plugin event as ignorable')
 })
@@ -171,8 +181,11 @@ test('v0 migration keeps retired inbox provenance forms and refuses unknown ones
 })
 
 test('Session.append persists the ignorable envelope marker', { skip: noRuntime }, async () => {
-  const { Session, SessionId } = await load('dsh-session')
-  const session = new Session(SessionId('kix-probe'), [], { version: 3, id: 'kix-probe', createdAt: 1, isSeeded: false, delegationDepth: 0 }, 'snapshot')
+  const { Session, SessionId, SESSION_FORMAT_VERSION } = await load('dsh-session')
+  // The installed Session rejects a header that is not its own format: 0.1.x is
+  // v3, 0.2.0 is v4. Read the constant instead of pinning a generation.
+  const version = SESSION_FORMAT_VERSION === undefined ? 3 : SESSION_FORMAT_VERSION
+  const session = new Session(SessionId('kix-probe'), [], { version, id: 'kix-probe', createdAt: 1, isSeeded: false, delegationDepth: 0 }, 'snapshot')
   assert.equal(session.append(PLUGIN_TYPE, { endpoint: 'mcp' }, { ignorable: true }).ignorable, true)
   assert.equal(session.append(PLUGIN_TYPE, { endpoint: 'mcp' }).ignorable, undefined)
 })

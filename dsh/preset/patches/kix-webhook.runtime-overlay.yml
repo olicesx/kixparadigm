@@ -48,6 +48,8 @@
         secretEnv: KIX_WEBHOOK_SECRET
         maxBodyBytes: 262144
 
-    # 绝对路径按本机检出位置写死（换机器改这一行）
-    - id: kix-webauth
-      name: <repo-root>/dsh/preset/patches/kix-webauth.js
+    # kix-webauth 必须写绝对路径：cordis 解析相对 name 的基准是 profile 目录（ctx.baseUrl），
+    # 不是本文件所在目录（见 cordis-plugin-loader `new URL(name, baseUrl)`）。启用时取消
+    # 注释，并把 <repo-root> 换成本机检出绝对路径——该行本机化，不入库。
+    # - id: kix-webauth
+    #   name: <repo-root>/dsh/preset/patches/kix-webauth.js

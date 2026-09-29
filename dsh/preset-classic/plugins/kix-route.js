@@ -268,7 +268,7 @@ function makeUserMessage(text) {
     id: randomUUID(),
     role: 'user',
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: 'kix-route', form: 'notice', summary: text.slice(0, 100) },
+    source: { kind: 'plugin:kix-route', form: 'notice', summary: text.slice(0, 100) },
   }
 }
 
@@ -535,22 +535,28 @@ function decideTierAction(tier, hit, defaultRoute, failText) {
   return { kind: 'fail', message: failText }
 }
 
+// 设置落点随 DSH 版本变，指引必须两代都对：0.1.x 读 ~/.dsh/settings.yaml；
+// 0.2.0 起启动时把该文件导入当前 profile 并改名 settings.yaml.imported，配置
+// 改在 profile 的 cordis.patch.yml（或 GUI 设置面板）。只写 settings.yaml 会
+// 让模型在 0.2.0 上把「去改一个已不存在的文件」原样转述给用户。
+const SETTINGS_HINT = 'LLM provider 配置落点：0.1.x 为 `~/.dsh/settings.yaml`；0.2.0 起该文件被导入后改名 `settings.yaml.imported`，请改 profile 的 `cordis.patch.yml`（或 GUI 设置面板）'
+
 /** cross 失败信息：附主厂商与已注册清单 + 两条出路（改用 subagent / 配置第二厂商）。 */
 function crossFailText(parentProvider, registered) {
   const vendor = vendorOf(parentProvider) || '未知'
   const list = registered.length > 0 ? registered.join(', ') : '无'
-  return `kix-route: subagent_cross 需要与主模型不同厂商的模型（主厂商 ${vendor}；已注册 provider：${list}）。本部署无跨厂商正交验证能力：请改用 subagent 做同厂商复核，并在结论中注明「单厂商部署，无独立第二通道」；或由用户在 settings.yaml 的 llm-pi-ai.providers 配置第二厂商后重试。`
+  return `kix-route: subagent_cross 需要与主模型不同厂商的模型（主厂商 ${vendor}；已注册 provider：${list}）。本部署无跨厂商正交验证能力：请改用 subagent 做同厂商复核，并在结论中注明「单厂商部署，无独立第二通道」；或由用户配置第二厂商后重试——${SETTINGS_HINT}。`
 }
 
 /** vision 失败信息：附配置建议，避免 spawn 后才被 read_image 门禁弹回。 */
 function visionFailText(registered) {
   const list = registered.length > 0 ? registered.join(', ') : '无'
-  return `kix-route: subagent_vision 需要声明 image 输入的模型，当前目录均未声明（已注册 provider：${list}）。本部署无识图能力：请在 settings.yaml 给任一 provider 的 models 条目加 input: [ text, image ]，或请用户改用文字描述 / 给出图片路径外的人工处理方案。`
+  return `kix-route: subagent_vision 需要声明 image 输入的模型，当前目录均未声明（已注册 provider：${list}）。本部署无识图能力：请给任一 provider 的 models 条目加 input: [ text, image ]，或请用户改用文字描述 / 给出图片路径外的人工处理方案——${SETTINGS_HINT}。`
 }
 
 /** thinker 彻底失败（无 deepseek 且无环境默认路由，极端边界）。 */
 function thinkerFailText() {
-  return 'kix-route: subagent_thinker 未解析到 deepseek 系路由，且环境默认路由不可用（agentDefaultModel 缺失）。请检查 settings.yaml 的 llm-pi-ai 配置。'
+  return `kix-route: subagent_thinker 未解析到 deepseek 系路由，且环境默认路由不可用（agentDefaultModel 缺失）。请检查 llm-pi-ai 配置——${SETTINGS_HINT}。`
 }
 
 // ── 插件本体 ────────────────────────────────────────────────────────────────

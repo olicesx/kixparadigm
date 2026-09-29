@@ -106,6 +106,12 @@ const TEST_COMMAND_PATTERNS = [
   /(?:^|[;&|]\s*)(?:(?:pytest|go\s+test|cargo\s+test|make\s+test|ctest)(?:\s|$))/,
   /(?:^|[;&|]\s*)(?:node\s+--test(?:\s|$))/,
   /(?:^|[;&|]\s*)(?:deno\s+test|uv\s+run\s+pytest)(?:\s|$)/,
+  // 直接运行测试文件（2026-09-24 实弹：本仓库 yml 三处文档化的规范命令
+  // `node plugins/xxx.test.js` 不被上面任何模式识别——同回合测试全绿 6 轮
+  // 而 green 记账为 0，turn-stopping 反报「测试未运行」。下方 VERIFICATION
+  // 分类早已认此形态（settle 正常记账），此处对齐同一形状，消除插件内
+  // 两分类器覆盖面分叉。测试文件须是首参，`node build.js` 不匹配。
+  /(?:^|[;&|]\s*)(?:node\s+(?:--\S+\s+)*\S+\.test\.(?:js|cjs|mjs)(?:\s|$))/,
 ]
 // settle 与 red/green 共用的“可复算验证”分类。测试仍由上面的窄模式单独
 // 驱动 red/green；build/lint/typecheck/verify 只用于结算，不伪装成测试。
@@ -139,6 +145,19 @@ const OPERATIONAL_ARTIFACT_PATTERNS = [
   /(^|\/)\.dsh\/settings\.ya?ml$/i,
 ]
 const DOCUMENTATION_FILE_PATTERN = /\.(?:md|mdx|rst|adoc)$/i
+// 配置轴提醒只在有真实配置/运行时语义信号时出现。它是 advisory，不是
+// 新 gate：保守漏报优于把每个普通单元测试都变成配置讲义。
+// 配置轴清单（全仓唯一版本）：configAxisReason / no-test 提醒 / persona 交付前三问
+// / reviewer+qa agent.md 都引用同一串，避免两套清单各说各话（2026-09-24 实弹：
+// 主代理平时看到短清单，green 后看到长清单，轴不一致互相打架）。
+const CONFIG_AXIS_LIST = '栈与实现选择/MTU/开关/超时/缓冲区/路由模式/依赖版本'
+const CONFIG_SURFACE_PATH_PATTERNS = [
+  /(^|\/)(?:config|configs|configuration|settings|options|flags?|env|deploy|deployment|docker|k8s|helm|terraform)(?:[\/._-]|$)/i,
+  /(^|\/)(?:net|network|tcp|udp|http|https|tls|quic|dns|proxy|route|router|listener|transport|tun|socket|platform|runtime|api|client|server|gateway|middleware|adapter|external|integration|interop|e2e|database|db|sql|cache|queue|pool|buffer|timeout|mtu|mss)(?:[\/._-]|$)/i,
+  /\.(?:ya?ml|toml|ini|properties|env(?:\.[^/]*)?)$/i,
+  /(^|\/)(?:package\.json|go\.(?:mod|sum)|cargo\.toml|dockerfile)$/i,
+]
+const CONFIG_SURFACE_TEXT_PATTERN = /配置面|配置轴|生产默认|测试夹具|夹具配置|production\s+default|fixture\s+config|config(?:uration)?\s+surface|runtime\s+default/i
 const SHELL_TOOLS = new Set(['bash', 'pwsh'])
 // 提交前按语言语法检查（2026-09-03 回补）：persona 把 clippy/fmt 清单交给本插件
 // 机械提醒，但旧实现只 gate 测试。Rust 拆 fmt / clippy 两族（指令是 AND）；
@@ -377,25 +396,49 @@ function noteLintRan(st, lintIds, generation) {
   for (const id of lintIds) st.turnLintRan[id] = generation
 }
 
+// 配置轴提醒以“自上次成功 green 后是否触及配置面”为判据；这样连续编辑源码+测试
+// 不会因为 test 文件本身不含配置词而丢失上下文，而普通业务文件不会被灌事故讲义。
+function queueConfigAxisReminder(st) {
+  if (!st || !st.editGeneration) return
+  if (!st.configSurfaceSinceGreen && !specMentionsConfigSurface(st.spec)) return
+  if (st.configAxisRemindedGeneration !== st.editGeneration) {
+    st.pendingConfigAxisRemind = st.editGeneration
+  }
+}
+
+function takeConfigAxisReminder(st) {
+  if (!st || st.pendingConfigAxisRemind !== st.editGeneration) return false
+  st.pendingConfigAxisRemind = -1
+  st.configAxisRemindedGeneration = st.editGeneration
+  st.configSurfaceSinceGreen = false
+  return true
+}
+
 // 一次 canonical 终态成功结算的记账：测试 → green（绑定当前 edit generation）；
-// lint 命令 → lint ran（同一 generation）。
+// lint 命令 → lint ran（同一 generation）。前台与后台都走这里，避免证据路径分叉。
 function recordVerificationSuccess(st, evidence) {
   if (!st || !evidence) return
   if (evidence.isTest) {
     st.turnTests++
     st.greenGeneration = st.editGeneration
+    queueConfigAxisReminder(st)
   }
   noteLintRan(st, evidence.lintIds, st.editGeneration)
 }
 
 // job_output 终态结算：只有本插件登记过的 job、且启动代次仍是当前编辑代次才算证据。
+// 返回已结算 evidence，让 post-execute 与前台命令共享同一注入路径。
 function applyTerminalJobOutcome(st, result) {
   const outcome = executionResult.terminalJobOutcome(result)
-  if (!outcome) return
+  if (!outcome) return undefined
   const pending = st.pendingVerificationJobs.get(outcome.id)
-  if (!pending) return
+  if (!pending) return undefined
   st.pendingVerificationJobs.delete(outcome.id)
-  if (outcome.success && pending.generation === st.editGeneration) recordVerificationSuccess(st, pending)
+  if (outcome.success && pending.generation === st.editGeneration) {
+    recordVerificationSuccess(st, pending)
+    return pending
+  }
+  return undefined
 }
 
 function normalizeFilePath(path) {
@@ -413,6 +456,21 @@ function classifyMutationPath(path) {
   if (OPERATIONAL_ARTIFACT_PATTERNS.some((re) => re.test(p))) return 'artifact'
   if (DOCUMENTATION_FILE_PATTERN.test(p)) return 'documentation'
   return 'source'
+}
+
+function isConfigSurfacePath(path) {
+  const p = normalizeFilePath(path)
+  return Boolean(p) && CONFIG_SURFACE_PATH_PATTERNS.some((re) => re.test(p))
+}
+
+function specMentionsConfigSurface(spec) {
+  if (!spec) return false
+  return ['goal', 'assumptions', 'path', 'acceptance', 'contract']
+    .some((key) => CONFIG_SURFACE_TEXT_PATTERN.test(String(spec[key] || '')))
+}
+
+function configAxisReason() {
+  return 'kix-discipline: 当前 green 只证明当前测试夹具配置。若本次改动有配置/平台/网络/外部语义面，请交付前对照生产默认与夹具：列出' + CONFIG_AXIS_LIST + '中相关轴的差异；未被用例覆盖的差异保持为未知。若没有配置面，明确写“无配置面”，不要把 green 扩大成生产语义证明。'
 }
 
 function isMutationTool(name) {
@@ -496,7 +554,7 @@ function parseSpec(text) {
 // 会话状态折叠（durable：从 spec 文件 + 会话内内存恢复）
 // io：可选读写器 { readText(path), writeText(path, content) } —— apply 注入 ctx.fs
 // （走 DSH 文件系统服务，经沙箱策略与 fs/write-intent 门禁），默认 node:fs 同步（测试用）。
-function makeState({ sessionKey, workspaceRoot, io }) {
+function makeState({ sessionKey, workspaceRoot, io, remindOnce }) {
   const specFile = workspaceRoot ? join(workspaceRoot, SPEC_DIRNAME, SPEC_FILENAME) : undefined
   let cached = undefined
   let specLoaded = false
@@ -504,9 +562,12 @@ function makeState({ sessionKey, workspaceRoot, io }) {
   const state = {
     specFile,
     enabled: true,
-    remindOnce: true,
+    remindOnce: remindOnce !== false,
     redReminded: false,
-    greenReminded: false,
+    // green/lint 提醒按 edit generation 节流（2026-09-24）：会话级 once 在长会话里
+    // 只覆盖第一代编辑，后续新编辑代的证据缺口静默（mihomo 9 天会话实弹）。
+    greenRemindedGeneration: -1,
+    lintRemindedGeneration: -1,
     // 本回合（turn）内的实现编辑与测试运行计数——turn 边界重置
     turnEdits: 0,
     turnTests: 0,
@@ -517,7 +578,10 @@ function makeState({ sessionKey, workspaceRoot, io }) {
     editGeneration: 0,
     greenGeneration: 0,
     pendingVerificationJobs: new Map(),
-    lintReminded: false,
+    // 配置面提醒绑定 edit generation；成功 green 后清掉 sinceGreen，后续新编辑可再触发。
+    configSurfaceSinceGreen: false,
+    configAxisRemindedGeneration: -1,
+    pendingConfigAxisRemind: -1,
     pendingLintRemind: null,
     spec: undefined,
     lastSaveError: undefined,
@@ -581,7 +645,7 @@ function makeUserMessage(text) {
     id: randomUUID(),
     role: 'user',
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: 'kix-discipline', form: 'notice', summary: text.slice(0, 100) },
+    source: { kind: 'plugin:kix-discipline', form: 'notice', summary: text.slice(0, 100) },
   }
 }
 
@@ -611,14 +675,16 @@ module.exports = {
         }
       : undefined
 
-    // 每会话状态（key = agent session id；跨会话 durable 于 spec 文件）
+    // 每会话状态（key = agent session id；跨会话 durable 于 spec 文件）。
+    // 2026-09-24：session.id 为主键（与 kix-settle 一致），缺失才回退 agent.id——
+    // 同会话换 agent 对象不再丢编辑代际状态。
     const states = new Map()
     function stateFor(agent) {
-      const key = agent && agent.id ? String(agent.id) : 'anonymous'
+      const key = (agent && agent.session && agent.session.id) || (agent && agent.id) || 'anonymous'
       let st = states.get(key)
       if (!st) {
         const workspaceRoot = lib.resolveWorkspaceRoot(agent, sandboxPolicy) || undefined
-        st = makeState({ sessionKey: key, workspaceRoot, io: fsIo })
+        st = makeState({ sessionKey: key, workspaceRoot, io: fsIo, remindOnce: cfg.remindOnce })
         st.loadSpec().catch(() => { /* 缓存填充失败静默：后续 loadSpec 重试或降级 */ })
         states.set(key, st)
       }
@@ -740,7 +806,7 @@ module.exports = {
           const st = stateFor(agent)
           if (st.enabled) {
             const missing = missingLintIds(st)
-            if (missing.length && !(st.remindOnce && st.lintReminded)) {
+            if (missing.length && !(st.remindOnce && st.lintRemindedGeneration === st.editGeneration)) {
               st.pendingLintRemind = missing
             }
           }
@@ -797,6 +863,9 @@ module.exports = {
 
       const args = exec && (exec.arguments ?? exec.args)
       const cmdText = args && (args.command || args.cmd)
+      // 前台命令、后台启动和 job_output 终态都汇入同一 completedTest 标记；
+      // 配置 checkpoint 不能只挂在其中一条执行形态上。
+      let completedTest = false
 
       // 实现/测试编辑「落盘成功」才记账（2026-09-09）：失败/被 deny 的 source edit
       // 不算本回合实现编辑，也不产生新 edit generation（旧 green/lint 证据不过期）。
@@ -806,6 +875,7 @@ module.exports = {
         if (result && result.isError !== true && (kind === 'source' || kind === 'test')) {
           if (kind === 'source') st.turnEdits += 1
           st.editGeneration += 1
+          st.configSurfaceSinceGreen = st.configSurfaceSinceGreen || isConfigSurfacePath(path)
           noteLintNeed(st, path, st.editGeneration)
           // 旧代次的后台验证已不可能成为当前代码的证据（终态也只按代次判定），
           // 直接丢弃，避免长会话里 job 句柄无界堆积。
@@ -814,8 +884,9 @@ module.exports = {
           }
         }
       } else if (tool === 'job_output') {
-        // 后台验证的终态证据（启动不算，旧代次不算）。
-        applyTerminalJobOutcome(st, result)
+        // 后台验证的终态证据（启动不算，旧代次不算）；成功测试沿用前台注入路径。
+        const evidence = applyTerminalJobOutcome(st, result)
+        completedTest = Boolean(evidence && evidence.isTest)
       } else if (typeof cmdText === 'string') {
         const isTest = isTestCommand(cmdText)
         const lintIds = lintIdsForCommand(cmdText)
@@ -829,22 +900,33 @@ module.exports = {
             recordVerificationSuccess(st, { isTest, lintIds })
           }
         }
-        if (isTest) {
-          if (st.pendingLintRemind) {
-            const ids = st.pendingLintRemind
-            st.pendingLintRemind = null
-            if (!(st.remindOnce && st.lintReminded)) {
-              st.lintReminded = true
-              return lib.appendContexts(await next(), [makeUserMessage(lintRemindReason(ids))])
-            }
+        // 即使测试尚未终态，保持原有语义：本次命令不消费编辑前的其他提醒。
+        completedTest = isTest
+      }
+
+      const extras = []
+      // 配置 checkpoint 是可执行 advisory，不是新 gate；只在相关 edit generation
+      // 的成功测试首次落地时出现。它优先于 lint/red，避免一回合塞入两段长说明。
+      if (takeConfigAxisReminder(st)) {
+        extras.push(makeUserMessage(configAxisReason()))
+        return lib.appendContexts(await next(), extras)
+      }
+
+      // 测试命令（包括后台启动）保留旧的 lint 提醒时序；成功后台终态也走这里。
+      if (completedTest) {
+        if (st.pendingLintRemind) {
+          const ids = st.pendingLintRemind
+          st.pendingLintRemind = null
+          if (!(st.remindOnce && st.lintRemindedGeneration === st.editGeneration)) {
+            st.lintRemindedGeneration = st.editGeneration
+            return lib.appendContexts(await next(), [makeUserMessage(lintRemindReason(ids))])
           }
-          return next()
         }
+        return next()
       }
 
       // 待注入的 red remind（合并注入：await next() 后并 contexts——裸返回
       // 会短路瀑布饿死后挂载的监听器，WSL2 实弹实锤首写提醒因此丢失）
-      const extras = []
       if (st.pendingRemind) {
         st.pendingRemind = false
         extras.push(makeUserMessage('kix-discipline: 本次编辑前未记录需求三检契约。若任务模糊或影响面大，请先调用 kix_discipline_spec 记录 goal/xy/assumptions/path/acceptance；字面明确低风险可逆的任务可忽略本提醒直接继续（kix 需求三检只按信号触发，不强制）。'))
@@ -852,8 +934,8 @@ module.exports = {
       if (st.pendingLintRemind) {
         const ids = st.pendingLintRemind
         st.pendingLintRemind = null
-        if (!(st.remindOnce && st.lintReminded)) {
-          st.lintReminded = true
+        if (!(st.remindOnce && st.lintRemindedGeneration === st.editGeneration)) {
+          st.lintRemindedGeneration = st.editGeneration
           extras.push(makeUserMessage(lintRemindReason(ids)))
         }
       }
@@ -876,16 +958,24 @@ module.exports = {
       st.turnTests = 0
       st.turnLintNeed = Object.create(null)
       st.turnLintRan = Object.create(null)
-      // green gate：有实现 edit 无测试运行 → 提醒（原逻辑）
-      if (hadEdits && !hadTests) {
-        if (!(st.remindOnce && st.greenReminded)) {
-          st.greenReminded = true
-          const reason = 'kix-discipline: 本回合有实现编辑，但测试未通过或未运行（green 证据只认 canonical 成功终态：前台 exitCode=0，或后台 job completed 且 exit code 0；被拦/失败/超时与编辑前启动的旧 job 都不算）。交付前验证三问：① 测试镜像真实链路吗 ② 证据维度对吗 ③ 关键 claim 独立验证过吗。运行相关测试后再声称完成（kix 提交前必跑 lint/test）。'
+      // green gate：有实现 edit 无测试运行 → 提醒（按 edit generation 节流）。
+      // 双挂载让渡（2026-09-24）：kix-settle 挂载时「实现未结算」归 settle 单发
+      // （它把 build/vet/typecheck 与后台 pending 一并结算，证据面更宽；此前双发
+      // 实弹：mihomo 会话 3 分钟内收到 discipline no-test + settle 结算 + lint 三条）。
+      // settle 在 apply 时置 __internals.__settleActive 标记；无该插件（classic 档）
+      // 或 agent 无 session.id（settle 结算域之外）时本 gate 照常生效，fail-safe
+      // 方向锁定为「多提醒」而非「静默」。
+      const settleOwnsImplReminder = module.exports.__internals.__settleActive === true &&
+        Boolean(agent && agent.session && agent.session.id)
+      if (hadEdits && !hadTests && !settleOwnsImplReminder) {
+        if (!(st.remindOnce && st.greenRemindedGeneration === st.editGeneration)) {
+          st.greenRemindedGeneration = st.editGeneration
+          const reason = 'kix-discipline: 本回合有实现编辑，但测试未通过或未运行（green 证据只认 canonical 成功终态：前台 exitCode=0，或后台 job completed 且 exit code 0；被拦/失败/超时与编辑前启动的旧 job 都不算）。交付前验证三问：① 测试镜像真实链路吗——生产默认与夹具逐轴对照（' + CONFIG_AXIS_LIST + '），未被用例覆盖的差异就是盲区 ② 证据维度对吗 ③ 关键 claim 独立验证过吗。运行相关测试后再声称完成（kix 提交前必跑 lint/test）。'
           agent.steer(makeUserMessage(reason))
         }
       }
-      if (missingLint.length && !(st.remindOnce && st.lintReminded)) {
-        st.lintReminded = true
+      if (missingLint.length && !(st.remindOnce && st.lintRemindedGeneration === st.editGeneration)) {
+        st.lintRemindedGeneration = st.editGeneration
         agent.steer(makeUserMessage(lintRemindReason(missingLint)))
       }
       // v2（用户反馈）：模型终稿把直接请求判为「不处理/在别处处理/信息不足」
@@ -930,7 +1020,7 @@ module.exports = {
           'enabled: ' + st.enabled,
           'intensity: ' + intensity,
           'spec: ' + specLine,
-          'redReminded: ' + st.redReminded + ' / greenReminded: ' + st.greenReminded + ' / lintReminded: ' + st.lintReminded,
+          'redReminded: ' + st.redReminded + ' / greenRemindedGen: ' + st.greenRemindedGeneration + ' / lintRemindedGen: ' + st.lintRemindedGeneration + ' / settleOwnsImpl: ' + (module.exports.__internals.__settleActive === true),
           'turnEdits: ' + st.turnEdits + ' / turnTests: ' + st.turnTests + ' / lintNeed: ' + Object.keys(st.turnLintNeed || {}).join(',') + ' / lintRan: ' + Object.keys(st.turnLintRan || {}).join(','),
         ]
         if (arg === 'report') {
@@ -950,6 +1040,9 @@ module.exports.__internals = {
   normalizeCommandText,
   isTestFile,
   classifyMutationPath,
+  isConfigSurfacePath,
+  specMentionsConfigSurface,
+  configAxisReason,
   isMutationTool,
   lintIdsForPath,
   lintIdsForCommand,

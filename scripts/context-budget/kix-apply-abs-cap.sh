@@ -35,6 +35,8 @@ SELF_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 SELF="$SELF_DIR/$(basename "${BASH_SOURCE[0]}")"
 TRANSFORM="$SELF_DIR/kix-apply-abs-cap.py"
 VERIFY="$SELF_DIR/kix-apply-abs-cap.verify.mjs"
+# The patcher refuses a runtime with no dsh-agent-preset-registry. Point
+# DSH_COMPACTION_PKG at the 0.1.7 tree; it will not fall back to 0.1.5.
 PATCHER="$SELF_DIR/kix-compaction-cap-patch.mjs"
 # systemd transient units and some harness shells start without HOME; resolve it
 # explicitly so `set -u` cannot abort on the default expression.

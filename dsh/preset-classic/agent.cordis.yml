@@ -69,7 +69,7 @@
       深度不足/读写混淆/语言语义/自信偏差/辩护倾向/外部视野/过度工程/架构方向。有疑虑调独立 agent；范围不确定 ask_user_question。
 
       ## 交付前验证三问
-      改事件处理/类型转换/平台边界/外部 API：① 测试镜像真实链路吗（stub 藏 bug）② 证据维度对吗（测调用链≠测语义）③ 关键 claim 独立验证过吗。
+      改事件处理/类型转换/平台边界/外部 API：① 测试镜像真实链路吗——生产默认对照夹具逐轴，未覆盖即盲区（stub 藏 bug）② 证据维度对吗（测调用链≠测语义）③ 关键 claim 独立验证过吗。
       提交前跑标准 lint/test（Rust: fmt --check+clippy -D warnings+test；TS: eslint/prettier/typecheck）。
 
       ## 环境默认
@@ -179,16 +179,18 @@
 
 # ── goals ───────────────────────────────────────────────────────────────────
 
-# Only the model-facing tool. The goal SERVICE, its session driver, and the
-# `/goal` command stay on the host plane: the Gateway serves the goal domain as
-# Remote endpoints whose receiver comes from a generated descriptor, so it
-# resolves `goals` on the host and an entry-local realm here would hide it. The
-# registry is keyed by session anyway, so one host instance serves every
-# session. What a preset chooses is whether its agent can call the goal tool.
-# 2026-08-15 精简决策：goal 低频重型 → 默认 disabled（主 agent 工具面只留
-# 范式必需；restrict 裁不到 scope 工具）。2026-08-17 起首次使用自动激活：
-# kix_capability_call { tool: create_goal } 即挂载并执行（或 kix_tool_activate
-# { tool: goal } 显式预激活），无需重启。
+# The goal SERVICE and its session driver stay on the host plane: the Gateway
+# serves the goal domain as Remote endpoints, and an entry-local realm here
+# would hide `goals`. Web disables the host `command-goal` and `tool-goal`
+# rows because presets own both. Omitting `command-goal` means `/` never lists
+# goal, and GoalBar stays blank — it renders nothing until a goal exists, and
+# the only create path is `/goal <objective>`.
+# The model tool stays disabled: low-frequency, first use auto-activates via
+# kix_capability_call { tool: create_goal } or kix_tool_activate { tool: goal }.
+# The human command is not a model tool and does not enter model history.
+- id: command-goal
+  name: '@deepseek-ai/dsh-command-goal'
+
 - id: tool-goal
   name: '@deepseek-ai/dsh-tool-goal'
   disabled: true
@@ -602,6 +604,13 @@
             information gap; propagate review_stage/review_policy/artifact_root to the tree.
           - Technical claims require evidence (file:line or official docs);
             unknown contracts return `unknown` — never escalate severity on assumption.
+          - Configuration-axis duty: evidence holds only under the configuration
+            that produced it. Diff the production defaults against the fixture
+            config axis by axis (MTU / stack & implementation choice / toggles /
+            timeouts / buffers / route modes / dependency versions); any
+            difference no case covers is a blind spot — return it as disputed
+            evidence, never wave it through because tests are green and other
+            lenses already reviewed.
           Adversarial duty in three layers (devil's advocate; run all three
           before any claim is accepted):
           - L1 rebuttal rehearsal: what is the author's most likely technical
@@ -676,6 +685,12 @@
             gates + playthrough; incomplete evidence → no PASS; touching any
             test/fixture after verification → REVERIFY_REQUIRED, never a
             direct PASS; CONDITIONAL only means CI-pending.
+          - Config-parity gate: green holds only under the fixture config.
+            Diff the production defaults against the fixture axis by axis
+            (MTU / stack / toggles / timeouts / buffers / route modes /
+            dependency versions); an undeclared or uncovered difference →
+            CONDITIONAL, never PASS. A change with no configuration surface
+            needs one sentence, no more.
           Report with tables: gate results / verdict / issue list.
         agentOptions:
           maxTokens: 65536
@@ -761,11 +776,12 @@
     # ≈1 条 schema；启停摩擦不对称（关闭后需重启宿主才能再启用）。死亡
     # 条款：连续一个月真实会话零使用 → 恢复 disabled（随下次发版重启
     # 落地）。ralph 已移除（极低频 + 可替代，
-    # 负债判定）。worker 行必须留在本 realm 内——曾移出导致重启后 UI 损坏
-    # （commands/list 空 + 设置 Failed to fetch + 轮询风暴），已回退
-    # （2026-08-16）。
-    - id: workflow-worker-thread
-      name: '@deepseek-ai/dsh-workflow-worker-thread'
+    # 负债判定）。workflow-ptc 行必须留在本 realm 内——worker-thread 时代移出
+    # 导致重启后 UI 损坏（commands/list 空 + 设置 Failed to fetch + 轮询风暴），
+    # 已回退（2026-08-16）。0.1.7 起包名是 dsh-workflow-ptc；ptcRuntime 与
+    # sandboxPolicy 由宿主 bundle 提供，这里不要再插。
+    - id: workflow-ptc
+      name: '@deepseek-ai/dsh-workflow-ptc'
       config:
         provider: spawn
 

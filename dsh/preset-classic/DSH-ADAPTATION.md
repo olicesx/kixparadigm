@@ -74,6 +74,17 @@ autoApprove 全开 → 对应 DSH 权限预设（本部署 `danger-full-access`�
 - 配置：`enableRestrict: false` 关闭裁剪（仅保留 search/call）；`extraResidentTools` 追加常驻
 - 与 kix-guards 交互：capability_call/search 已入 KNOWN_SAFE_TOOLS 白名单（防未来正则误伤）；MCP 代理的 GitHub 写在外层 capability_call unwrap，不依赖内层 agent 视图 pre-execute
 - **2026-08-17（决策 A+B，用户原则：简单机械不影响思考的工具常驻，有认知负担的工具机制化自动激活）**：job_*（job_output/job_list/job_kill）**常驻化**——后台任务随时可用（修 tool-jobs 曾 disabled 时 run_in_background 报 "background jobs unavailable: no job controller serves this agent" 的组成矛盾）；subagent 细分档位与 goal **首次使用自动激活**——capability_call 代理未挂载的可激活工具时自动 `ctx.plugin` 挂载并继续执行（激活由**机制**兜底，模型无需记住先 kix_tool_activate；下一轮起可直呼；kix_tool_activate 保留为显式预激活，kix_tool_deactivate 卸载）
+  - **0.2.0 同步重入（2026-09-29 收口）**：0.2.0 的 `layers.effect` 在 append 后**同步** emit
+    `tools/change`，`applyRestrict` 经监听器同步重入。`denied` 必须在 `restrict()` **之前**预登记
+    （否则重入者 fresh 恒为同批非空 → 无限同步递归，实锤 6330 帧栈爆 `RangeError`），抛错时回滚。
+    回归断言在 `kix-focus.test.js` 第 11 节；**首调不重入**（监听器未注册），测法必须显式 dispatch
+    `tools/change`，否则假绿
+
+**0.2.0 roster 描述契约（2026-09-29 收口）**：0.2.0 的 preset 由 profile `cordis.patch.yml` 声明，
+registry **不读 `preset.yml`**；选择器描述只认声明里的 `config.description`，缺失即渲染
+`No description.`（用户可见症状：「kix 范式的描述都没了」）。安装器 `renderPresetPatchBlock()`
+从各变体安装目录的 `preset.yml` 读值写进声明——唯一事实源仍是 `preset.yml`，值走 JSON string
+以保证 `——`/`（）` 等字符是合法 YAML 标量。
 
 **一致性守护写时拦截（kix-consistency，2026-08-17 新增 P5；v1.2.15 泛化）**：CI 脚本只在测试期校验、改 preset 文件不实时拦截 drift，本插件把「唯一事实源」从自觉变机械（见 `PLUGINIZATION-ROADMAP.md` P5）：
 - `scripts/check-dsh-consistency.cjs` 拆核为 `plugins/consistency-lib.cjs` 纯函数核心——**CI 脚本与插件共用单一事实源**（root 参数化、返回 `{failures, notes}`、无 console 副作用），防「CI 一套、运行时一套」双源漂移

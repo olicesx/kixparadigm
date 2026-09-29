@@ -11,7 +11,9 @@
 #     2026-08-20 用户全开裁决：discipline/orchestration/consistency/commands/
 #     signal/stalled 全部恢复启用——插件层关闭无对照证据，缩减只属于常驻层）。
 #   - 方法论记忆（memories/）——incentive-lessons（实验锚定）、orchestration-lessons
-#     （编排纪律）、dsh-capability-map（DSH 机制事实）、ai-agent-practices（通用方法论）。
+#     （编排纪律）、verification-lessons（验证纪律：配置轴盲区/跨边界数字权威/判别器/
+#     回归测试红灯判据，2026-09-24 mipstack MSS 事故提炼）、dsh-capability-map（DSH 机制
+#     事实）、ai-agent-practices（通用方法论）。
 #   - 经典版全文（agents/instructions + 编曲说明书）在 kixparadigm-classic。
 #     本激励面：压缩思考锚点 + 效用准则 + 技能货架（按需，非常驻）+ 菜单可见性。
 #     不注入仪式流水线、不背成员指派句（2026-08-21：缩减常驻≠砍掉选择压）。
@@ -75,7 +77,7 @@
       深度不足/读写混淆/语言语义/自信偏差/辩护倾向/外部视野/过度工程/架构方向。有疑虑调独立 agent；范围不确定 ask_user_question。
 
       ## 交付前验证三问
-      改事件处理/类型转换/平台边界/外部 API：① 测试镜像真实链路吗（stub 藏 bug）② 证据维度对吗（测调用链≠测语义）③ 关键 claim 独立验证过吗。
+      改事件处理/类型转换/平台边界/外部 API：① 测试镜像真实链路吗——生产默认与夹具逐轴对照，未被用例覆盖的差异就是盲区（stub 藏 bug）② 证据维度对吗（测调用链≠测语义）③ 关键 claim 独立验证过吗。
       提交前跑标准 lint/test（Rust: fmt --check+clippy -D warnings+test；TS: eslint/prettier/typecheck）。
 
       ## 环境默认
@@ -131,17 +133,18 @@
       Tools and subagents are optional investments. Use them only when their expected effect on the decision or result exceeds their cost. Preserve safety, permissions, user intent, and evidence integrity.
 
       ## 思考锚点
-      - 三通道：执行产出 claim；重要 claim 自主展开异质观察集群，可递归分派 probe；有效反例优先裁决，APPROVE 不投票也不触发补票。视角与模型两轴不可互替——独立上下文≠跨厂商/权重独立，同权重观察者会共享盲点。外部语义密集 claim 至少 1 条跨厂商或可重放物证通道；按信息缺口自由发散，本机制不新增人数/深度/fan-out/token 限制。验证前对照盲点：深度不足/读写混淆/语言语义/自信偏差/辩护倾向/外部视野/过度工程/架构方向；有疑虑调独立 agent。
+      - 三通道：执行产出 claim；重要 claim 自主展开异质观察集群，可递归分派 probe；有效反例优先裁决，APPROVE 不投票也不触发补票。视角与模型两轴不可互替——独立上下文≠跨厂商/权重独立，同权重观察者会共享盲点。外部语义密集 claim 至少 1 条跨厂商或可重放物证通道；按信息缺口自由发散，本机制不新增人数/深度/fan-out/token 限制。验证前对照盲点：深度不足/读写混淆/语言语义/自信偏差/辩护倾向/外部视野/过度工程/架构方向/自证回路；有疑虑调独立 agent。
       - 阶段二相性：创造最小规则，验证结构化补盲；独立观察保留用户目标/适用契约，不灌主张者的论证。会改变实现的 design observer 结算前不编辑目标；final review 绑定 artifact 与依据，任一变化先重估影响范围，只重验失效证据。旧观察/旧测试不自动为新版本背书；失败调用按零证据且不机械补派。
-      - 规则是负债：常驻行为承诺须有承载层——可机械观测→plugin/audit；语义权衡→激励/选择压；低频危机→memory；两轮无实证收益→删。新增机制先问「LLM 瓶颈还是人类组织投影」。
+      - 规则是负债：常驻行为承诺须有承载层——可机械观测→plugin/audit；语义权衡→激励/选择压；低频危机→memory；无实证摩擦→不进，两轮无实证收益→删。新增机制先问「LLM 瓶颈还是人类组织投影」。
       - 需求三检（信号命中才做）：目标不明 / 影响大不可逆 / 含实现方案词汇。①XY ②前提 ③路径。字面明确低风险可逆直接做。继续/修补/复核/交接继承当前用户目标与适用约束，用户改约即更新；旧方案和 finding 清单不替代验收。需留痕时复用 kix_discipline_spec.contract 或既有任务文档，注明来源与任务归属，勿误用被其他任务覆盖的 spec。仅影响决策且无法从上下文消解的歧义才问。
-      - 写码前：需要存在吗→仓库已有→标准库→平台原生→已装依赖→一行→最小可行。每次方案实质变化都对照原目标重判必要性与净收益；必要跨包改动/依赖可以采用，不按行数或原则名判错。修根因。交付前三问：测试镜像真实链路吗（stub 藏 bug）；证据维度对吗（调用链≠语义）；关键 claim 独立验证过吗。旧缺陷修复、测试绿、工具成功或代理完成只支持各自覆盖范围；总体完成须有当前目标/约束的依据，关键未知不能藏在通过结论之后。提交前跑标准 lint/test。
+      - 写码前：需要存在吗→仓库已有→标准库→平台原生→已装依赖→一行→最小可行。每次方案实质变化都对照原目标重判必要性与净收益；必要跨包改动/依赖可以采用，不按行数或原则名判错。修根因。交付前三问：测试镜像真实链路吗——生产默认与夹具逐轴对照，未被用例覆盖的差异就是盲区；证据维度对吗（调用链≠语义）；关键 claim 独立验证过吗。旧缺陷修复、测试绿、工具成功或代理完成只支持各自覆盖范围（含其配置前提）；总体完成须有当前目标/约束的依据，关键未知不能藏在通过结论之后。提交前跑标准 lint/test。
 
       ## 选择压（看菜单，不走仪式）
       - 属性路由：规模≥3文件 / 外部副作用 / 验证关键 / 目标不明 → 先 kix_capability_search 再动手。禁止类型→动作静态映射。
+      - 方案可闭合性定价：失效面无限的检测/防护（黑名单、枚举表、逐项豁免、逐路径白名单）按维护期无限计价 → 换结构性不可满足的机制；每个成本项须指认它绑定的 AI 侧机制（上下文/预算/延迟/权限面/回归风险），只因人类团队如此工作而存在的约束不计入。
       - 成员优先：dev/qa/reviewer 常驻可见，职责命中时优先专用成员；generic subagent 只做无归属 Explore/研究。审查观察路数与并发由信息缺口与正交视角自定（不预设人数，多≠好）、每路不同 lens；cross 是厂商独立维度，可补/替一条观察路，不替代角色。lite/thinker/vision/fork 按需激活。自己/dev 的 claim 必须独立观察者验证；协调留主线程。发布/评论/合并/破坏默认不做；用户明确指示即已决策，直接执行不再逐次问。
       - 盲抽样校准：对自判低风险并跳过独立观察的直做任务保留低频 fresh 抽样；有效反例触发重估风险分类，零 finding 仅弱证据、不自动降强度，finding 数量不计价。
-      - 卡住时 skill（how-to）与 experience（危机教训）；编曲/分派/审计先查 orchestration-lessons。
+      - 卡住时 skill（how-to）与 experience（危机教训）；编曲/分派/审计先查 orchestration-lessons，交付前验证存疑先查 verification-lessons。
       - 分派先判依赖与肥瘦：子任务独立且够肥（数十秒级）→合并一条消息并行分派；独立而微小→直派串行——扇出固定开销须被摊薄，E2E 实证小任务并行更慢更贵；顺序依赖→一次派发背走整链、链内自带 PASS 门，禁拆碎片并行再由主线程对账。
       - 执行载体先于拆步：按整段机械工作比较净收益，不得拆步后逐项默认 native。多结果裁剪/聚合、肥/未知中间值隔离、共享状态/控制流或跨工具变换→run_code，只返回决策所需结果；机械取数/计算的临时 JS/TS→run_code，不套 bash node -e/heredoc，bash 仅跑已有项目脚本或整段一个结果已可决策的操作。语义判断、原始证据、编辑、审批、外部副作用及逐步验证→native；复杂阶段→workflow。不设配额。
     prefix: *kix_persona_incentive
@@ -219,16 +222,18 @@
 
 # ── goals ───────────────────────────────────────────────────────────────────
 
-# Only the model-facing tool. The goal SERVICE, its session driver, and the
-# `/goal` command stay on the host plane: the Gateway serves the goal domain as
-# Remote endpoints whose receiver comes from a generated descriptor, so it
-# resolves `goals` on the host and an entry-local realm here would hide it. The
-# registry is keyed by session anyway, so one host instance serves every
-# session. What a preset chooses is whether its agent can call the goal tool.
-# 2026-08-15 精简决策：goal 低频重型 → 默认 disabled（主 agent 工具面只留
-# 范式必需；restrict 裁不到 scope 工具）。2026-08-17 起首次使用自动激活：
-# kix_capability_call { tool: create_goal } 即挂载并执行（或 kix_tool_activate
-# { tool: goal } 显式预激活），无需重启。
+# The goal SERVICE and its session driver stay on the host plane: the Gateway
+# serves the goal domain as Remote endpoints, and an entry-local realm here
+# would hide `goals`. Web disables the host `command-goal` and `tool-goal`
+# rows because presets own both. Omitting `command-goal` means `/` never lists
+# goal, and GoalBar stays blank — it renders nothing until a goal exists, and
+# the only create path is `/goal <objective>`.
+# The model tool stays disabled: low-frequency, first use auto-activates via
+# kix_capability_call { tool: create_goal } or kix_tool_activate { tool: goal }.
+# The human command is not a model tool and does not enter model history.
+- id: command-goal
+  name: '@deepseek-ai/dsh-command-goal'
+
 - id: tool-goal
   name: '@deepseek-ai/dsh-tool-goal'
   disabled: true
@@ -644,6 +649,13 @@
             so the whole observation tree shares one frozen revision.
           - Technical claims require evidence (file:line or official docs);
             unknown contracts return `unknown` — never escalate severity on assumption.
+          - Configuration-axis duty: evidence holds only under the configuration
+            that produced it. Diff the production defaults against the fixture
+            config axis by axis (MTU / stack & implementation choice / toggles /
+            timeouts / buffers / route modes / dependency versions); any
+            difference no case covers is a blind spot — return it as disputed
+            evidence, never wave it through because tests are green and other
+            lenses already reviewed.
           Adversarial duty in three layers (devil's advocate; run all three
           before any claim is accepted):
           - L1 rebuttal rehearsal: what is the author's most likely technical
@@ -718,6 +730,12 @@
             gates + playthrough; incomplete evidence → no PASS; touching any
             test/fixture after verification → REVERIFY_REQUIRED, never a
             direct PASS; CONDITIONAL only means CI-pending.
+          - Config-parity gate: green holds only under the fixture config.
+            Diff the production defaults against the fixture axis by axis
+            (MTU / stack / toggles / timeouts / buffers / route modes /
+            dependency versions); an undeclared or uncovered difference →
+            CONDITIONAL, never PASS. A change with no configuration surface
+            needs one sentence, no more.
           Report with tables: gate results / verdict / issue list.
         agentOptions:
           maxTokens: 65536
@@ -803,11 +821,12 @@
     # ≈1 条 schema；启停摩擦不对称（关闭后需重启宿主才能再启用）。死亡
     # 条款：连续一个月真实会话零使用 → 恢复 disabled（随下次发版重启
     # 落地）。ralph 已移除（极低频 + 可替代，
-    # 负债判定）。worker 行必须留在本 realm 内——曾移出导致重启后 UI 损坏
-    # （commands/list 空 + 设置 Failed to fetch + 轮询风暴），已回退
-    # （2026-08-16）。
-    - id: workflow-worker-thread
-      name: '@deepseek-ai/dsh-workflow-worker-thread'
+    # 负债判定）。workflow-ptc 行必须留在本 realm 内——worker-thread 时代移出
+    # 导致重启后 UI 损坏（commands/list 空 + 设置 Failed to fetch + 轮询风暴），
+    # 已回退（2026-08-16）。0.1.7 起包名是 dsh-workflow-ptc；ptcRuntime 与
+    # sandboxPolicy 由宿主 bundle 提供，这里不要再插。
+    - id: workflow-ptc
+      name: '@deepseek-ai/dsh-workflow-ptc'
       config:
         provider: spawn
 

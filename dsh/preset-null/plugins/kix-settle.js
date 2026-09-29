@@ -50,7 +50,7 @@ function makeUserMessage(text) {
     id: randomUUID(),
     role: 'user',
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: 'kix-settle', form: 'notice', summary: text.slice(0, 100) },
+    source: { kind: 'plugin:kix-settle', form: 'notice', summary: text.slice(0, 100) },
   }
 }
 
@@ -164,11 +164,20 @@ module.exports = {
   name: 'kix-settle',
   inject: ['tools'],
   apply(ctx) {
+    // 双挂载让渡（2026-09-24）：本插件挂载即认领「实现未结算」交付提醒——
+    // kix-discipline 的 turn-stopping no-test gate 读该标记后让渡（它仍保留
+    // spec/red/lint 与配置 checkpoint）。settle 未挂载（classic 档）时标记
+    // 缺失，discipline 照常提醒；本插件 apply 失败同样不置标记，fail-safe
+    // 方向 = 多提醒。
+    disciplineInternals.__settleActive = true
     const states = new Map()
     const lifecycleParents = new Map()
 
     function stateFor(agent) {
-      const sid = agent && agent.session && agent.session.id
+      // 2026-09-24：session.id 为主键、agent.id 兜底（与 kix-discipline 同键）。
+      // 旧实现无 session.id 即整段不记账——exec.args 形状的编辑事件漏登记后，
+      // job_output 成功也无可结算的 pending。
+      const sid = (agent && agent.session && agent.session.id) || (agent && agent.id) || null
       if (!sid) return undefined
       if (!states.has(sid)) {
         states.set(sid, {
@@ -176,7 +185,9 @@ module.exports = {
           editGeneration: 0,
           executedSinceLastEdit: false,
           execs: 0,
-          reminded: false,
+          // 按 edit generation 节流（2026-09-24）：会话级 once 在长会话只覆盖
+          // 第一代编辑，后续新编辑代的结算缺口静默。
+          remindedGeneration: -1,
           freshObserverSeen: false,
           commitBlindReminded: false,
           calibrationReminded: false,
@@ -224,7 +235,10 @@ module.exports = {
         const st = stateFor(agent)
         if (st) {
           const name = String(exec.name || '').toLowerCase()
-          const args = exec.arguments || {}
+          // 兼容两种事件形状（2026-09-24 审查发现）：kix-discipline 读
+          // `exec.arguments ?? exec.args`，本插件此前只读 arguments——运行时
+          // 若传 args 形状，编辑与后台 job 全部漏记账。
+          const args = (exec && (exec.arguments ?? exec.args)) || {}
           if (name === 'edit' || name === 'write') {
             const fp = String(args.file_path || args.path || '')
             const kind = disciplineInternals.classifyMutationPath(fp)
@@ -270,15 +284,15 @@ module.exports = {
         const sessionId = agent && agent.session && agent.session.id
         // ① 实现结算：后台验证尚在运行时明确“该等未等”；无 pending 且无成功
         // terminal 验证时按零结算。它覆盖 child，因为 evidence producer 也可能改源码。
-        if (st.edits > 0 && !st.executedSinceLastEdit && !st.reminded) {
-          st.reminded = true
+        if (st.edits > 0 && !st.executedSinceLastEdit && st.remindedGeneration !== st.editGeneration) {
+          st.remindedGeneration = st.editGeneration
           const currentJobPending = [...st.pendingVerificationJobs.values()].some((generation) => generation === st.editGeneration)
           const notice = currentJobPending ? pendingVerificationText(st.edits) : settleText(st.edits)
           agent.steer(makeUserMessage(notice))
         }
         // ③ 小改动面盲抽样：稳定散列使样本可重放，不把随机波动当行为证据。
-        // 已被实现结算提醒过的会话不连续加压；零 finding 不会自动调整路由。
-        if (authority && st.edits > 0 && st.executedSinceLastEdit && !st.reminded &&
+        // 已被实现结算提醒过的代次不连续加压；零 finding 不会自动调整路由。
+        if (authority && st.edits > 0 && st.executedSinceLastEdit && st.remindedGeneration !== st.editGeneration &&
             !st.freshObserverSeen && !st.calibrationReminded && st.mutationPaths.size > 0 &&
             st.mutationPaths.size <= 2 && stableCalibrationSample(sessionId)) {
           st.calibrationReminded = true

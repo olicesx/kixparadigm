@@ -15,6 +15,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
+const { pathToFileURL } = require('node:url')
 const { spawnSync } = require('node:child_process')
 
 const PKG_ROOT = path.join(__dirname, '..')
@@ -124,6 +125,398 @@ function restoreEmptyPatchRoot(text) {
 
   const comments = text.replace(/[\s\r\n]+$/, '')
   return comments ? `${comments}${newline}${newline}[]${newline}` : `[]${newline}`
+}
+
+const PRESET_PATCH_PROFILES = ['web', 'headless']
+const PRESET_PATCH_BEGIN = `# BEGIN kix-presets ${PRESET_VARIANTS.map((v) => v.id).join(',')}`
+const PRESET_PATCH_END = `# END kix-presets ${PRESET_VARIANTS.map((v) => v.id).join(',')}`
+// preset 目录内的解析链接名：让裸包名 @deepseek-ai/* 从 preset 目录可见。
+const PRESET_RESOLUTION_LINK = 'node_modules'
+
+function loadRuntimeResolver() {
+  const candidates = [
+    path.join(__dirname, 'dsh-runtime-resolve.js'),
+    path.join(__dirname, '..', '..', 'scripts', 'dsh-runtime-resolve.js'),
+  ]
+  const found = candidates.find((candidate) => fs.existsSync(candidate))
+  return found ? require(found).resolveRuntime : null
+}
+
+const resolveRuntime = loadRuntimeResolver()
+
+function flatRuntime() {
+  const fromEnv = process.env.KIX_DSH_PREFIX
+  if (!fromEnv) return null
+  const prefix = path.resolve(fromEnv)
+  const dshDir = path.join(prefix, 'node_modules', '@deepseek-ai', 'dsh')
+  if (!fs.existsSync(path.join(dshDir, 'package.json'))) return null
+  const registry = path.join(prefix, 'node_modules', '@deepseek-ai', 'dsh-agent-preset-registry')
+  const compaction = path.join(prefix, 'node_modules', '@deepseek-ai', 'dsh-compaction-basic')
+  return {
+    dshDir,
+    packages: {},
+    registry: fs.existsSync(path.join(registry, 'package.json')) ? registry : null,
+    compaction: fs.existsSync(path.join(compaction, 'package.json')) ? compaction : null,
+    flatScope: path.join(prefix, 'node_modules', '@deepseek-ai'),
+  }
+}
+
+function currentRuntime() {
+  return resolveRuntime ? resolveRuntime() : flatRuntime()
+}
+
+function presetRegistryPackage() {
+  const runtime = currentRuntime()
+  return runtime && runtime.registry ? path.join(runtime.registry, 'package.json') : null
+}
+
+function findAdaptationScript(rel) {
+  const candidates = [
+    path.join(__dirname, rel),
+    path.join(__dirname, '..', '..', 'scripts', rel),
+  ]
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null
+}
+
+function ensureRuntimeAdapted(runtime, log) {
+  const capScript = findAdaptationScript(path.join('context-budget', 'kix-compaction-cap-patch.mjs'))
+  const sessionScript = findAdaptationScript('patch-dsh-runtime.js')
+  if (!capScript || !sessionScript) {
+    throw new Error(`找不到压缩/会话补丁脚本，拒绝把带 maxThresholdTokens 的 preset 声明写进 ${runtime.dshDir}。`)
+  }
+  if (!runtime.compaction) {
+    throw new Error(`解析到 preset registry，但没有 dsh-compaction-basic：${runtime.dshDir}`)
+  }
+  const cap = spawnSync(process.execPath, [capScript, '--apply'], {
+    env: { ...process.env, DSH_COMPACTION_PKG: runtime.compaction },
+    encoding: 'utf8',
+  })
+  if (cap.status !== 0) {
+    throw new Error(`压缩上限补丁失败 (${cap.status}): ${(cap.stderr || cap.stdout || '').trim()}`)
+  }
+  const sessionArgs = runtime.flatScope
+    ? [sessionScript, '--runtime', runtime.flatScope]
+    : [sessionScript, '--dsh', runtime.dshDir]
+  const session = spawnSync(process.execPath, sessionArgs, { encoding: 'utf8' })
+  if (session.status !== 0) {
+    throw new Error(`会话补丁失败 (${session.status}): ${(session.stderr || session.stdout || '').trim()}`)
+  }
+  log.ok(`运行时补丁已落到 ${runtime.dshDir}`)
+}
+
+/**
+ * node_modules 层：本运行时的 `@deepseek-ai/*` 从这里解析。
+ *
+ * 上游把 preset 放在这棵树里面，裸包名自然解析得到。`$DSH_HOME/.agent-presets/`
+ * 在树外，而 `cordis:include` 会把模块解析基准改到 preset 目录，于是里面每条
+ * `@deepseek-ai/*` 都导入失败，registry 把整棵树报成 "never started"；同一目录
+ * 里的相对 `./plugins/*.js` 反而正常，因为那正是它相对解析的目录。
+ * @returns `{ root, missing }`；`root` 为胜出的 node_modules，`missing` 是它解析不到的
+ *   裸包名（空 = 全覆盖）。连 `dsh-persona` 都找不到任何一层时为 null。
+ */
+function presetResolutionRoot(runtime, names) {
+  if (!runtime) return null
+  const want = names && names.size ? names : new Set(['dsh-persona'])
+  let dir = path.resolve(runtime.dshDir)
+  let best = null
+  // 「有几个裸包解析不到」最少的那层胜出，同分取最近的祖先。只查 dsh-persona
+  // 会把「嵌在 dsh 包内的 persona 副本」当成解，而那层解析不到 preset 真正
+  // 需要的其余包——声明照写、registry 再次整棵 never started（审查 P1 实锤）。
+  for (let i = 0; i < 24; i++) {
+    const nm = path.join(dir, 'node_modules')
+    const missing = missingBarePackages(nm, want)
+    if (missing.length === 0) return { root: nm, missing }
+    if (!missing.includes('dsh-persona') && (best === null || missing.length < best.missing.length)) {
+      best = { root: nm, missing }
+    }
+    const up = path.dirname(dir)
+    if (up === dir) break
+    dir = up
+  }
+  return best
+}
+
+/**
+ * preset 在 `cordis:include` 重定基准后要解析的裸包名集合。
+ *
+ * 以 variant 的 `agent.cordis.yml` 为声明式事实源：插件目录里含测试夹具的假包名
+ * （`@deepseek-ai/definitely-not-installed-xyz`），扫目录会误判。
+ */
+function presetBarePackages(variant) {
+  const yml = path.join(dshHome(), '.agent-presets', variant.id, 'agent.cordis.yml')
+  let text
+  try { text = fs.readFileSync(yml, 'utf8') } catch { return new Set(['dsh-persona']) }
+  const names = new Set()
+  for (const m of text.matchAll(/@deepseek-ai\/([a-z0-9][a-z0-9-]*)/g)) names.add(m[1])
+  if (names.size === 0) names.add('dsh-persona')
+  return names
+}
+
+function missingBarePackages(root, names) {
+  return [...names].filter((name) => !fs.existsSync(path.join(root, '@deepseek-ai', name, 'package.json')))
+}
+
+/** 把某份 preset 目录的模块解析指向本运行时的 node_modules 层。 */
+function linkPresetResolution(dst, root, log) {
+  const linkPath = path.join(dst, 'node_modules')
+  const target = path.resolve(root)
+  try {
+    const st = fs.lstatSync(linkPath)
+    if (!st.isSymbolicLink()) {
+      throw new Error(`${linkPath} 是真实目录，拒绝替换；preset 内的 @deepseek-ai/* 会解析失败`)
+    }
+    let cur = null
+    try { cur = path.resolve(path.dirname(linkPath), fs.readlinkSync(linkPath)) } catch { /* 重建 */ }
+    if (cur === target) return
+    fs.unlinkSync(linkPath)
+  } catch (e) {
+    if (e.code !== 'ENOENT') throw e
+  }
+  fs.mkdirSync(path.dirname(linkPath), { recursive: true })
+  fs.symlinkSync(target, linkPath, process.platform === 'win32' ? 'junction' : 'dir')
+  log.ok(`preset 解析链接: ${linkPath} -> ${target}`)
+}
+
+function adaptRuntimeForPreset(log) {
+  const runtime = currentRuntime()
+  if (!runtime) {
+    log.warn('解析不到 dsh 运行时（KIX_DSH_PREFIX 未设，或指的不是安装根 / dsh 包目录 / lib/bin.js）。只保留目录副本；未写 profile 声明——0.1.7+ 不写声明 preset 不会出现在模式列表。')
+    return { declared: false, reason: 'no-registry', prefix: null }
+  }
+  if (!runtime.registry) {
+    log.info('当前 dsh 没有 dsh-agent-preset-registry（0.1.5）。只保留目录副本；profile 声明未写。要挂到 0.1.7/master，设置 KIX_DSH_PREFIX 为安装根、dsh 包目录或 lib/bin.js 后重跑 install。')
+    return { declared: false, reason: 'no-registry', prefix: runtime.dshDir }
+  }
+  ensureRuntimeAdapted(runtime, log)
+  // 声明只在 preset 真能加载时写：解析链接缺失时 registry 会整棵报 never started。
+  const want = new Set()
+  for (const variant of PRESET_VARIANTS) {
+    for (const name of presetBarePackages(variant)) want.add(name)
+  }
+  const resolved = presetResolutionRoot(runtime, want)
+  if (!resolved) {
+    throw new Error(`在 ${runtime.dshDir} 之上找不到含 @deepseek-ai/* 的 node_modules，拒绝写出会 never started 的 preset 声明。`)
+  }
+  const root = resolved.root
+  if (resolved.missing.length) {
+    // 不中止：缺的包可能是该 DSH 版本本就没有的可选件，中止会让整个安装不可用。
+    log.warn(`解析根 ${root} 里找不到 ${resolved.missing.length} 个 preset 引用的包：${resolved.missing.join(', ')}。这些插件在会话里会加载失败，其余照常。`)
+  }
+  for (const variant of PRESET_VARIANTS) {
+    linkPresetResolution(path.join(dshHome(), '.agent-presets', variant.id), root, log)
+  }
+  const wrote = installPresetDeclarations(log)
+  return {
+    declared: wrote > 0,
+    reason: wrote > 0 ? 'declared' : 'no-profile',
+    prefix: runtime.dshDir,
+    resolutionRoot: root,
+    resolutionMissing: resolved.missing,
+  }
+}
+
+/**
+ * Roster description for one installed preset.
+ *
+ * DSH >= 0.1.7 declares presets from the profile patch and never reads
+ * `preset.yml`, so the picker falls back to "No description." unless the
+ * declaration carries one. `preset.yml` stays the single source: read it from
+ * the copied preset directory and carry the value into the patch row.
+ */
+function presetDescription(presetDir) {
+  let text
+  try {
+    text = fs.readFileSync(path.join(presetDir, 'preset.yml'), 'utf8')
+  } catch {
+    return null
+  }
+  const line = text.split(/\r?\n/).find((candidate) => /^description\s*:/.test(candidate.trim()))
+  if (line === undefined) return null
+  let value = line.trim().replace(/^description\s*:\s*/, '').trim()
+  if (value.length === 0) return null
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    value = value.slice(1, -1)
+  }
+  return value.length > 0 ? value : null
+}
+
+function renderPresetPatchBlock() {
+  const rows = []
+  for (const variant of PRESET_VARIANTS) {
+    const presetDir = path.join(dshHome(), '.agent-presets', variant.id)
+    const yml = path.join(presetDir, 'agent.cordis.yml')
+    const description = presetDescription(presetDir)
+    rows.push(
+      `    - id: preset-${variant.id}`,
+      `      name: '@deepseek-ai/dsh-agent-preset'`,
+      '      config:',
+      `        id: ${variant.id}`,
+      `        name: ${variant.id}`,
+      ...(description === null ? [] : [`        description: ${JSON.stringify(description)}`]),
+      '        plugins:',
+      `          - id: ${variant.id}-body`,
+      '            name: cordis:include',
+      '            config:',
+      `              path: ${JSON.stringify(pathToFileURL(yml).href)}`,
+    )
+  }
+  return [
+    PRESET_PATCH_BEGIN,
+    '# DSH >= 0.1.7 does not scan .agent-presets/. cordis:include points baseUrl',
+    '# back at the copied preset directory so ./plugins and skills/ still resolve.',
+    '- insert:',
+    ...rows,
+    PRESET_PATCH_END,
+  ].join('\n')
+}
+
+/**
+ * Split the text between the kix preset markers into our own insert block and
+ * anything the host's settings layer left there.
+ *
+ * `dsh-settings` imports the removed `settings.yaml` into the active profile and
+ * the configuration editor keeps appending those rows *before* the trailing
+ * comment block — which lands them between BEGIN and END. Replacing the whole
+ * marked region would delete them (2026-09-29: the imported `llm-pi-ai`
+ * providers, `ui-theme`, `llm-deepseek` and `subagent-model-selection` rows,
+ * ~200 lines, were swallowed; after the next host restart the model list was
+ * empty). Only our own `- insert:` list is ours to rewrite; foreign rows are
+ * preserved verbatim.
+ *
+ * @param {string} region text after the BEGIN marker and before the END marker
+ * @returns {{ own: string[], foreign: string[] }} classified lines
+ */
+function splitMarkerRegion(region) {
+  const own = []
+  const foreign = []
+  let inOwnInsert = false
+  let seenForeign = false
+  for (const line of region.split('\n')) {
+    if (seenForeign) {
+      foreign.push(line)
+      continue
+    }
+    if (!inOwnInsert) {
+      if (line.trim() === '' || /^\s*#/.test(line)) {
+        own.push(line)
+        continue
+      }
+      if (/^- insert:\s*$/.test(line)) {
+        own.push(line)
+        inOwnInsert = true
+        continue
+      }
+      seenForeign = true
+      foreign.push(line)
+      continue
+    }
+    // Our insert list is a sequence of indented rows; the first column-0 line
+    // that is neither blank nor a comment ends it and starts the foreign part.
+    if (line.trim() === '' || /^\s/.test(line)) {
+      own.push(line)
+      continue
+    }
+    inOwnInsert = false
+    seenForeign = true
+    foreign.push(line)
+  }
+  return { own, foreign }
+}
+
+function upsertPresetBlock(text, block) {
+  const newline = text.includes('\r\n') ? '\r\n' : '\n'
+  const rendered = `${block.replace(/\n/g, newline).trimEnd()}${newline}`
+  const start = text.indexOf(PRESET_PATCH_BEGIN)
+  const stop = text.indexOf(PRESET_PATCH_END)
+  if (start !== -1 || stop !== -1) {
+    if (start === -1 || stop < start) throw new Error('kix preset markers are missing or out of order')
+    const after = stop + PRESET_PATCH_END.length
+    const tail = text.slice(after).replace(/^\r?\n/, '')
+    const { foreign } = splitMarkerRegion(text.slice(start + PRESET_PATCH_BEGIN.length, stop))
+    // Foreign rows move outside the markers so the next upsert cannot see them
+    // as part of our region. Their relative order is preserved.
+    const foreignText = foreign.join('\n').replace(/\s+$/, '')
+    const body = foreignText.length === 0 ? rendered : `${rendered}${foreignText}${newline}`
+    const next = `${text.slice(0, start)}${body}${tail}`
+    const foreignCount = foreign.filter((line) => /^- /.test(line)).length
+    return { text: next.endsWith(newline) ? next : `${next}${newline}`, changed: next !== text, foreignCount }
+  }
+  if (text.trim() === '' || text.trim() === '[]') {
+    return { text: rendered, changed: true, foreignCount: 0 }
+  }
+  const lines = text.split(/\r?\n/)
+  const semantic = lines.filter((line) => {
+    const trimmed = line.trim()
+    return trimmed && !trimmed.startsWith('#')
+  })
+  if (semantic.length === 1 && semantic[0].trim() === '[]') {
+    const index = lines.findIndex((line) => line.trim() === '[]')
+    lines.splice(index, 1, ...rendered.trimEnd().split(/\r?\n/))
+    const next = lines.join(newline)
+    return { text: next.endsWith(newline) ? next : `${next}${newline}`, changed: true, foreignCount: 0 }
+  }
+  if (semantic.some((line) => line.trim() === '---' || line.trim() === '...')) {
+    throw new Error('cordis.patch.yml must contain one top-level YAML array; refusing to modify an unrecognized document')
+  }
+  if (semantic.length > 0 && !semantic.every((line) => /^\s*-/.test(line) || /^\s/.test(line))) {
+    throw new Error('cordis.patch.yml must contain one top-level YAML array; refusing to modify an unrecognized document')
+  }
+  const sep = text.endsWith(newline) ? newline : `${newline}${newline}`
+  const next = `${text.trimEnd()}${sep}${rendered}`
+  return { text: next.endsWith(newline) ? next : `${next}${newline}`, changed: true }
+}
+
+function installPresetDeclarations(log) {
+  if (!presetRegistryPackage()) {
+    log.info('未找到带 dsh-agent-preset-registry 的 dsh。只保留目录副本；profile 声明未写。')
+    return 0
+  }
+  const block = renderPresetPatchBlock()
+  let wrote = 0
+  for (const name of PRESET_PATCH_PROFILES) {
+    const dir = path.join(dshHome(), 'profiles', name)
+    const manifestPath = path.join(dir, 'package.json')
+    if (!fs.existsSync(manifestPath)) {
+      log.warn(`profile ${name} 尚未初始化，跳过声明。先运行一次该 profile，再执行 kixparadigm install`)
+      continue
+    }
+    const bundles = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))?.dsh?.profile?.bundles ?? []
+    if (!bundles.includes('@deepseek-ai/dsh-web-app') && !bundles.includes('@deepseek-ai/dsh-agent-preset-registry')) {
+      log.info(`profile ${name} 没有 agent preset registry，跳过声明`)
+      continue
+    }
+    const patch = path.join(dir, 'cordis.patch.yml')
+    const current = fs.existsSync(patch) ? fs.readFileSync(patch, 'utf8') : '[]\n'
+    const merged = upsertPresetBlock(current, block)
+    if (!fs.existsSync(patch) || merged.changed) fs.writeFileSync(patch, merged.text, 'utf8')
+    if (merged.foreignCount > 0) {
+      log.warn(`${patch} 的标记区里有 ${merged.foreignCount} 条非 kix 行（宿主设置层导入的配置），已原样移出标记区，未删除`)
+    }
+    log.ok(`preset 声明已写入 ${patch}`)
+    wrote += 1
+  }
+  return wrote
+}
+
+function removePresetDeclarations(log) {
+  const home = dshHome()
+  for (const name of PRESET_PATCH_PROFILES) {
+    const patch = path.join(home, 'profiles', name, 'cordis.patch.yml')
+    if (!fs.existsSync(patch)) continue
+    const text = fs.readFileSync(patch, 'utf8')
+    const start = text.indexOf(PRESET_PATCH_BEGIN)
+    const stop = text.indexOf(PRESET_PATCH_END)
+    if (start === -1 || stop < start) continue
+    const after = stop + PRESET_PATCH_END.length
+    // 与 upsert 同源：标记区里可能有宿主设置层导入的用户行，卸载只移除 kix 声明，
+    // 不替用户删配置（2026-09-29 吞掉 llm-pi-ai providers 的同型事故）。
+    const { foreign } = splitMarkerRegion(text.slice(start + PRESET_PATCH_BEGIN.length, stop))
+    const foreignText = foreign.join('\n').replace(/\s+$/, '')
+    const kept = foreignText.length === 0 ? '' : `${foreignText}\n`
+    const rest = `${text.slice(0, start)}${kept}${text.slice(after)}`.replace(/\n{3,}/g, '\n\n')
+    fs.writeFileSync(patch, restoreEmptyPatchRoot(rest), 'utf8')
+    log.ok(`已从 ${patch} 移除 preset 声明`)
+  }
 }
 
 function dshHome() {
@@ -259,7 +652,8 @@ function copyTree(src, dst, log, opts = {}) {
           else if (!fs.lstatSync(srcP).isDirectory() && resolveLinkedDir(srcP)) continue
           else walk2(s, r)
         } else if (!fs.existsSync(srcP)) {
-          targetOnly.push(r)
+          // preset 解析链接由本安装器建立，不是目标侧残留。
+          if (!(opts.ignoreTargetOnly && opts.ignoreTargetOnly.has(r))) targetOnly.push(r)
         }
       }
     }
@@ -311,7 +705,7 @@ function installPreset(log) {
       throw new Error(`preset 源目录缺失或不含 agent.cordis.yml: ${src}`)
     }
     log.step(`安装 preset ${variant.id} → ${dst}`)
-    const r = copyTree(src, dst, log)
+    const r = copyTree(src, dst, log, { ignoreTargetOnly: new Set([PRESET_RESOLUTION_LINK]) })
     if (variant.id === 'kixparadigm') {
       for (const dirName of DEFAULT_SHELF_DIRS) {
         const extra = ensureDefaultShelf(dirName, dst, log)
@@ -332,7 +726,10 @@ function installPreset(log) {
     }
     results.push({ variant, ...r })
   }
-  return results.length === 1 ? results[0] : results
+  const runtime = adaptRuntimeForPreset(log)
+  const out = results.length === 1 ? results[0] : results
+  out.kixRuntime = runtime
+  return out
 }
 
 /** 建立/修复 node_modules 链接（Windows junction，POSIX symlink）。 */
@@ -416,16 +813,37 @@ function reportSettingsChecklist(log) {
   log.step('settings.yaml 检查（preset 装不进去，需人工确认）')
   const home = dshHome()
   const settings = path.join(home, 'settings.yaml')
-  let ok = true
-  if (fs.existsSync(settings)) {
-    const text = fs.readFileSync(settings, 'utf8')
-    for (const name of ['zai-vision', 'zai-coding-cn']) {
-      if (new RegExp(`\\b${name}\\b`).test(text)) log.ok(`llm-pi-ai.providers.${name} 已配置`)
-      else { log.warn(`缺少 provider: ${name}`); ok = false }
+  // DSH >= 0.2.0 在启动时把 settings.yaml 导入当前 profile，并把原文件改名为
+  // `.imported`；0.1.x 仍读根目录。checked 的是「provider 名字出现在哪」，
+  // 所以两代位置都算，只看根文件会在 0.2.0 上误报未配置。
+  const sources = []
+  for (const candidate of [settings, path.join(home, 'settings.yaml.imported')]) {
+    if (fs.existsSync(candidate)) sources.push(candidate)
+  }
+  const profiles = path.join(home, 'profiles')
+  if (fs.existsSync(profiles)) {
+    for (const name of fs.readdirSync(profiles)) {
+      const patch = path.join(profiles, name, 'cordis.patch.yml')
+      if (fs.existsSync(patch)) sources.push(patch)
     }
-  } else {
+  }
+  if (sources.length === 0) {
     log.warn(`settings.yaml 不存在（${settings}）`)
-    ok = false
+    log.warn('请按 dsh/preset-classic/DSH-ADAPTATION.md 的 settings.yaml 段补配置（zai-vision 视觉 provider + zai-coding-cn 跨厂商观察者）')
+    return
+  }
+  // 安装器自己写进 profile 的 bridge 注释里就有 "zai-vision" 字面量（BRIDGE_PATCH_LINES），
+  // 不剔注释这条门禁恒真，还会让「settings.yaml 不存在」的告警不可达。
+  const text = sources
+    .map((file) => fs.readFileSync(file, 'utf8'))
+    .join('\n')
+    .split(/\r?\n/)
+    .filter((line) => !line.trimStart().startsWith('#'))
+    .join('\n')
+  let ok = true
+  for (const name of ['zai-vision', 'zai-coding-cn']) {
+    if (new RegExp(`\\b${name}\\b`).test(text)) log.ok(`llm-pi-ai.providers.${name} 已配置`)
+    else { log.warn(`缺少 provider: ${name}`); ok = false }
   }
   if (!ok) {
     log.warn('请按 dsh/preset-classic/DSH-ADAPTATION.md 的 settings.yaml 段补配置（zai-vision 视觉 provider + zai-coding-cn 跨厂商观察者）')
@@ -440,6 +858,7 @@ function uninstall(log) {
   const patch = path.join(home, 'profiles', 'web', 'cordis.patch.yml')
 
   log.step(`卸载 ${presetIds.join(' + ')} 安装内容`)
+  removePresetDeclarations(log)
   const keepSharedBridge = hasOtherPresetOwner(home, presetIds)
   if (keepSharedBridge) {
     log.info('检测到另一 kix preset 仍安装，vision-bridge 为共享组件，本次保留')
@@ -494,6 +913,43 @@ function doctor(log) {
     } else {
       log.warn(`preset ${variant.id} 未安装或缺失 agent.cordis.yml`)
       allOk = false
+    }
+  }
+  const runtime = currentRuntime()
+  if (!runtime || !runtime.registry) {
+    log.info('当前 dsh 没有 agent preset registry。目录副本不会被自动挂载；这在 0.1.5 上是预期。')
+  } else {
+    const index = runtime.compaction && path.join(runtime.compaction, 'lib', 'index.js')
+    const capped = index && fs.existsSync(index) && fs.readFileSync(index, 'utf8').includes('kix-cap-patch')
+    if (capped) log.ok(`compaction cap patch 在 ${runtime.compaction}`)
+    else { log.warn(`目标运行时未打 cap patch：${runtime.dshDir}`); allOk = false }
+    const webPatch = path.join(home, 'profiles', 'web', 'cordis.patch.yml')
+    const declared = fs.existsSync(webPatch) && fs.readFileSync(webPatch, 'utf8').includes(PRESET_PATCH_BEGIN)
+    if (declared) log.ok('web profile 含本包 preset 声明')
+    else { log.warn('web profile 没有本包 preset 声明（0.1.7 不会扫描目录）'); allOk = false }
+    const want = new Set()
+    for (const variant of PRESET_VARIANTS) {
+      for (const name of presetBarePackages(variant)) want.add(name)
+    }
+    const resolved = presetResolutionRoot(runtime, want)
+    const root = resolved && resolved.root
+    for (const variant of PRESET_VARIANTS) {
+      const link = path.join(home, '.agent-presets', variant.id, PRESET_RESOLUTION_LINK)
+      let cur = null
+      try {
+        if (fs.lstatSync(link).isSymbolicLink()) cur = path.resolve(path.dirname(link), fs.readlinkSync(link))
+      } catch { /* 缺失或不可读都按未链接处理 */ }
+      if (!root || cur !== root) {
+        log.warn(`preset ${variant.id} 缺少解析链接（${link} -> ${root || '未找到 node_modules'}）；registry 会报 never started`)
+        allOk = false
+      }
+    }
+    if (root) {
+      log.ok(`preset 解析链接指向 ${root}`)
+      if (resolved.missing.length) {
+        log.warn(`该根解析不到 ${resolved.missing.length} 个 preset 引用的包：${resolved.missing.join(', ')}；对应插件在会话里会加载失败`)
+        allOk = false
+      }
     }
   }
 
@@ -576,7 +1032,8 @@ function cli(argv) {
   kixparadigm doctor                   自检安装状态
   kixparadigm copilot                  导入 VS Code Copilot 侧（可选）
   kixparadigm --version
-目标目录: $DSH_HOME（默认 ~/.dsh）`)
+目标目录: $DSH_HOME（默认 ~/.dsh）
+0.1.7/master: 解析 KIX_DSH_PREFIX（安装根、dsh 包目录或 lib/bin.js），否则用 PATH 上的 dsh。按 Node 的解析找到 registry 后先打压缩/会话补丁，成功后才写 profile 声明。没有 registry 只复制目录。`)
     return
   }
   const cmd = args.find((a) => !a.startsWith('-')) || 'install'
@@ -584,10 +1041,17 @@ function cli(argv) {
     switch (cmd) {
       case 'install': {
         if (!args.includes('--preset-only')) installVisionBridge(log)
-        installPreset(log)
+        const installed = installPreset(log)
         reportSettingsChecklist(log)
-        log.step('完成。重启 dsh web（Ctrl+C → dsh web）后开新会话，preset 生效；' +
-          'vision-bridge client 半刷新页面即生效。')
+        const runtime = installed && installed.kixRuntime
+        if (runtime && runtime.declared) {
+          log.step('完成。重启 dsh web（Ctrl+C → dsh web）后开新会话，preset 生效；' +
+            'vision-bridge client 半刷新页面即生效。')
+        } else if (runtime && runtime.reason === 'no-profile') {
+          log.step(`完成。运行时补丁已落到 ${runtime.prefix}。profile 尚未初始化或没有 registry bundle，声明未写。先运行一次该 profile，再执行 install。`)
+        } else {
+          log.step('完成。preset 目录已复制。当前 dsh 没有 agent preset registry，声明未写，重启不会加载这些 preset。')
+        }
         break
       }
       case 'uninstall': uninstall(log); break
@@ -606,4 +1070,4 @@ function cli(argv) {
 
 if (require.main === module) cli(process.argv.slice(2))
 
-module.exports = { cli, dshHome, hasOtherPresetOwner, installPreset, installVisionBridge, uninstall, doctor, copyTree, ensureDefaultSkillsShelf, ensureDefaultShelf, DEFAULT_SHELF_DIRS, mergeVisionBridgePatch, restoreEmptyPatchRoot }
+module.exports = { cli, dshHome, hasOtherPresetOwner, installPreset, installPresetDeclarations, installVisionBridge, uninstall, doctor, copyTree, ensureDefaultSkillsShelf, ensureDefaultShelf, DEFAULT_SHELF_DIRS, mergeVisionBridgePatch, restoreEmptyPatchRoot, upsertPresetBlock, renderPresetPatchBlock, presetResolutionRoot, missingBarePackages }

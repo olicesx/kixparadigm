@@ -82,6 +82,13 @@ verifiable_gates:
     type: manual_gate
     check: progress.md 的 ❌ Blocked 区块为空
     on_fail: CONDITIONAL（列出阻塞项）
+  - id: production_config_parity
+    type: local_gate
+    check: >-
+      生产默认配置与测试夹具逐轴对照（MTU/栈与实现选择/开关/超时/缓冲区/
+      路由模式/依赖版本），列出未被任何用例覆盖的差异轴。green 只在产生它的
+      夹具配置下成立：未覆盖的差异即盲区。无配置面的改动一句话声明即可。
+    on_fail: CONDITIONAL（差异轴未声明或未覆盖 → 不得 PASS）
 ```
 
 ### 项目特化门禁（规划期写入 plan.md）

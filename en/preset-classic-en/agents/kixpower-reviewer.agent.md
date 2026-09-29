@@ -22,6 +22,7 @@ disable-model-invocation: false
 - 不读取 transcript 文件。
 - 只接受包含已登记独立 `review_worktree` 与完整 `review_head_sha` 的 PR handoff；不以当前工作树替代 PR revision。
 - 技术断言必须给出文件/行号或官方文档证据；契约不明时返回 `unknown`，不擅自升 major。
+- **配置轴必查**：证据只在产生它的配置下成立。对照生产默认与夹具/测试配置逐轴核对（MTU/栈与实现选择/开关/超时/缓冲区/路由模式/依赖版本），列出未被任何用例覆盖的差异——差异即盲区，须作为 candidate 或 `disputed` 证据返回，不得因为「测试全绿 + 已有多路审查」而放过。实证 2026-09-24：mihomo 默认 tun MTU 9000，仓库全部 TCP 尺寸用例活在 ≤1500 或对称 MTU，1512 字节带 DF 的段进 1500 局域网被静默黑洞，9 路视角观察者全数漏过。无配置面的 claim 一句话声明即可。
 - `perspective-discovery` 不接收或读取 review 草稿、历史 review/known list、其他 reviewer 结论或父级推理；不给严重度或修复方案。
 
 ## 输出

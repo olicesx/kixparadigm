@@ -1,5 +1,149 @@
 # Changelog
 
+## v1.3.20（2026-09-29）跨厂商吸收评审收口：自证回路入盲点图谱 + 机制引入/退役对称门
+
+**背景**：分析第三方移植 [kixrlm](https://github.com/Kasugano-Soraa/kixrlm)（KIX+RLM 融合开源）产出 5 项吸收提案（memories 机械化 rationale/rollback/digest、门禁覆盖率清单、持久内核受控试点、锚点命中率退役、发布认识论）。三路不同 lens（机制债/规则自反/认识论）跨厂商攻击独立裁决：**5/6 被有效反例击中或降级**；三路收敛命中同一结构缺陷——自证回路（rationale 由写经验的同一模型生成、trusted-plane 由被审方自声明、命中率靠模型自述归因），该收敛模式对每日运行范式的作者自审不可见（三通道厂商轴的会话内实证）。
+
+**落位**（6 文件，+17/−4）：
+
+- 盲点图谱新增「自证回路」：机械化判定时判定权流回被判定方即装饰——判据一问「谁判定达标？判定者与被判定者是否同源」。三面同步（persona 内联清单 / classic+en SKILL 展开 / kixpower-review.prompt.md 表行）。
+- persona「规则是负债」锚点补对称门：**无实证摩擦→不进**——机制入场券是已观测的重复摩擦，不是设计论证；与既有「两轮无实证收益→删」构成双向门。
+- `verification-lessons` ⑨：判定权审计判据 + 三路攻击实证，与 ⑦（证据着陆点）⑧（失效面闭合）成族；顺手修正求助索引漏列 ⑦⑧。
+- `incentive-lessons` ㉒：⑤管放哪/⑮管何时退/㉒管何时进，三问闭合；memories 条目新验收标准——**须引用实际改变过的决策**（「填完字段」不是验收），本条首次执行。
+- 撤回 2 项提案（覆盖率清单=文书仪式+无限失效面；命中率退役=Goodhart+误杀低频保险丝）；持久内核与 memories 机械化降为摩擦触发；发布认识论降为带 sunset 的自愿实验。
+
+**开放假设随档**：移植对比得出的「四裂缝」（经验沉淀无载体/状态计算无席位/边界覆盖无不变量/常驻债务无退役）维持假设级，升级条件 = ≥3 个独立移植者不同约束下收敛。
+
+**验证**：`npm test` 全链通过（75 tests，0 fail，1 skip——installer/runtime-patch/zh-en 一致性/pressures/vision/preset 插件全量）；YAML 结构经 null 构造器近似解析确认（宿主 js 标签为 Cordis 专有扩展，非宿主同款实现，此为已知未覆盖轴）；盲点三面与 ⑨⇄㉒ 双向引用 grep 闭环。本批改动无配置面。
+
+## v1.3.19（2026-09-29）v4 生产者 kind 热修：kix 插件消息注入在 0.2.0 上炸整轮（已修）
+
+**事故**：升级 DSH 0.2.0-rc.1（会话格式 v4）后，任何 kixparadigm preset 会话里插件第一次注入
+消息（steer / additionalContexts → `agent/inbox/spliced`）就整轮失败，报错
+`format v4 message requires a producer-owned source kind`。用户可见症状：新会话选 kix 范式发消息
+立即「运行失败」，切 cordis preset 才能继续。
+
+**根因**：9 个 kix 插件（budget/consistency/discipline/focus/guards/orchestration/route/settle/
+signal）的 `makeUserMessage` 仍产出 v3 退役语法 `source:{kind:'plugin', plugin:'X'}`。v4 准入
+（`assertV4SourceRowAdmission`）对 inbox-splice 的 inserted 消息硬拒绝 `kind==='plugin'`；被拒
+事件不落盘，所以会话文件里看不到任何痕迹。v3 时期注入的消息（如 09-28~09-29 上午的
+kix-settle/discipline 通知）是迁移器在加载时改写成 `plugin:X` 的，不是运行时兼容——0.2.0 原生
+会话从未成功注入过。
+
+**修法**：全部改为直接产出迁移器同款形状 `source:{kind:'plugin:X', form, summary}`（34 处，
+四个根 preset×classic/null/classic-en 全同步）；`kix-route.test.js` 的断言
+`source?.plugin === 'kix-route'` → `source?.kind === 'plugin:kix-route'`（4 副本）。新增
+`format-v4-source.test.js` 回归守卫（4 副本）：静态扫描零退役语法 + 解析到 DSH 安装时用真
+`assertV4RowAdmission` 逐 kind 验证注入行可准入，并用退役形状对照组证明校验器在位。
+一次性修复脚本 `scripts/fix-v4-source-kinds.cjs`（幂等，可重跑校验）。
+
+**端到端实证（2026-09-29 13:26，重启后 live）**：经 kix-browser（CDP attach）驱动真实 Web GUI
+选 kixparadigm 发消息：两轮均 completed；第二轮写入工作区 `.js` 后 **kix-discipline 与
+kix-settle 的注入通知均被 v4 准入接受并落盘**（会话文件 seq 41/42，`source.kind =
+"plugin:kix-discipline"` / `"plugin:kix-settle"`），且模型在回合内读到通知并按其要求补跑语法
+检查——注入链路（steer → inbox-splice → 准入 → 持久化 → 模型消费）全通。
+
+**伴随修复（宿主侧，非仓库文件）**：`/root/.dsh/node-ipv4-preload.cjs` 的
+`Socket.prototype.connect` 补丁会把 Node `net.connect` 的归一化元组（带私有
+`normalizedArgsSymbol` 的 `[options, cb]` 数组）当普通对象重建，符号丢失 →
+`ERR_MISSING_ARGS`：凡走 `http.get/request(字符串URL)` 的路径全挂（实证：playwright-core
+`connectOverCDP` 必败 → kix-browser 在 dsh web 内 CDP attach 不可用）。修法：元组分支原引用
+透传、只对 `options[0]` 原位补 `family:4`。需重启 dsh web 后在会话内生效。
+
+## v1.3.18（2026-09-29）DSH 0.2.0 收口：roster 描述回归 + kix-focus 重入热修回填 + 回归夹具换代
+
+### 严重：安装器标记区整段替换吞掉宿主设置行 → 重启后模型列表清空（已修）
+
+**事故**：`upsertPresetBlock()` 找到 `# BEGIN/END kix-presets` 后整段替换标记区。而 0.2.0 的
+`dsh-settings` 把退役的 `settings.yaml` **一次性导入当前 profile**（`importLegacyDocument` →
+`configEditor.update(ns, values)`），configEditor 用 YAML AST 追加行、落点就在**尾注释之前**——
+也就是 kix 标记区**内部**。于是执行一次 `kixparadigm install` 就删掉了这些导入行：本机实测被吞
+`llm-pi-ai`（zai-vision / su2api / grok / zai-coding-cn 四个 provider 全表）、`ui-theme`、
+`llm-deepseek`（主模型 catalog + image 声明）、`agent-presets`、`subagent-model-selection`，约
+200 行；`settings.yaml` 已改名 `.imported` 不再被读，宿主重启后模型列表即为空。用户可见症状：
+「我们之前设置的模型不见了」。
+
+**判定证据**：合成一份「标记区内含外来行」的 patch 调 `upsertPresetBlock` → 外来行全丢（复现）；
+隔离 0.2.0 实例把 `.imported` 复制回 `settings.yaml` 重启 → 八个 section 全部重新导入为 patch 行
+（`grep '^- id:'` 得 agent-default-model / ui-settings-general / permission / llm-pi-ai / ui-theme /
+llm-deepseek，provider 名齐全），且确认导入行确实落在 BEGIN..END 之间——**这就是触发条件**。
+
+**修法**：新增 `splitMarkerRegion()`——只重写自有 `- insert:` 块（缩进行），标记区内的顶层行一律
+视为外来行**原样保留并移出标记区**（保持相对顺序），先移出再写，下一次 upsert 不再看见它们；
+`removePresetDeclarations()` 卸载路径同源处理，不替用户删配置；检测到外来行时打印计数告警。
++1 回归用例（外来行保留 / 移出标记区 / 二次 upsert 幂等）。
+
+**恢复**：`settings.yaml.imported` → `settings.yaml` 后重启宿主，走产品自身的一次性导入路径即可
+全量还原（隔离实例已实测；live 侧已就位，备份 `cordis.patch.yml.pre-model-restore-*`）。
+
+### 用户可见回归：0.2.0 上 preset 描述全部消失（已修）
+
+0.2.0 的 preset 由 profile 的 `cordis.patch.yml` 声明，**不再扫描 `.agent-presets/`、也不再读
+`preset.yml`**；roster 描述只认声明里的 `config.description`（`dsh-agent-preset-registry` 按
+`record.config.description` 投影，客户端渲染 `preset.description ?? "No description."`）。安装器
+此前只写 `id`/`name`，两档描述因此在选择器里全丢。
+
+修法：`renderPresetPatchBlock()` 从各变体安装目录的 `preset.yml` 读 `description` 写进声明
+（`preset.yml` 保持唯一事实源；值走 JSON string，保证 `——`/`（）` 等字符是合法 YAML 标量）。
++2 单元用例（有/无 preset.yml）+1 端到端断言（装完后 profile patch 带 description）。
+
+### 0.2.0 运行时热修回填唯一事实源：kix-focus 同步重入
+
+0.2.0 的 `layers.effect` 在 append 后**同步** emit `tools/change`，`applyRestrict` 经监听器同步
+重入；旧实现 `denied` 在 `restrict()` **之后**才登记 → 重入者看到的 fresh 恒为同一批非空 →
+无限同步递归（实锤：6330 帧栈爆 `RangeError`，loader `composeError` 重载 entry 后永动）。
+该修复此前**只存在于 `~/.dsh` 安装副本**（违反唯一事实源，重装即复发）——现回填四份仓库副本：
+`restrict()` 前预登记 `denied`，抛错时回滚（语义与旧版「失败不登记」一致，失败名字留给定时重试）。
++8 回归断言，含一条方法层记录：**首调永不重入**（监听器尚未注册），所以「只在 apply 里放同步
+emit」的测法会假绿——重入必须由已注册监听器的显式 `tools/change` dispatch 触发。
+
+### 回归夹具换代（0.1.x 契约 → 0.2.0 契约）
+
+- `scripts/patch-dsh-runtime.test.js`（原 11 项里 7 项假红 → 11/11 绿）：`createRestore` 走
+  `createSessionFormatCatalogWithChildren([])`（0.2.0 的 v3→v4 边要求显式历史子级证据，空数组
+  声明「该父级无子级」；0.1.x 回退共享 catalog）；Session header 版本读 `SESSION_FORMAT_VERSION`
+  （0.1.x=3 / 0.2.0=4）；插件审计事件接受 0.2.0 的 `plugin:<type>` 改名形态（`ignorable` 不变）。
+- `scripts/install-lib.test.js`（30/30 绿）：cap-patch「PATH dsh 无 registry 必须拒绝」用例不再
+  依赖本机 0.1.5 现场——宿主机升级到 0.2.0 后 PATH dsh 自带 registry，旧前提从真回归退化成
+  假红。改为自造无 registry 临时安装 + PATH shim，并记下陷阱：`which` 会跳过**非可执行**候选，
+  忘了 exec bit 就等于测回了真 PATH。
+
+### 验证纪律 / 结算加固批次（2026-09-24 事故提炼，本批一并入库）
+
+- 新增 `memories/verification-lessons.md`（六条实证条目：**配置轴盲区**——生产默认与夹具的配置
+  差异轴，测试全绿只证明该夹具配置下成立；**跨边界数字的权威是外部实现不是本地注释**；
+  **判别器**判据——真实但非判别性的事实最危险；回归测试要落在未覆盖的轴上且在旧代码上红灯；
+  规则没生效先查生效副本；对称壳式修复的次序可疑）+ persona/README 的触发索引。
+- `kix-discipline`：green 时刻**配置轴提醒**（仅在触及配置面或契约声明了配置轴时单发，advisory
+  而非新 gate）；测试命令识别补齐「直接跑测试文件」（`node x.test.js`）——本仓 yml 文档化的规范
+  命令此前不被识别，测试全绿却记为 0、turn-stopping 反报「测试未运行」；配置轴清单收敛为全仓
+  **唯一版本**（green 提醒 / no-test 提醒 / persona 交付前三问 / reviewer+qa 角色文件引用同一串，
+  消除「主代理看短清单、green 后看长清单」的分叉）。
+- `kix-settle`：与 discipline 的**双挂载让渡**（settle 挂载即认领「实现未结算」提醒，discipline 的
+  no-test gate 让渡并保留 spec/red/lint；settle 未挂载则照常提醒，fail-safe 方向 = 多提醒）；
+  会话主键 `session.id` + `agent.id` 兜底（旧实现无 session.id 即整段不记账）；提醒按 edit
+  generation 节流（会话级 once 只覆盖第一代编辑，后续新编辑代静默）；编辑事件兼容
+  `arguments`/`args` 两种形状。
+
+### DSH 0.2.0 本体事实/指引融合（本批一并入库）
+
+- `kix-route` 三条面向用户的失败文案改为两代并陈（常量 `SETTINGS_HINT`）：0.1.x 读
+  `~/.dsh/settings.yaml`；0.2.0 启动即导入当前 profile 并改名 `settings.yaml.imported`，配置
+  改在 profile 的 `cordis.patch.yml`（或 GUI 设置面板）——旧文案会把用户指向一个已不被读取的文件。
+- 能力地图新增 §6「DSH 0.2.0 机制增量」：退役/改名对照、settings 契约、preset 声明契约、
+  8 项新机制取舍（负空间明确）、**V4 会话格式端到端证伪**（不需要新增补丁 hunk；附「直接拿未
+  迁移行喂 V4 门禁得假阳性」的方法层教训）。
+- 安装/补丁链 0.2.0 适配：preset 声明 + 模块解析根（`scripts/dsh-runtime-resolve.js`）、会话
+  历史补丁幂等化（`patch-dsh-runtime.js`）、压缩上限补丁脚本随包同行（en 包 `__dirname` 不指向
+  本仓时必须自带）。
+
+### 部署收口（实测）
+
+四变体 `diff -rq` 干净（默认档 `agents`/`skills` 指针物化为目录、部署本地记忆
+`pentest-360-evasion-lessons.md` 属预期）；19 个历史 `.bak-*` 清理；`npm test` 全绿
+（installer 30 / runtime-patch 11 / consistency OK / pressures 24 / vision 20 / preset plugins
+63 tests）；live profile 已写入两档 description（重启 `dsh web` 后选择器可见）。
+
 ## v1.3.17（2026-09-13）会话历史补丁入库 + 闭环取证经验沉淀
 
 ### 会话历史可用性补丁回填 + 0.1.5 迁移兼容（`scripts/patch-dsh-runtime.js`）

@@ -88,7 +88,7 @@ function makeUserMessage(text) {
     id: randomUUID(),
     role: 'user',
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: 'kix-signal', form: 'notice', summary: text.slice(0, 100) },
+    source: { kind: 'plugin:kix-signal', form: 'notice', summary: text.slice(0, 100) },
   }
 }
 

@@ -341,7 +341,7 @@ function makeUserMessage(text) {
     id: randomUUID(),
     role: 'user',
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: 'kix-focus', form: 'notice', summary: text.slice(0, 100) },
+    source: { kind: 'plugin:kix-focus', form: 'notice', summary: text.slice(0, 100) },
   }
 }
 
@@ -684,9 +684,15 @@ module.exports = {
       const denyTargets = globals.filter((s) => s.name && (s.name.startsWith('mcp__') || s.name === 'web_search')).map((s) => s.name)
       const fresh = denyTargets.filter((n) => !denied.has(n))
       if (fresh.length === 0) return // 无新增目标（或尚未注册），等 tools/change / 定时重试
+      // ⚠️ 必须在 restrict() 之前登记 denied：DSH 0.2.0 的 layers.effect 在
+      // append 后同步 emit("tools/change")，本函数经 :712 监听器同步重入时，
+      // 若 denied 尚未包含本批名字，fresh 恒同批非空 → 无限同步递归直到
+      // RangeError（2026-09-29 0.2.0-rc.1 实锤：6330 帧栈爆，loader
+      // composeError 重载 entry 后永动）。预登记后重入者 fresh 为空直接
+      // 返回；restrict 抛错时回滚，语义与旧版「失败不登记」一致。
+      fresh.forEach((n) => denied.add(n))
       try {
         const dispose = tools.restrict({ deny: fresh })
-        fresh.forEach((n) => denied.add(n))
         restrictApplied = true
         restrictDenyCount = denied.size
         restrictError = null
@@ -694,6 +700,7 @@ module.exports = {
         ctx.effect(() => dispose)
         ctx.logger?.info?.(`[kix-focus] 工具已裁剪：deny 累计 ${denied.size} 个全局工具（MCP，restrict 增量），scope 工具照常可见（按需工具走 cordis disabled + ACTIVATABLE 激活）`)
       } catch (e) {
+        fresh.forEach((n) => denied.delete(n)) // 预登记回滚：失败名字留给定时重试
         restrictError = e && e.message ? e.message : String(e)
         restrictDenyCount = denied.size
         ctx.logger?.warn?.('[kix-focus] restrict 失败（定时重试）: ' + restrictError)

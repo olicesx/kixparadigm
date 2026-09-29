@@ -1,6 +1,6 @@
 {
   "name": "kixparadigm",
-  "version": "1.3.17",
+  "version": "1.3.20",
   "description": "kixparadigm — AI 自编排最小范式（认知层常驻）+ kixpower 多智能体编排 + DSH 一键导入（preset + vision-bridge + 门禁插件）",
   "license": "MIT",
   "author": "kix (olicesx)",
@@ -38,7 +38,7 @@
   ],
   "scripts": {
     "postinstall": "node scripts/install-lib.js --quiet",
-    "test:installer": "node --test scripts/install-lib.test.js scripts/sync-dsh-preset.test.js",
+    "test:installer": "node --test scripts/dsh-runtime-resolve.test.js scripts/install-lib.test.js scripts/sync-dsh-preset.test.js",
     "test:runtime-patch": "node --test scripts/patch-dsh-runtime.test.js",
     "test:consistency": "node scripts/check-dsh-consistency.cjs",
     "test:vision": "node --test dsh/vision-bridge/test.js",

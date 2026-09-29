@@ -689,6 +689,11 @@ function runAllZh(root) {
     checkVersionPair({ root }),
     checkMirrorTree({ root, left: 'dsh/vision-bridge', right: 'en/bridge', label: 'vision-bridge' }),
     checkIdenticalSet({ root, paths: ['scripts/install-lib.js', 'en/scripts/install-lib.js'], label: 'install-lib.js' }),
+    // en 单独发布时 __dirname/../.. 不指向本仓 scripts/，补丁脚本必须随包同行；
+    // 否则 0.2.0 上「找不到压缩/会话补丁脚本」直接拒绝安装（实测 kixparadigm-en 1.3.17）。
+    checkIdenticalSet({ root, paths: ['scripts/dsh-runtime-resolve.js', 'en/scripts/dsh-runtime-resolve.js'], label: 'dsh-runtime-resolve.js' }),
+    checkIdenticalSet({ root, paths: ['scripts/patch-dsh-runtime.js', 'en/scripts/patch-dsh-runtime.js'], label: 'patch-dsh-runtime.js' }),
+    checkIdenticalSet({ root, paths: ['scripts/context-budget/kix-compaction-cap-patch.mjs', 'en/scripts/context-budget/kix-compaction-cap-patch.mjs'], label: 'kix-compaction-cap-patch.mjs' }),
     checkDefaultShelfPointers({ root }),
     checkMarkdownLinks({ root, rel: 'dsh/preset' }),
     checkMarkdownLinks({ root, rel: 'en/preset-classic-en' }),

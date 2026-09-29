@@ -27,12 +27,26 @@ const zlib = require('node:zlib')
 // ── 参数 ────────────────────────────────────────────────────────────────────
 const args = process.argv.slice(2)
 const asJson = args.includes('--json')
-// 候选根：WSL 侧挂载的 Windows home 优先（真实历史库），本机 ~/.dsh 兜底
-const candidates = [
-  path.join(os.homedir() === '/root' ? '<home>' : os.homedir(), '.dsh', 'sessions'),
-  path.join(os.homedir(), '.dsh', 'sessions'),
-]
-const projectDir = '--C-Users-user-Desktop-kix-bundle--'
+// 候选根：WSL 侧挂载的 Windows home 优先（真实历史库，逐个用户探测——机器用户名不进源码），本机 ~/.dsh 兜底
+const winUsersRoot = '/mnt/c/Users'
+const winCandidates = (() => {
+  try {
+    return fs
+      .readdirSync(winUsersRoot)
+      .filter((name) => !/^(Public|Default|Default User|All Users|desktop\.ini)$/i.test(name))
+      .map((name) => path.join(winUsersRoot, name, '.dsh', 'sessions'))
+  } catch {
+    return [] // 非 WSL 或无 /mnt/c 挂载：只用本机 home
+  }
+})()
+const candidates = [...winCandidates, path.join(os.homedir(), '.dsh', 'sessions')]
+// 项目会话目录名由脚本所在仓库位置推导（`C:\a\b` → `--C-a-b--`）：与 cwd 解耦（从任何目录运行都可用），
+// 且机器用户名/检出路径不进源码
+const projectRoot = path.resolve(__dirname, '..')
+const winPath = projectRoot
+  .replace(/^\/mnt\/([a-z])\//i, (m, drive) => `${drive.toUpperCase()}:\\`)
+  .replace(/\//g, '\\')
+const projectDir = `--${winPath.replace(/^([A-Za-z]):/, '$1').replace(/\\/g, '-')}--`
 const explicit = args.find((a) => !a.startsWith('--'))
 let root = explicit
 if (!root) {

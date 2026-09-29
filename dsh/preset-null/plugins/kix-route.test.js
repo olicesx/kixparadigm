@@ -373,6 +373,11 @@ async function main() {
     // thinker 文案必须点名 agentDefaultModel 与 settings.yaml（可行动指引）
     const tmsg = thinkerFailText()
     check('thinkerFailText：点名 agentDefaultModel + settings.yaml', tmsg.includes('agentDefaultModel') && tmsg.includes('settings.yaml'))
+    // 0.2.0 首启即把 settings.yaml 导入当前 profile 并改名 .imported（2026-09-29 实测）：
+    // 三条失败文案都必须同时给出新落点，否则模型会把「去改一个已不存在的文件」
+    // 原样转述给用户——这是指引层的版本漂移，不是文档问题
+    const hint020 = (m) => m.includes('.imported') && m.includes('cordis.patch.yml')
+    check('失败文案：三条均给出 0.2.0 落点（.imported + profile patch）', hint020(msg) && hint020(vmsg) && hint020(tmsg))
   }
 
   // ══ listener 级集成（假 ctx 捕获 handler，覆盖此前零覆盖的不变量）═══════
@@ -689,7 +694,7 @@ async function main() {
         const notice = steers[0]?.content?.[0]?.text || ''
         check('Q8 request-error prepend 首次 402 即硬熔断、阻止旧 child retry、恰好 steer 一次且不命令重派',
           listenerOptions['agent/request-error']?.[0] === true && firstAction === undefined && secondAction === undefined && retryCalls === 0 &&
-          steers.length === 1 && steers[0]?.source?.plugin === 'kix-route' && notice.includes('零证据') &&
+          steers.length === 1 && steers[0]?.source?.kind === 'plugin:kix-route' && notice.includes('零证据') &&
           notice.includes('不要为补票机械重派') && !notice.includes('立即用一个新的') &&
           notice.includes('健康路由仍可用：su2api'))
         const fresh = { agent: { id: 'child-retry', options: { subagentDepth: 1 } }, signal: undefined }

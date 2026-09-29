@@ -5,7 +5,8 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
-const { hasOtherPresetOwner, installPreset, installVisionBridge, mergeVisionBridgePatch, uninstall, copyTree, ensureDefaultSkillsShelf, ensureDefaultShelf } = require('./install-lib.js')
+const { spawnSync } = require('node:child_process')
+const { hasOtherPresetOwner, installPreset, installVisionBridge, mergeVisionBridgePatch, uninstall, copyTree, ensureDefaultSkillsShelf, ensureDefaultShelf, presetResolutionRoot, missingBarePackages, renderPresetPatchBlock, upsertPresetBlock } = require('./install-lib.js')
 
 const DEFAULT_PATCH = [
   '# Your patch layer for this dsh profile, applied after every bundle layer:',
@@ -184,12 +185,16 @@ test('hasOtherPresetOwner treats classic as owned by the zh package, not as anot
 test('installPreset installs every declared variant including kixparadigm-classic', (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-variants-'))
   const previousHome = process.env.DSH_HOME
+  const previousPrefix = process.env.KIX_DSH_PREFIX
   t.after(() => {
     if (previousHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousHome
+    if (previousPrefix === undefined) delete process.env.KIX_DSH_PREFIX
+    else process.env.KIX_DSH_PREFIX = previousPrefix
     fs.rmSync(home, { recursive: true, force: true })
   })
   process.env.DSH_HOME = home
+  process.env.KIX_DSH_PREFIX = home
 
   installPreset(silentLog)
 
@@ -301,12 +306,16 @@ test('ensureDefaultShelf 源侧删除的文件在目标货架被裁剪（货架�
 test('uninstall removes every variant directory of the zh package', (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-uninstall-variants-'))
   const previousHome = process.env.DSH_HOME
+  const previousPrefix = process.env.KIX_DSH_PREFIX
   t.after(() => {
     if (previousHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousHome
+    if (previousPrefix === undefined) delete process.env.KIX_DSH_PREFIX
+    else process.env.KIX_DSH_PREFIX = previousPrefix
     fs.rmSync(home, { recursive: true, force: true })
   })
   process.env.DSH_HOME = home
+  process.env.KIX_DSH_PREFIX = home
 
   installPreset(silentLog)
   for (const id of ['kixparadigm', 'kixparadigm-classic']) {
@@ -373,4 +382,330 @@ test('uninstall restores [] when the bridge was the only patch entry', (t) => {
   assert.deepEqual(semantic, ['[]'])
   assert.equal(fs.existsSync(path.join(profile, 'plugins', 'dsh-vision-bridge')), false)
   assert.equal(fs.existsSync(path.join(profile, 'node_modules', 'dsh-vision-bridge')), false)
+})
+
+function withInstallEnv(t, home, prefix) {
+  const previousHome = process.env.DSH_HOME
+  const previousPrefix = process.env.KIX_DSH_PREFIX
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
+    if (previousPrefix === undefined) delete process.env.KIX_DSH_PREFIX
+    else process.env.KIX_DSH_PREFIX = previousPrefix
+  })
+  process.env.DSH_HOME = home
+  process.env.KIX_DSH_PREFIX = prefix
+}
+
+function writeWebProfile(home) {
+  const profile = path.join(home, 'profiles', 'web')
+  fs.mkdirSync(profile, { recursive: true })
+  fs.writeFileSync(path.join(profile, 'package.json'), JSON.stringify({
+    dsh: { profile: { bundles: ['@deepseek-ai/dsh-web-app'] } },
+  }))
+  fs.writeFileSync(path.join(profile, 'cordis.patch.yml'), DEFAULT_PATCH)
+  return path.join(profile, 'cordis.patch.yml')
+}
+
+test('installPreset does not declare or patch a runtime without the preset registry', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-noreg-'))
+  const prefix = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-noreg-prefix-'))
+  t.after(() => {
+    fs.rmSync(home, { recursive: true, force: true })
+    fs.rmSync(prefix, { recursive: true, force: true })
+  })
+  const decoy = path.join(prefix, 'node_modules', '@deepseek-ai', 'dsh-compaction-basic', 'lib', 'index.js')
+  fs.mkdirSync(path.dirname(decoy), { recursive: true })
+  fs.writeFileSync(decoy, 'leave-me\n')
+  writeWebProfile(home)
+  withInstallEnv(t, home, prefix)
+
+  const installed = installPreset(silentLog)
+
+  assert.equal(installed.kixRuntime.reason, 'no-registry')
+  assert.equal(installed.kixRuntime.declared, false)
+  assert.equal(fs.readFileSync(decoy, 'utf8'), 'leave-me\n')
+  // 无 registry 时不链接：preset 目录保持纯副本。
+  assert.equal(fs.existsSync(path.join(home, '.agent-presets', 'kixparadigm', 'node_modules')), false)
+  assert.doesNotMatch(fs.readFileSync(path.join(home, 'profiles', 'web', 'cordis.patch.yml'), 'utf8'), /BEGIN kix-presets/)
+})
+
+test('installPreset does not declare when the cap patch cannot apply', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-badcap-'))
+  const prefix = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-badcap-prefix-'))
+  t.after(() => {
+    fs.rmSync(home, { recursive: true, force: true })
+    fs.rmSync(prefix, { recursive: true, force: true })
+  })
+  const registry = path.join(prefix, 'node_modules', '@deepseek-ai', 'dsh-agent-preset-registry', 'package.json')
+  const dshPkg = path.join(prefix, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
+  const index = path.join(prefix, 'node_modules', '@deepseek-ai', 'dsh-compaction-basic', 'lib', 'index.js')
+  fs.mkdirSync(path.dirname(registry), { recursive: true })
+  fs.writeFileSync(registry, '{"name":"@deepseek-ai/dsh-agent-preset-registry"}\n')
+  fs.mkdirSync(path.dirname(dshPkg), { recursive: true })
+  fs.writeFileSync(dshPkg, '{"name":"@deepseek-ai/dsh"}\n')
+  fs.mkdirSync(path.dirname(index), { recursive: true })
+  fs.writeFileSync(path.join(path.dirname(index), '..', 'package.json'), '{"name":"@deepseek-ai/dsh-compaction-basic"}\n')
+  fs.writeFileSync(index, 'not-the-engine\n')
+  const patch = writeWebProfile(home)
+  withInstallEnv(t, home, prefix)
+
+  assert.throws(() => installPreset(silentLog), /压缩上限补丁失败/)
+  assert.equal(fs.readFileSync(index, 'utf8'), 'not-the-engine\n')
+  assert.doesNotMatch(fs.readFileSync(patch, 'utf8'), /BEGIN kix-presets/)
+})
+
+test('cap patch refuses a PATH dsh whose install has no preset registry', { skip: process.platform === 'win32' ? 'which-based PATH resolution is POSIX-only' : false }, (t) => {
+  // 前提必须自造，不能靠「本机 PATH 上的 dsh 恰好是 0.1.5」。宿主升级到 0.2.0
+  // 后 PATH dsh 自带 registry，旧用例（读 /usr/local/lib/dsh-0.1.5-rc.1 并断言
+  // 拒绝）会从真回归退化成假红。这里搭一个无 registry 的临时安装 + PATH shim，
+  // 把「拒绝」钉在用例自己造的现场上。
+  const prefix = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-pathdsh-'))
+  const bin = path.join(prefix, 'bin')
+  const dshPkg = path.join(prefix, 'node_modules', '@deepseek-ai', 'dsh')
+  const decoy = path.join(prefix, 'node_modules', '@deepseek-ai', 'dsh-compaction-basic', 'lib', 'index.js')
+  t.after(() => fs.rmSync(prefix, { recursive: true, force: true }))
+  fs.mkdirSync(path.join(dshPkg, 'lib'), { recursive: true })
+  fs.writeFileSync(path.join(dshPkg, 'package.json'), '{"name":"@deepseek-ai/dsh"}\n')
+  fs.writeFileSync(path.join(dshPkg, 'lib', 'bin.js'), '// fake launcher for PATH resolution\n')
+  // `which` skips non-executable candidates: without the exec bit the shim is
+  // invisible and the real PATH dsh wins again (the exact stale-premise trap).
+  fs.chmodSync(path.join(dshPkg, 'lib', 'bin.js'), 0o755)
+  fs.mkdirSync(path.dirname(decoy), { recursive: true })
+  fs.writeFileSync(decoy, 'leave-me\n')
+  fs.mkdirSync(bin, { recursive: true })
+  fs.symlinkSync(path.join(dshPkg, 'lib', 'bin.js'), path.join(bin, 'dsh'))
+
+  const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH || ''}` }
+  delete env.DSH_COMPACTION_PKG
+  delete env.KIX_DSH_PREFIX
+  delete env.DSH_RUNTIME
+  const result = spawnSync(
+    process.execPath,
+    [path.join(__dirname, 'context-budget', 'kix-compaction-cap-patch.mjs'), '--check'],
+    { env, encoding: 'utf8' },
+  )
+
+  assert.notEqual(result.status, 0)
+  assert.match(`${result.stderr}\n${result.stdout}`, /refusing to patch/)
+  assert.equal(fs.readFileSync(decoy, 'utf8'), 'leave-me\n')
+})
+
+test('preset declarations carry the preset.yml description (0.2.0 roster source)', (t) => {
+  // DSH >= 0.1.7 declares presets from the profile patch and never reads
+  // preset.yml; without config.description the picker renders "No description."
+  // (用户可见回归 2026-09-29). preset.yml stays the single source.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-desc-'))
+  const previousHome = process.env.DSH_HOME
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
+    fs.rmSync(home, { recursive: true, force: true })
+  })
+  process.env.DSH_HOME = home
+  for (const id of ['kixparadigm', 'kixparadigm-classic']) {
+    const dir = path.join(home, '.agent-presets', id)
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'agent.cordis.yml'), '[]\n')
+    fs.writeFileSync(path.join(dir, 'preset.yml'), `name: ${id}\ndescription: 描述 ${id}\n`)
+  }
+
+  const block = renderPresetPatchBlock()
+
+  assert.match(block, /description: "描述 kixparadigm"/)
+  assert.match(block, /description: "描述 kixparadigm-classic"/)
+  // YAML 标量必须整体引号化：描述里的 `——`/`（）` 走 JSON string 是合法双引号标量
+  assert.doesNotMatch(block, /description: 描述/)
+})
+
+test('a variant without preset.yml omits description instead of writing an empty one', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-nodesc-'))
+  const previousHome = process.env.DSH_HOME
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
+    fs.rmSync(home, { recursive: true, force: true })
+  })
+  process.env.DSH_HOME = home
+  for (const id of ['kixparadigm', 'kixparadigm-classic']) {
+    const dir = path.join(home, '.agent-presets', id)
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'agent.cordis.yml'), '[]\n')
+  }
+
+  const block = renderPresetPatchBlock()
+
+  assert.doesNotMatch(block, /description:/)
+  assert.match(block, /id: kixparadigm-classic/)
+})
+
+test('upsertPresetBlock preserves foreign rows the settings layer left inside the markers', () => {
+  // 出生证明（2026-09-29 实测）：dsh-settings 的一次性导入 + 配置编辑器会把用户行
+  // 追加在尾注释之前，即 BEGIN..END 之间。整段替换会连它们一起删掉——本机被吞掉的
+  // 是 llm-pi-ai providers / ui-theme / llm-deepseek / subagent-model-selection
+  // 约 200 行，宿主重启后模型列表清空。此用例锁死「只换自有 insert 块，外来行移出标记区」。
+  const block = [
+    '# BEGIN kix-presets kixparadigm,kixparadigm-classic',
+    '# DSH >= 0.1.7 does not scan .agent-presets/.',
+    '- insert:',
+    '    - id: preset-kixparadigm',
+    "      name: '@deepseek-ai/dsh-agent-preset'",
+    '# END kix-presets kixparadigm,kixparadigm-classic',
+  ].join('\n')
+  const before = [
+    '- id: mcp-github',
+    '  name: mcp-github',
+    '# BEGIN kix-presets kixparadigm,kixparadigm-classic',
+    '# DSH >= 0.1.7 does not scan .agent-presets/.',
+    '- insert:',
+    '    - id: preset-kixparadigm',
+    "      name: '@deepseek-ai/dsh-agent-preset'",
+    '- id: llm-pi-ai',
+    '  config:',
+    '    providers:',
+    '      zai-vision:',
+    '        baseURL: https://example.invalid',
+    '- id: subagent-model-selection',
+    '  enabled: true',
+    '# END kix-presets kixparadigm,kixparadigm-classic',
+    '- id: tail-row',
+  ].join('\n') + '\n'
+
+  const first = upsertPresetBlock(before, block)
+
+  assert.match(first.text, /id: llm-pi-ai/)
+  assert.match(first.text, /zai-vision/)
+  assert.match(first.text, /id: subagent-model-selection/)
+  assert.match(first.text, /id: tail-row/)
+  assert.match(first.text, /id: mcp-github/)
+  const end = first.text.indexOf('# END kix-presets')
+  assert.ok(first.text.indexOf('id: llm-pi-ai') > end, '外来行必须移出标记区，下一次 upsert 才不会再吃它们')
+  assert.equal(upsertPresetBlock(first.text, block).changed, false, '第二次 upsert 必须幂等')
+})
+
+test('installPreset declares after the isolated 0.1.7 runtime is adapted', (t) => {
+  const prefix = '/tmp/kix-dsh017'
+  const registry = path.join(prefix, 'node_modules', '@deepseek-ai', 'dsh-agent-preset-registry', 'package.json')
+  if (!fs.existsSync(registry)) {
+    t.skip('isolated 0.1.7 runtime is not installed')
+    return
+  }
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-adapted-'))
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }))
+  const patch = writeWebProfile(home)
+  withInstallEnv(t, home, prefix)
+  const live = '/usr/local/lib/dsh-0.1.5-rc.1/node_modules/@deepseek-ai/dsh-compaction-basic/lib/index.js'
+  const before = fs.readFileSync(live)
+
+  const installed = installPreset(silentLog)
+
+  assert.equal(installed.kixRuntime.declared, true)
+  assert.match(fs.readFileSync(patch, 'utf8'), /BEGIN kix-presets/)
+  assert.match(fs.readFileSync(patch, 'utf8'), /cordis:include/)
+  // 端到端：写进 profile 的声明必须带 description（GUI roster 的唯一来源）
+  assert.match(fs.readFileSync(patch, 'utf8'), /description: "激励面/)
+  assert.match(fs.readFileSync(patch, 'utf8'), /description: "经典模式/)
+  const capped = fs.readFileSync(path.join(prefix, 'node_modules', '@deepseek-ai', 'dsh-compaction-basic', 'lib', 'index.js'), 'utf8')
+  assert.match(capped, /kix-cap-patch/)
+  const session = spawnSync(process.execPath, ['scripts/patch-dsh-runtime.js', '--check', '--runtime', path.join(prefix, 'node_modules', '@deepseek-ai')], { encoding: 'utf8' })
+  assert.equal(session.status, 0)
+  assert.deepEqual(fs.readFileSync(live), before)
+})
+
+test('installPreset adapts a master workspace from the dsh package itself', (t) => {
+  const dshPkg = '/tmp/kix-dsh-src/apps/cli'
+  if (!fs.existsSync(path.join(dshPkg, 'package.json'))) {
+    t.skip('master workspace build is not present')
+    return
+  }
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-master-'))
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }))
+  const patch = writeWebProfile(home)
+  withInstallEnv(t, home, dshPkg)
+  const live = '/usr/local/lib/dsh-0.1.5-rc.1/node_modules/@deepseek-ai/dsh-compaction-basic/lib/index.js'
+  const before = fs.readFileSync(live)
+  const built = '/tmp/kix-dsh-src/packages/compaction/compaction-basic/lib/index.js'
+
+  const installed = installPreset(silentLog)
+
+  assert.equal(installed.kixRuntime.declared, true)
+  assert.equal(installed.kixRuntime.prefix, dshPkg)
+  assert.match(fs.readFileSync(patch, 'utf8'), /BEGIN kix-presets/)
+  assert.match(fs.readFileSync(built, 'utf8'), /kix-cap-patch/)
+  // preset 目录在 DSH_HOME，裸包名要靠这条链接才解析得到。
+  assert.equal(installed.kixRuntime.resolutionRoot, path.join(dshPkg, 'node_modules'))
+  // 断言「从 preset 目录解析」与「从 dsh 包解析」等价——这正是 cordis:include
+  // 改掉 baseUrl 后丢掉的那条路径。pnpm 真实目录名与包名不同，故不比字面量。
+  const fromPreset = require.resolve('@deepseek-ai/dsh-persona/package.json', {
+    paths: [path.join(home, '.agent-presets', 'kixparadigm')],
+  })
+  const fromRuntime = require.resolve('@deepseek-ai/dsh-persona/package.json', { paths: [dshPkg] })
+  assert.equal(fromPreset, fromRuntime)
+  const session = spawnSync(process.execPath, ['scripts/patch-dsh-runtime.js', '--check', '--dsh', dshPkg], { encoding: 'utf8' })
+  assert.equal(session.status, 0, session.stderr)
+  assert.match(session.stdout, /dsh-session-format-v1-to-v2|applied\s+v1-migration/)
+  assert.deepEqual(fs.readFileSync(live), before)
+})
+
+test('installPreset links preset resolution for a flat npm install', (t) => {
+  const prefix = ['/tmp/kix-dsh020', '/tmp/kix-dsh017'].find((p) =>
+    fs.existsSync(path.join(p, 'node_modules', '@deepseek-ai', 'dsh-persona', 'package.json')))
+  if (!prefix) {
+    t.skip('no flat npm dsh install is present')
+    return
+  }
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-flat-'))
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }))
+  writeWebProfile(home)
+  withInstallEnv(t, home, prefix)
+
+  const installed = installPreset(silentLog)
+
+  assert.equal(installed.kixRuntime.declared, true)
+  assert.equal(installed.kixRuntime.resolutionRoot, path.join(prefix, 'node_modules'))
+  for (const id of ['kixparadigm', 'kixparadigm-classic']) {
+    const link = path.join(home, '.agent-presets', id, 'node_modules')
+    assert.equal(fs.lstatSync(link).isSymbolicLink(), true, `${id} 应有解析链接`)
+    assert.equal(fs.realpathSync(link), fs.realpathSync(path.join(prefix, 'node_modules')))
+  }
+  // 从 preset 目录真的解析得到裸包名——这正是 cordis:include 改 baseUrl 后失败的那一步。
+  assert.equal(require.resolve('@deepseek-ai/dsh-persona/package.json', {
+    paths: [path.join(home, '.agent-presets', 'kixparadigm')],
+  }).startsWith(fs.realpathSync(path.join(prefix, 'node_modules'))), true)
+  // 重跑把链接当自家条目，不当目标侧残留。
+  const again = installPreset(silentLog)
+  assert.equal(again.kixRuntime.declared, true)
+  assert.equal(fs.lstatSync(path.join(home, '.agent-presets', 'kixparadigm', 'node_modules')).isSymbolicLink(), true)
+  // 覆盖判据必须覆盖 preset 引用的**全部**裸包，不能只验 persona（后者恰好是根探针包）。
+  assert.deepEqual(installed.kixRuntime.resolutionMissing, [], '解析根应覆盖 preset 引用的全部裸包')
+})
+
+test('presetResolutionRoot 取能解析最多裸包的那层，不被内嵌 persona 骗到', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kix-resroot-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const scope = path.join(root, 'node_modules', '@deepseek-ai')
+  const write = (rel, name) => {
+    const p = path.join(scope, rel, 'package.json')
+    fs.mkdirSync(path.dirname(p), { recursive: true })
+    fs.writeFileSync(p, `{"name":"${name}"}\n`)
+  }
+  write('dsh', '@deepseek-ai/dsh')
+  // 诱饵：npm 因版本冲突把 persona 嵌进 dsh 包内——只看 persona 会选中这一层。
+  write(path.join('dsh', 'node_modules', '@deepseek-ai', 'dsh-persona'), '@deepseek-ai/dsh-persona')
+  for (const name of ['dsh-persona', 'dsh-tool-web', 'dsh-agent-tool-presentation']) {
+    write(name, `@deepseek-ai/${name}`)
+  }
+  const want = new Set(['dsh-persona', 'dsh-tool-web', 'dsh-agent-tool-presentation'])
+  const picked = presetResolutionRoot({ dshDir: path.join(scope, 'dsh') }, want)
+  assert.equal(picked.root, path.join(root, 'node_modules'))
+  assert.deepEqual(picked.missing, [])
+  // 旧判据会选中内嵌那层，并从那里缺 2 个包——这正是「声明照写、registry 再报 never started」的根因。
+  assert.deepEqual(missingBarePackages(path.join(scope, 'dsh', 'node_modules'), want), ['dsh-tool-web', 'dsh-agent-tool-presentation'])
+})
+
+test('presetResolutionRoot 无任何 dsh-persona 时返回 null（触发中止而非写坏声明）', (t) => {
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'kix-resroot-none-'))
+  t.after(() => fs.rmSync(bare, { recursive: true, force: true }))
+  fs.mkdirSync(path.join(bare, 'node_modules'), { recursive: true })
+  assert.equal(presetResolutionRoot({ dshDir: bare }, new Set(['dsh-persona'])), null)
 })

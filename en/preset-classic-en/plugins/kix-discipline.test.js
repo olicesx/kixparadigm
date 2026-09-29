@@ -155,6 +155,12 @@ async function main() {
 // ── 1. 纯逻辑 ─────────────────────────────────────────────────────────────
 section('纯逻辑 __internals')
 await ok('isTestCommand: pnpm test', I.isTestCommand('pnpm test'))
+await ok('isTestCommand: node 直接运行测试文件（仓库规范命令，2026-09-24 实弹回归）',
+  I.isTestCommand('node plugins/kix-discipline.test.js') &&
+  I.isTestCommand('node dsh/preset/plugins/kix-settle.test.js 2>&1 | tail -1') &&
+  !I.isTestCommand('node build.js') &&
+  !I.isTestCommand('node build.js foo.test.js') &&
+  !I.isTestCommand('echo node x.test.js'))
 await ok('isTestCommand: npm run test', I.isTestCommand('npm run test'))
 await ok('isTestCommand: pytest -q', I.isTestCommand('pytest -q'))
 await ok('isTestCommand: cargo test', I.isTestCommand('cargo test'))
@@ -182,6 +188,17 @@ await ok('classifyMutationPath: documentation', I.classifyMutationPath('README.m
 await ok('classifyMutationPath: Windows absolute artifact', I.classifyMutationPath('C:\\repo\\tmp-analyze\\report.md') === 'artifact')
 await ok('classifyMutationPath: sprint artifact', I.classifyMutationPath('/repo/docs/sprint-3/qa-signoff.md') === 'artifact')
 await ok('classifyMutationPath: config remains source', I.classifyMutationPath('dsh/preset/agent.cordis.yml') === 'source')
+await ok('config surface: 网络/互操作/配置命中，普通业务文件不命中',
+  I.isConfigSurfacePath('internal/net/tcp.go') &&
+  I.isConfigSurfacePath('tests/interop/pmtu_test.go') &&
+  I.isConfigSurfacePath('config/default.yaml') &&
+  !I.isConfigSurfacePath('src/math/vector.ts') &&
+  !I.isConfigSurfacePath('ui/button.tsx'))
+await ok('config checkpoint: 短且可执行，不携带事故域名', (async () => {
+  const text = I.configAxisReason()
+  return /当前测试夹具配置/.test(text) && /无配置面/.test(text) &&
+    !/tun MTU 9000|mipstack|mihomo/.test(text) && text.length < 500
+})())
 await ok('classifyMutationPath: DSH settings.yaml 是 artifact',
   I.classifyMutationPath('/root/.dsh/settings.yaml') === 'artifact' &&
   I.classifyMutationPath('.dsh/settings.yml') === 'artifact' &&
@@ -490,6 +507,48 @@ await ok('测试运行成功（foreground exitCode 0）→ green 记录（turnTe
   })
   return d.kind === 'accept' && /turnTests: 1/.test(status.text)
 })())
+await ok('node 直接运行测试文件 green → 记账且不误报「测试未运行」（实弹回归）', (async () => {
+  const agentId = 'green-node-testfile'
+  await editLanded(agentId, 'src/green-node.c')
+  await dispatchPostAs('bash', { command: 'node dsh/preset/plugins/kix-discipline.test.js' }, fg(0), agentId)
+  const status = await registeredCommands.find((c) => c.name === 'kix-discipline').handler({
+    agent: { id: agentId, session: { header: sessionHeader } }, rawInput: 'status',
+  })
+  const turnWithNoFurtherEdit = await dispatchTurnAs(agentId)
+  return /turnTests: 1/.test(status.text) &&
+    !turnTexts().some((x) => GREEN_RE.test(x)) && turnWithNoFurtherEdit === undefined
+})())
+await ok('配置面 foreground green → 注入短配置 checkpoint', (async () => {
+  const agentId = 'config-foreground'
+  await editLanded(agentId, 'internal/net/tcp.go')
+  const d = await dispatchPostAs('bash', { command: 'go test ./...' }, fg(0), agentId)
+  const text = (d.additionalContexts || []).map((x) => x.content?.[0]?.text || '').join('\\n')
+  return /当前测试夹具配置/.test(text) && /无配置面/.test(text) && !/tun MTU 9000|mihomo/.test(text)
+})())
+await ok('配置面 background job completed → 同一条 checkpoint 路径', (async () => {
+  const agentId = 'config-background'
+  await editLanded(agentId, 'internal/net/tcp.go')
+  await dispatchPostAs('bash', { command: 'go test ./...' }, bg('config-job-1'), agentId)
+  const d = await dispatchPostAs('job_output', { job_id: 'config-job-1' }, jobRes('config-job-1', 'completed', 'exit code: 0'), agentId)
+  const text = (d.additionalContexts || []).map((x) => x.content?.[0]?.text || '').join('\\n')
+  return /当前测试夹具配置/.test(text) && !/tun MTU 9000|mihomo/.test(text)
+})())
+await ok('同一会话新 edit generation → 配置 checkpoint 可再次出现', (async () => {
+  const agentId = 'config-generation'
+  await editLanded(agentId, 'internal/net/tcp.go')
+  const first = await dispatchPostAs('bash', { command: 'go test ./...' }, fg(0), agentId)
+  await editLanded(agentId, 'internal/http/client.go')
+  const second = await dispatchPostAs('bash', { command: 'go test ./...' }, fg(0), agentId)
+  const textOf = (d) => (d.additionalContexts || []).map((x) => x.content?.[0]?.text || '').join('\\n')
+  return /当前测试夹具配置/.test(textOf(first)) && /当前测试夹具配置/.test(textOf(second))
+})())
+await ok('普通业务文件 foreground green → 不灌配置 checkpoint', (async () => {
+  const agentId = 'config-ordinary'
+  await editLanded(agentId, 'src/math/vector.ts')
+  const d = await dispatchPostAs('bash', { command: 'pnpm test' }, fg(0), agentId)
+  const text = (d.additionalContexts || []).map((x) => x.content?.[0]?.text || '').join('\\n')
+  return !/当前夹具配置|tun MTU 9000|mihomo/.test(text)
+})())
 await ok('测试运行失败（isError / 非零 exitCode）→ 不记录 green', (async () => {
   const errored = 'green-error'
   await editLanded(errored, 'src/green-error.c')
@@ -766,13 +825,53 @@ await ok('无实现 edit → 不提醒', (async () => {
   await dispatchTurnAs('no-edit')
   return steered.length === 0
 })())
-await ok('remindOnce：同会话第二次不重复提醒', (async () => {
+await ok('提醒按代际节流：同代第二次不重复，新编辑代可再提醒（2026-09-24 契约）', (async () => {
   await editLanded('g9', 'src/g.ts')
   await dispatchTurnAs('g9')
   const first = steered.length
+  await dispatchTurnAs('g9')
+  const sameGeneration = steered.length === 0
   await editLanded('g9', 'src/h.ts')
   await dispatchTurnAs('g9')
-  return first === 2 && steered.length === 0
+  // 新 edit generation 重新允许 green/lint 各一次（长会话后续编辑不再静默）
+  return first === 2 && sameGeneration && steered.length === 2 &&
+    steered.every((m) => !JSON.stringify(m).includes('tun MTU 9000'))
+})())
+await ok('双挂载让渡：settle 挂载标记 + agent 带 session.id → no-test 提醒让渡', (async () => {
+  const agentId = 'defer-settle'
+  const edit = { name: 'edit', arguments: { file_path: 'src/defer.ts' }, token: 't', callId: agentId,
+    agent: { id: agentId, session: { id: 'sess-defer', header: sessionHeader } } }
+  await preExecute[0](edit, () => Promise.resolve({ kind: 'allow' }))
+  await postExecute[0](edit, { isError: false, value: { path: 'src/defer.ts' } }, () => Promise.resolve({ kind: 'accept' }))
+  I.__settleActive = true
+  try {
+    steered = []
+    await turnStopping[0]({ agent: { id: agentId, session: { id: 'sess-defer', header: sessionHeader }, steer(msg) { steered.push(msg) } }, turn: 1, signal: undefined })
+    const deferred = steered.every((m) => !JSON.stringify(m).includes('测试未通过或未运行'))
+    I.__settleActive = false
+    steered = []
+    await turnStopping[0]({ agent: { id: agentId, session: { id: 'sess-defer', header: sessionHeader }, steer(msg) { steered.push(msg) } }, turn: 1, signal: undefined })
+    // 同代已提醒过：不因标记翻转重复；用新代验证非让渡路径仍会提醒
+    await preExecute[0]({ ...edit, callId: agentId + '-2', arguments: { file_path: 'src/defer2.ts' } }, () => Promise.resolve({ kind: 'allow' }))
+    await postExecute[0]({ ...edit, callId: agentId + '-2', arguments: { file_path: 'src/defer2.ts' } }, { isError: false, value: { path: 'src/defer2.ts' } }, () => Promise.resolve({ kind: 'accept' }))
+    steered = []
+    await turnStopping[0]({ agent: { id: agentId, session: { id: 'sess-defer', header: sessionHeader }, steer(msg) { steered.push(msg) } }, turn: 1, signal: undefined })
+    return deferred && steered.some((m) => JSON.stringify(m).includes('测试未通过或未运行'))
+  } finally {
+    I.__settleActive = false
+  }
+})())
+await ok('让渡 fail-safe：标记开但 agent 无 session.id → 仍提醒（settle 结算域之外）', (async () => {
+  const agentId = 'defer-nosid'
+  await editLanded(agentId, 'src/defernosid.ts')
+  I.__settleActive = true
+  try {
+    steered = []
+    await dispatchTurnAs(agentId)
+    return steered.some((m) => JSON.stringify(m).includes('测试未通过或未运行'))
+  } finally {
+    I.__settleActive = false
+  }
 })())
 await ok('双重计数回归：pre-execute 测试命令不计数，被拦/失败测试不构成 green（审查修复）', (async () => {
   // 测试命令经 pre-execute(不再 +1) → 无 post-execute 成功 → turnTests=0
@@ -906,7 +1005,12 @@ await ok('弹问: 终稿正常（已修复）→ 不弹', (async () => {
   return steered.length === 0
 })())
 await ok('弹问: 本回合有实现 edit → 不算拒绝，不弹', (async () => {
-  await editLanded('dv4', 'src/deflect.ts')
+  // 2026-09-24：stateFor 以 session.id 为主键——编辑与 turn 探针必须同 session
+  // 身份，否则编辑记账落在 agent.id 键上、turn 读到空状态，hadEdits 误判为否。
+  const agent = { id: 'dv4', session: { id: 'sv4', header: sessionHeader } }
+  const edit = { name: 'edit', arguments: { file_path: 'src/deflect.ts' }, token: 't', callId: 'dv4', agent }
+  await preExecute[0](edit, () => Promise.resolve({ kind: 'allow' }))
+  await postExecute[0](edit, { isError: false, value: { path: 'src/deflect.ts' } }, () => Promise.resolve({ kind: 'accept' }))
   const surface = { events: [{ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '该问题不处理' }] } } }] }
   await dispatchTurnFor('dv4', 'sv4', surface)
   // 可能触发 green 提醒（有 edit 无测试），但绝不含 deflection 弹问
