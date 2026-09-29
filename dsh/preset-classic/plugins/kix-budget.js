@@ -339,7 +339,7 @@ function makeUserMessage(text, form = 'notice') {
     id: randomUUID(),
     role: 'user',
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: 'kix-budget', form, summary: text.slice(0, 100) },
+    source: { kind: 'plugin:kix-budget', form, summary: text.slice(0, 100) },
   }
 }
 

@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.3.19（2026-09-29）v4 生产者 kind 热修：kix 插件消息注入在 0.2.0 上炸整轮（已修）
+
+**事故**：升级 DSH 0.2.0-rc.1（会话格式 v4）后，任何 kixparadigm preset 会话里插件第一次注入
+消息（steer / additionalContexts → `agent/inbox/spliced`）就整轮失败，报错
+`format v4 message requires a producer-owned source kind`。用户可见症状：新会话选 kix 范式发消息
+立即「运行失败」，切 cordis preset 才能继续。
+
+**根因**：9 个 kix 插件（budget/consistency/discipline/focus/guards/orchestration/route/settle/
+signal）的 `makeUserMessage` 仍产出 v3 退役语法 `source:{kind:'plugin', plugin:'X'}`。v4 准入
+（`assertV4SourceRowAdmission`）对 inbox-splice 的 inserted 消息硬拒绝 `kind==='plugin'`；被拒
+事件不落盘，所以会话文件里看不到任何痕迹。v3 时期注入的消息（如 09-28~09-29 上午的
+kix-settle/discipline 通知）是迁移器在加载时改写成 `plugin:X` 的，不是运行时兼容——0.2.0 原生
+会话从未成功注入过。
+
+**修法**：全部改为直接产出迁移器同款形状 `source:{kind:'plugin:X', form, summary}`（34 处，
+四个根 preset×classic/null/classic-en 全同步）；`kix-route.test.js` 的断言
+`source?.plugin === 'kix-route'` → `source?.kind === 'plugin:kix-route'`（4 副本）。新增
+`format-v4-source.test.js` 回归守卫（4 副本）：静态扫描零退役语法 + 解析到 DSH 安装时用真
+`assertV4RowAdmission` 逐 kind 验证注入行可准入，并用退役形状对照组证明校验器在位。
+一次性修复脚本 `scripts/fix-v4-source-kinds.cjs`（幂等，可重跑校验）。
+
 ## v1.3.18（2026-09-29）DSH 0.2.0 收口：roster 描述回归 + kix-focus 重入热修回填 + 回归夹具换代
 
 ### 严重：安装器标记区整段替换吞掉宿主设置行 → 重启后模型列表清空（已修）

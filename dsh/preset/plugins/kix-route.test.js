@@ -694,7 +694,7 @@ async function main() {
         const notice = steers[0]?.content?.[0]?.text || ''
         check('Q8 request-error prepend 首次 402 即硬熔断、阻止旧 child retry、恰好 steer 一次且不命令重派',
           listenerOptions['agent/request-error']?.[0] === true && firstAction === undefined && secondAction === undefined && retryCalls === 0 &&
-          steers.length === 1 && steers[0]?.source?.plugin === 'kix-route' && notice.includes('零证据') &&
+          steers.length === 1 && steers[0]?.source?.kind === 'plugin:kix-route' && notice.includes('零证据') &&
           notice.includes('不要为补票机械重派') && !notice.includes('立即用一个新的') &&
           notice.includes('健康路由仍可用：su2api'))
         const fresh = { agent: { id: 'child-retry', options: { subagentDepth: 1 } }, signal: undefined }
