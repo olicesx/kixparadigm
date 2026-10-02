@@ -1,7 +1,7 @@
 # 编排纪律（v1.2.21 实证提炼）
 
 > **求助索引（迷茫时刻快查——按危机类型，非时间序；最新条目在文末）**：
-> 分派决策/角色荒/编曲不触发 → ⑦⑧⑫ ｜ 执行载体/run_code 选型 → ①⑥⑬ ｜ 大型审查切分/方向词 → 「正交视角」候选 ｜ 观察 prompt 污染 → 「方向与推理分离」候选 ｜ 观察者回流像幻觉/伪地图 → 「lite 档幻觉」候选+⑫ ｜ 想加机制/新规则 → ⑨⑩+出生证明判据 ｜ 自省/审计自己 → 「同构盲区」候选 ｜ 结果好但过程存疑 → 「防 resulting」候选 ｜ 派发档位/成本形态 → ①⑥ ｜ 冲突回流/冻结边界 → ⑤ ｜ 会话考古/GUI 丢会话 → dsh-capability-map
+> 分派决策/角色荒/编曲不触发 → ⑦⑧⑫ ｜ 执行载体/run_code 选型 → ①⑥⑬ ｜ 审查/语义任务吞机械岛 → ⑬ ｜ 大型审查切分/方向词 → 「正交视角」候选 ｜ 观察 prompt 污染 → 「方向与推理分离」候选 ｜ 观察者回流像幻觉/伪地图 → 「lite 档幻觉」候选+⑫ ｜ 想加机制/新规则 → ⑨⑩+出生证明判据 ｜ 想进口辩论/多轮对抗机制、agent-team 协用 → ⑭ ｜ 自省/审计自己 → 「同构盲区」候选 ｜ 结果好但过程存疑 → 「防 resulting」候选 ｜ 派发档位/成本形态 → ①⑥ ｜ 冲突回流/冻结边界 → ⑤ ｜ 会话考古/GUI 丢会话 → dsh-capability-map
 
 条目（实证追加）：
 
@@ -55,3 +55,5 @@
   结论：memories 是危机通道（⑫实证日常零读取），分派/sleep 决策时刻的正确载体是插件注入，
   本次直接修在既有 v4.1 检测的判据上而非新建机制。回收条款：状态门两轮真实会话仍漏同型
   pathology（说明判据仍不足）或零触发（说明病灶太稀有）→ 按「规则是负债」重估。
+
+⑭ **[validated·2026-09-29 两路跨厂商攻击裁决]外部辩论机制吸收：多轮的正确轴是「新外部证据」不是「论证交锋」——agent-team 协用三纪律**。DSH 0.2.0 agent-team（具名持久 teammate + peer 消息 + 共享任务板，"互相攻击式讨论"）与三通道形似；起草 4 项吸收提案（P1 反证回流原攻击通道≤2 回合辩论 / P2 拒常驻具名 / P3 辩论收敛≠结论 / P4 拒基础设施整体采纳），两路 lens（机制债/认识论）跨厂商攻击独立裁决，承重反例经主线程逐项核验（文件行号+文献摘要级）。**P1 kill 四条独立死因**：①文献方向相反——MAD 常打不过单 agent 基线、模型异质性才是普适解药（arXiv:2502.08788 摘要核验）；协作式普遍稳健于对抗式（M3MAD-Bench arXiv:2601.02854，ACMMM'26 摘要核验）；辩论可随轮次降准、模型为同意而放弃挑战缺陷推理（arXiv:2509.05396 摘要核验）——kix 已有的跨厂商异质正是解药维度，论证交锋是要避开的维度。②把 rebuttal 灌给攻击者违反 persona「独立观察……不灌主张者的论证」（agent.cordis.yml:137）：被检验的是 finding 能否在反证前存活，不是攻击者能否辩护；续聊保留的上下文若不能从 artifact 独立重建，按 verification-lessons ⑦ 本不计为证据。③生效副本（kix-commands.js `PROMPTS_DIR` → dsh/preset/prompts/kixpower-review.prompt.md 阶段 2.5）已有分歧程序（反证→解析契约→仍不明问作者→不得发布 major+），「深挖分歧无程序」是读旧副本的假象——verification-lessons ⑤ 生效副本形态在作者自己身上重演。④prompt 认知规则层已证死（incentive-lessons ⑤）+无摩擦不进场（incentive-lessons ㉒）。**既有正确形态点名**：T3 的按新证据重派（⑧ vision×3）就是正确的多轮——回合数是新证据到达的结果不是原因；真反例的形态是外部信号（命令/退出码/产物字节/世界状态），与第几回合无关；分歧终结轴必须落在 transcript 外（verification-lessons ⑦ 着陆点判据），「换个人读」不改变着陆点。**agent-team 机制事实（修正两个想当然）**：①profile patch 按 id 精确禁用 4 工具（tool-subagent-control/-list-agents/subagent/subagent-fork），kix 成员注册在 tool-subagent-reviewer/qa/dev（agent.cordis.yml:616/689/743）不受影响——「摧毁成员面」是假理由；真冲突三条：无 epoch 共享 checkout 对撞 review epoch 冻结、spawn_teammate 的 fork 上下文把 Lead 论证灌给观察者、kix 成员+teammate+workflow.spawn 三套委派面菜单歧义（⑦ 激励面污染形态）。②拒「常驻具名」的理由须修正——kix 本有常驻具名成员（人名=契约句柄），该拒的是**跨 dispatch 持久记忆**：把上轮攻击留在上下文的批评者=辩护倾向的机器化。**协用三纪律（潜伏约束，触发条件=首次真实协用 agent-team 时升级机械 guard，检测 fork 观察者/互读）**：观察通道禁 fork 上下文（fresh only）；team 消息面下观察者仍不得互读论证（通道独立性正是「认输可终结」的安全兜底）；共享 checkout 下 review epoch/worktree 纪律不变。**本次实际改变的决策**：P1 撤回不落地；agent-team 拒绝理由修正如上；三纪律入档；5 份 kixpower-review.prompt.md md5 全异（生效副本已含程序）列为待作者裁决债务。falsifier：kix 与 agent-team 协用且 fork 观察者未致 priming 问题，或代码验证域出现「论证交锋轮次收益>证据驱动重派」的正面对照 → 本条重开。

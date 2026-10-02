@@ -310,9 +310,13 @@ function presetVariantName(rel) {
 }
 
 const PLUGIN_IDENTITY_GROUPS = {
+  // 2026-10-02 审计收口：budget 原两簇分叉（激励簇 [paradigm,null] /
+  // classic 簇 [classic,classic-en]）系 2026-08-19 verify-subsidy 与
+  // 2026-09-08 effect 回调修复未移植 classic 侧的漂移，非有意变体分叉
+  // （无出生/死亡证明留痕，且 yml「L3 补贴驻 classic」与代码事实相反）。
+  // 已四副本字节同步并并簇——后续任一副本漂移即机械报红。
   'kix-budget.js': [
-    ['kixparadigm', 'kixparadigm-null'],
-    ['kixparadigm-classic', 'kixparadigm-classic-en'],
+    ['kixparadigm', 'kixparadigm-null', 'kixparadigm-classic', 'kixparadigm-classic-en'],
   ],
   'kix-probe.js': [['kixparadigm', 'kixparadigm-null']],
   'kix-settle.js': [['kixparadigm', 'kixparadigm-null']],

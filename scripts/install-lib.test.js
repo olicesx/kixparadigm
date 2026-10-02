@@ -6,7 +6,7 @@ const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 const { spawnSync } = require('node:child_process')
-const { hasOtherPresetOwner, installPreset, installVisionBridge, mergeVisionBridgePatch, uninstall, copyTree, ensureDefaultSkillsShelf, ensureDefaultShelf, presetResolutionRoot, missingBarePackages, renderPresetPatchBlock, upsertPresetBlock } = require('./install-lib.js')
+const { hasOtherPresetOwner, installPreset, installVisionBridge, mergeVisionBridgePatch, uninstall, copyTree, ensureDefaultSkillsShelf, ensureDefaultShelf, presetResolutionRoot, missingBarePackages, renderPresetPatchBlock, upsertPresetBlock, stripPatchedHostConfigKeys } = require('./install-lib.js')
 
 const DEFAULT_PATCH = [
   '# Your patch layer for this dsh profile, applied after every bundle layer:',
@@ -680,6 +680,80 @@ test('installPreset links preset resolution for a flat npm install', (t) => {
   assert.deepEqual(installed.kixRuntime.resolutionMissing, [], '解析根应覆盖 preset 引用的全部裸包')
 })
 
+test('stripPatchedHostConfigKeys 只裁宿主不认的那两个键，且不碰 kix 自己插件里的同名键', () => {
+  // 出生证明（2026-09-29 桌面发行版实测）：dsh-compaction-basic 的 validateKeys 在构造器里
+  // 跑 `unknown key` → throw，而该行属于 preset 组成 → 整份 preset 挂不上。0.2.0-rc.2 的
+  // 键集合里没有 maxThresholdTokens / maxRetainTokens（本包 cap 补丁才加的两个字段）。
+  const src = [
+    '- id: compaction-basic',
+    "  name: '@deepseek-ai/dsh-compaction-basic'",
+    '  config:',
+    '    thresholdRatio: 0.8',
+    '    maxThresholdTokens: 200000',
+    '    retainRatio: 0.044',
+    '    maxRetainTokens: 64000',
+    '    modelPolicies: []',
+    '- id: kix-budget',
+    '  name: ./plugins/kix-budget.js',
+    '  config:',
+    '    maxThresholdTokens: 123456',
+  ].join('\n') + '\n'
+
+  const out = stripPatchedHostConfigKeys(src)
+
+  assert.deepEqual(out.dropped, ['dsh-compaction-basic.maxThresholdTokens', 'dsh-compaction-basic.maxRetainTokens'])
+  assert.doesNotMatch(out.text, /^\s*maxThresholdTokens: 200000$/m)
+  assert.doesNotMatch(out.text, /^\s*maxRetainTokens: 64000$/m)
+  // ratio 是宿主原生键，必须原样保留（标定值不能被顺手抹掉）。
+  assert.match(out.text, /thresholdRatio: 0\.8/)
+  assert.match(out.text, /retainRatio: 0\.044/)
+  assert.match(out.text, /modelPolicies: \[\]/)
+  // kix 自己插件的同名键不属于宿主 schema，不能误删。
+  assert.match(out.text, /maxThresholdTokens: 123456/)
+  // 幂等：再跑一次是恒等变换，否则每次安装都会判成「已更新」。
+  const again = stripPatchedHostConfigKeys(out.text)
+  assert.deepEqual(again.dropped, [])
+  assert.equal(again.text, out.text)
+})
+
+test('installPreset 在只读宿主（桌面发行版）上裁键，并保留仓库源文件不动', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kixparadigm-sealed-'))
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }))
+  // sealed 判据 = $DSH_HOME/dsh-runtimes/<id>/runtime.json 的 desktopVersion。
+  const runtimeDir = path.join(home, 'dsh-runtimes', 'dsh-primary-runtime')
+  fs.mkdirSync(runtimeDir, { recursive: true })
+  fs.writeFileSync(path.join(runtimeDir, 'runtime.json'), JSON.stringify({ desktopVersion: '0.2.0-rc.2' }))
+  writeWebProfile(home)
+  const previousHome = process.env.DSH_HOME
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
+  })
+  process.env.DSH_HOME = home
+
+  const installed = installPreset(silentLog)
+
+  assert.equal(installed.kixRuntime.sealed, true)
+  assert.equal(installed.kixRuntime.declared, true)
+  for (const file of [
+    path.join(home, '.agent-presets', 'kixparadigm', 'agent.cordis.yml'),
+    path.join(home, 'profiles', 'kix-presets', 'kixparadigm', 'agent.cordis.yml'),
+  ]) {
+    assert.equal(fs.existsSync(file), true, `${file} 应存在`)
+    const text = fs.readFileSync(file, 'utf8')
+    assert.doesNotMatch(text, /^\s*maxThresholdTokens:/m, `${file} 必须已裁掉 maxThresholdTokens`)
+    assert.doesNotMatch(text, /^\s*maxRetainTokens:/m, `${file} 必须已裁掉 maxRetainTokens`)
+  }
+  // 仓库事实源不得被改写（安装器只写安装副本）。
+  assert.match(fs.readFileSync(path.join('dsh', 'preset', 'agent.cordis.yml'), 'utf8'), /^\s*maxThresholdTokens: 200000$/m)
+  // 重跑幂等：裁键走内容比较，不该每次都判成「已更新」。
+  const again = installPreset(silentLog)
+  for (const row of (Array.isArray(again) ? again : [again])) {
+    assert.ok(!row.updated.includes('agent.cordis.yml'),
+      `${row.variant.id} 的 agent.cordis.yml 不该被判成已更新（裁键必须按内容比较）`)
+  }
+})
+
 test('presetResolutionRoot 取能解析最多裸包的那层，不被内嵌 persona 骗到', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kix-resroot-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
@@ -707,5 +781,7 @@ test('presetResolutionRoot 无任何 dsh-persona 时返回 null（触发中止�
   const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'kix-resroot-none-'))
   t.after(() => fs.rmSync(bare, { recursive: true, force: true }))
   fs.mkdirSync(path.join(bare, 'node_modules'), { recursive: true })
-  assert.equal(presetResolutionRoot({ dshDir: bare }, new Set(['dsh-persona'])), null)
+  // stopAt 把向上查找截在临时树内：否则「用户家目录里装过一份 dsh」的机器会在家目录那层
+  // 命中 @deepseek-ai/dsh-persona，这条判据在任何这样的机器上恒失败（本机实测 0.1.0-rc.6）。
+  assert.equal(presetResolutionRoot({ dshDir: bare }, new Set(['dsh-persona']), bare), null)
 })

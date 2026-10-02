@@ -247,8 +247,12 @@
         #
         # 依赖 kix-compaction-cap-patch.mjs 给引擎加的两个绝对字段；未打补丁的进程会
         # 因未知配置键中止挂载。dsh-web.service 的 drop-in kix-cap-patch.conf 在每次
-        # 启动时自愈补丁（防 dsh 升级覆盖 node_modules）。落地/回滚流程见
-        # docs/kix-context-management.md，脚本在 scripts/context-budget/。
+        # 启动时自愈补丁（防 dsh 升级覆盖 node_modules）。落地/回滚文档在 kix-bundle
+        # 源仓 docs/kix-context-management.md、脚本在源仓 scripts/context-budget/
+        # （源仓相对路径，preset 部署面不随附）；部署面真实承载：
+        # /root/kix-context-budget/kix-compaction-cap-patch.mjs +
+        # /etc/systemd/system/dsh-web.service.d/kix-cap-patch.conf（2026-10-02
+        # 审计收口：原两相对路径在部署树不存在，改为双上下文显式指向；与 zh 三变体同判）。
         #
         # 血统：默认 0.8 在 1M = 800K 阈值，kixpower 整改会话爬到 466K 从未触发，上下文
         # O(N²) 累积烧掉 100.8M 重读 token；v5.9 全局降到 0.45 并对两个 1M 模型钉 0.18。
@@ -427,23 +431,10 @@
         toolName: subagent_thinker
         backgroundMode: continuable
         maxDepth: 2
-        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
-        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
-        # kix_tool_activate/kix_capability_call all ZERO uses) — child
-        # orchestration-surface trim. The deny list holds 8 permanently
-        # mounted orchestration names only (restrict throws on unknown
-        # names). `subagent` is NOT one of them: dsh-subagent mounts the
-        # parent composition through composeFrom(childCtx, parent.ctx), so
-        # the name lands in the CHILD's own layer, and an own-layer name is
-        # never in restrictableNames — keeping it here throws on every
-        # dispatch. Nested dispatch is refused by kix-cost's tools.guard
-        # plus the harness maxDepth. kix-cost admits only depth-1
-        # subagent_lite evidence and
-        # guards every other conditional tier/goal/workflow. Denied names vanish
-        # array and the system TypeScript mirror. run_code is NOT in the
-        # deny list: it is the reserved Code Mode transport — restrict
-        # cannot name it (WSL2 live-fire finding) — and as a legitimate
-        # execution channel it stays visible on the child surface, its
+        # (v5.10 toolFilter trim rationale, deny-list semantics, and the
+        #  run_code/subagent exceptions: see the identical v5.10 block at the
+        #  tool-subagent row — single authority; rows no longer carry copies.
+        #  Collapsed 2026-10-02, same as the zh variants.)
         # tool mirror included. subagent×2/agent control are duties of
         # the main thread (kix invariant "coordination stays on the
         # main thread"). File/exec/search/jobs/skill/report/MCP
@@ -480,23 +471,10 @@
         toolName: subagent_cross
         backgroundMode: continuable
         maxDepth: 2
-        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
-        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
-        # kix_tool_activate/kix_capability_call all ZERO uses) — child
-        # orchestration-surface trim. The deny list holds 8 permanently
-        # mounted orchestration names only (restrict throws on unknown
-        # names). `subagent` is NOT one of them: dsh-subagent mounts the
-        # parent composition through composeFrom(childCtx, parent.ctx), so
-        # the name lands in the CHILD's own layer, and an own-layer name is
-        # never in restrictableNames — keeping it here throws on every
-        # dispatch. Nested dispatch is refused by kix-cost's tools.guard
-        # plus the harness maxDepth. kix-cost admits only depth-1
-        # subagent_lite evidence and
-        # guards every other conditional tier/goal/workflow. Denied names vanish
-        # array and the system TypeScript mirror. run_code is NOT in the
-        # deny list: it is the reserved Code Mode transport — restrict
-        # cannot name it (WSL2 live-fire finding) — and as a legitimate
-        # execution channel it stays visible on the child surface, its
+        # (v5.10 toolFilter trim rationale, deny-list semantics, and the
+        #  run_code/subagent exceptions: see the identical v5.10 block at the
+        #  tool-subagent row — single authority; rows no longer carry copies.
+        #  Collapsed 2026-10-02, same as the zh variants.)
         # tool mirror included. subagent×2/agent control are duties of
         # the main thread (kix invariant "coordination stays on the
         # main thread"). File/exec/search/jobs/skill/report/MCP
@@ -528,23 +506,10 @@
         toolName: subagent_vision
         backgroundMode: continuable
         maxDepth: 2
-        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
-        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
-        # kix_tool_activate/kix_capability_call all ZERO uses) — child
-        # orchestration-surface trim. The deny list holds 8 permanently
-        # mounted orchestration names only (restrict throws on unknown
-        # names). `subagent` is NOT one of them: dsh-subagent mounts the
-        # parent composition through composeFrom(childCtx, parent.ctx), so
-        # the name lands in the CHILD's own layer, and an own-layer name is
-        # never in restrictableNames — keeping it here throws on every
-        # dispatch. Nested dispatch is refused by kix-cost's tools.guard
-        # plus the harness maxDepth. kix-cost admits only depth-1
-        # subagent_lite evidence and
-        # guards every other conditional tier/goal/workflow. Denied names vanish
-        # array and the system TypeScript mirror. run_code is NOT in the
-        # deny list: it is the reserved Code Mode transport — restrict
-        # cannot name it (WSL2 live-fire finding) — and as a legitimate
-        # execution channel it stays visible on the child surface, its
+        # (v5.10 toolFilter trim rationale, deny-list semantics, and the
+        #  run_code/subagent exceptions: see the identical v5.10 block at the
+        #  tool-subagent row — single authority; rows no longer carry copies.
+        #  Collapsed 2026-10-02, same as the zh variants.)
         # tool mirror included. subagent×2/agent control are duties of
         # the main thread (kix invariant "coordination stays on the
         # main thread"). File/exec/search/jobs/skill/report/MCP
@@ -566,23 +531,10 @@
         toolName: subagent_fork
         backgroundMode: continuable
         maxDepth: 2
-        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
-        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
-        # kix_tool_activate/kix_capability_call all ZERO uses) — child
-        # orchestration-surface trim. The deny list holds 8 permanently
-        # mounted orchestration names only (restrict throws on unknown
-        # names). `subagent` is NOT one of them: dsh-subagent mounts the
-        # parent composition through composeFrom(childCtx, parent.ctx), so
-        # the name lands in the CHILD's own layer, and an own-layer name is
-        # never in restrictableNames — keeping it here throws on every
-        # dispatch. Nested dispatch is refused by kix-cost's tools.guard
-        # plus the harness maxDepth. kix-cost admits only depth-1
-        # subagent_lite evidence and
-        # guards every other conditional tier/goal/workflow. Denied names vanish
-        # array and the system TypeScript mirror. run_code is NOT in the
-        # deny list: it is the reserved Code Mode transport — restrict
-        # cannot name it (WSL2 live-fire finding) — and as a legitimate
-        # execution channel it stays visible on the child surface, its
+        # (v5.10 toolFilter trim rationale, deny-list semantics, and the
+        #  run_code/subagent exceptions: see the identical v5.10 block at the
+        #  tool-subagent row — single authority; rows no longer carry copies.
+        #  Collapsed 2026-10-02, same as the zh variants.)
         # tool mirror included. subagent×2/agent control are duties of
         # the main thread (kix invariant "coordination stays on the
         # main thread"). File/exec/search/jobs/skill/report/MCP
@@ -602,6 +554,12 @@
     # channel (compare: kix-guards guards operations, kix-discipline guards
     # edits). It is now a resident high-frequency observer; material review may
     # fan out multiple reviewer instances with distinct lenses.
+    # Contract precedence (closed 2026-10-02, mirrors zh): this row's persona is
+    # the single source of truth for the effective contract; agents/
+    # kixpower-reviewer.agent.md is the Copilot-era reference copy (its DSH
+    # adaptation note defers to this row). Three-layer adversarial duty
+    # originates in prompts/kixpower-review.prompt.md v5.4; the canonical
+    # seven-axis configuration list lives in memories/verification-lessons.md.
     - id: tool-subagent-reviewer
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -609,23 +567,10 @@
         toolName: subagent_reviewer
         backgroundMode: continuable
         maxDepth: 2
-        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
-        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
-        # kix_tool_activate/kix_capability_call all ZERO uses) — child
-        # orchestration-surface trim. The deny list holds 8 permanently
-        # mounted orchestration names only (restrict throws on unknown
-        # names). `subagent` is NOT one of them: dsh-subagent mounts the
-        # parent composition through composeFrom(childCtx, parent.ctx), so
-        # the name lands in the CHILD's own layer, and an own-layer name is
-        # never in restrictableNames — keeping it here throws on every
-        # dispatch. Nested dispatch is refused by kix-cost's tools.guard
-        # plus the harness maxDepth. kix-cost admits only depth-1
-        # subagent_lite evidence and
-        # guards every other conditional tier/goal/workflow. Denied names vanish
-        # array and the system TypeScript mirror. run_code is NOT in the
-        # deny list: it is the reserved Code Mode transport — restrict
-        # cannot name it (WSL2 live-fire finding) — and as a legitimate
-        # execution channel it stays visible on the child surface, its
+        # (v5.10 toolFilter trim rationale, deny-list semantics, and the
+        #  run_code/subagent exceptions: see the identical v5.10 block at the
+        #  tool-subagent row — single authority; rows no longer carry copies.
+        #  Collapsed 2026-10-02, same as the zh variants.)
         # tool mirror included. subagent×2/agent control are duties of
         # the main thread (kix invariant "coordination stays on the
         # main thread"). File/exec/search/jobs/skill/report/MCP
@@ -679,8 +624,11 @@
     #     orchestrator.agent.md is Copilot-era residue — no row, no distillation);
     #   - dev as one three-in-one tier: Nova/Sage/Milo switching already lives
     #     in one agent body, so one persona line carries the contract.
-    # Contract snapshots stay subordinate to agents/kixpower-{qa,dev}.agent.md
-    # (single source of truth, reviewer precedent); composition traces go to
+    # Contract precedence (closed 2026-10-02, same ruling as the zh variants):
+    # the persona on this row is the single source of truth for the EFFECTIVE
+    # contract (DSH injects only this snapshot); agents/kixpower-{qa,dev}.
+    # agent.md is the Copilot-era reference copy consulted by the manual
+    # kixpower flow — on conflict this row wins. Composition traces go to
     # the mode field of kix_discipline_spec (members + one-line reason); the
     # four floor invariants live in the persona Arranger Model section.
     # reviewer/dev/qa are resident and role-first; low-frequency lite/thinker/
@@ -692,23 +640,10 @@
         toolName: subagent_qa
         backgroundMode: continuable
         maxDepth: 2
-        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
-        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
-        # kix_tool_activate/kix_capability_call all ZERO uses) — child
-        # orchestration-surface trim. The deny list holds 8 permanently
-        # mounted orchestration names only (restrict throws on unknown
-        # names). `subagent` is NOT one of them: dsh-subagent mounts the
-        # parent composition through composeFrom(childCtx, parent.ctx), so
-        # the name lands in the CHILD's own layer, and an own-layer name is
-        # never in restrictableNames — keeping it here throws on every
-        # dispatch. Nested dispatch is refused by kix-cost's tools.guard
-        # plus the harness maxDepth. kix-cost admits only depth-1
-        # subagent_lite evidence and
-        # guards every other conditional tier/goal/workflow. Denied names vanish
-        # array and the system TypeScript mirror. run_code is NOT in the
-        # deny list: it is the reserved Code Mode transport — restrict
-        # cannot name it (WSL2 live-fire finding) — and as a legitimate
-        # execution channel it stays visible on the child surface, its
+        # (v5.10 toolFilter trim rationale, deny-list semantics, and the
+        #  run_code/subagent exceptions: see the identical v5.10 block at the
+        #  tool-subagent row — single authority; rows no longer carry copies.
+        #  Collapsed 2026-10-02, same as the zh variants.)
         # tool mirror included. subagent×2/agent control are duties of
         # the main thread (kix invariant "coordination stays on the
         # main thread"). File/exec/search/jobs/skill/report/MCP
@@ -751,23 +686,10 @@
         toolName: subagent_dev
         backgroundMode: continuable
         maxDepth: 2
-        # v5.10 (2026-08-17, child ledger: 107 children / 2,432 calls, 82%
-        # bash/read/grep/glob; exit_plan_mode/ask_user_question/
-        # kix_tool_activate/kix_capability_call all ZERO uses) — child
-        # orchestration-surface trim. The deny list holds 8 permanently
-        # mounted orchestration names only (restrict throws on unknown
-        # names). `subagent` is NOT one of them: dsh-subagent mounts the
-        # parent composition through composeFrom(childCtx, parent.ctx), so
-        # the name lands in the CHILD's own layer, and an own-layer name is
-        # never in restrictableNames — keeping it here throws on every
-        # dispatch. Nested dispatch is refused by kix-cost's tools.guard
-        # plus the harness maxDepth. kix-cost admits only depth-1
-        # subagent_lite evidence and
-        # guards every other conditional tier/goal/workflow. Denied names vanish
-        # array and the system TypeScript mirror. run_code is NOT in the
-        # deny list: it is the reserved Code Mode transport — restrict
-        # cannot name it (WSL2 live-fire finding) — and as a legitimate
-        # execution channel it stays visible on the child surface, its
+        # (v5.10 toolFilter trim rationale, deny-list semantics, and the
+        #  run_code/subagent exceptions: see the identical v5.10 block at the
+        #  tool-subagent row — single authority; rows no longer carry copies.
+        #  Collapsed 2026-10-02, same as the zh variants.)
         # tool mirror included. subagent×2/agent control are duties of
         # the main thread (kix invariant "coordination stays on the
         # main thread"). File/exec/search/jobs/skill/report/MCP

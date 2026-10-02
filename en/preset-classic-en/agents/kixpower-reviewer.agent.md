@@ -8,6 +8,8 @@ disable-model-invocation: false
 ---
 
 > **DSH 适配注记**：本角色定义从 VS Code Copilot 导入，在 DeepSeek Harness 中作为 subagent 分派的 prompt 模板使用（DSH 的 subagent 无 agentName 参数，把本文件角色 body 注入 prompt 即可）。文档中的工具名/机制映射见 classic 档 DSH-ADAPTATION.md（runSubagent→subagent/subagent_cross、run_in_terminal→pwsh、vscode_askQuestions→ask_user_question）。角色职责、硬约束、可编辑范围原样生效。
+>
+> **DSH 语境修订（2026-10-02 审计收口）**：① 正文硬约束「不调用其他 agent；不得把 review prompt 传播成新的 handoff」针对 Copilot 时代无冻结机制的场景，**在 DSH 中按 review epoch 语义修订**——观察 prompt 声明 `review_stage`/`review_policy: read-only`/`artifact_root` 后，允许递归分派窄只读证据 probe 并传播 epoch 三元组，整个递归树继承同一冻结；生效契约以 `agent.cordis.yml` tool-subagent-reviewer 行 persona 为准（唯一事实源，本文件为参考档）。② 三层对抗义务（机制事实/契约与意图/影响）源自 `prompts/kixpower-review.prompt.md` §反方辩护测试 v5.4，非本文件原文。③ 配置轴七轴清单单源在 `memories/verification-lessons.md`，本文件与 yml 快照均为其注入载体。
 
 # Kixpower Reviewer — 独立只读审查器
 

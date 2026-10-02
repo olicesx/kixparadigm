@@ -100,6 +100,12 @@ const RESIDENT_TOOLS = new Set([
   'subagent', 'subagent_cross',
   // workflow 已挂载（2026-08-16 临时启用,自发使用测试中）
   'workflow',
+  // dsh-mcp-resources 三工具：DSH 0.2.0-rc.2 起 base 层随已配置 MCP 默认挂载
+  // （dsh-base cordis.patch.yml mcp-resources 行），全局注册、restrict 不裁
+  // （deny 只打 mcp__* 前缀与 web_search）。2026-10-02 审计收口：加入常驻
+  // 语义集，菜单不再把它们误归「other 按需」组——常驻工具由其 schema 自
+  // 描述（本会话工具面可见），不经 capability_call。
+  'list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource',
   'kix_capability_search', 'kix_capability_call',
   ...SCOPE_RESIDENT,
 ])
@@ -161,7 +167,7 @@ const CAPABILITY_GROUPS = [
   {
     id: 'jobs',
     title: '后台任务（job_output/job_list/job_kill）',
-    hint: '常驻、可直接调用：长任务用 pwsh run_in_background: true 启动；job_list 确认任务存在 → job_output 读结果 → job_kill 停止',
+    hint: '常驻、可直接调用：长任务用 ' + (process.platform === 'win32' ? 'pwsh' : 'bash') + ' run_in_background: true 启动；job_list 确认任务存在 → job_output 读结果 → job_kill 停止（2026-10-02 收口：shell 名按平台取，原硬编码 pwsh 在 Linux 串味）',
     tools: ['job_output', 'job_list', 'job_kill'],
   },
   {
@@ -354,7 +360,11 @@ const ACTIVATABLE_TOOLS = {
   // 2026-08-20 三分法回滚：web_search 曾加入此处（渐进披露），评估否决——
   // 低频 + 断 KV 缓存成本远超省下的常驻税，恢复 cordis tool-web 常驻。
   // 见 dsh/preset/agent.cordis.yml tool-web 行注释（回滚理由完整记录）。
-  workflow: { package: '@deepseek-ai/dsh-tool-workflow', config: {} },
+  // 2026-10-02 审计收口：workflow 移出本表（死激活路径）——它依赖 isolate
+  // realm 内的 workflowEngine，realm 外动态挂载解析不到 → 激活必诚实报错
+  // （2026-08-16 实测，agent.cordis.yml tool-workflow 行注释在档）；行内已
+  // 常驻时本表条目不可达，行被 disabled 时唯一启用路径 = 取消行 disabled
+  // 重启。保留只会误导「存在激活捷径」。
   goal: { package: '@deepseek-ai/dsh-tool-goal', config: {} },
   // 2026-08-18 渐进披露扩容：kix-browser（本地插件，17 action 浏览器自动化）
   // 默认不装载（不占常驻 schema）；pkgPath 相对本插件目录解析（同 preset

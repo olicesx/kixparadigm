@@ -155,6 +155,9 @@ await ok('web_search 常驻性由 cordis tool-web 行决定（不在 RESIDENT_TO
 })())
 await ok('read_image 按需', I.isOnDemand('read_image'))
 await ok('workflow 常驻(临时启用,自发使用测试中)', !I.isOnDemand('workflow'))
+await ok('mcp-resources 三工具常驻（base 层随 MCP 默认挂载，2026-10-02 菜单分类收口）',
+  ['list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource']
+    .every((n) => I.RESIDENT_TOOLS.has(n) && !I.isOnDemand(n)))
 await ok('create_goal 未挂载(默认 disabled,不在常驻集)', I.isOnDemand('create_goal'))
 await ok('job_output 常驻(2026-08-17 jobs 常驻化)', !I.isOnDemand('job_output'))
 await ok('list_agents 常驻(scope 自动可见)', !I.isOnDemand('list_agents'))
@@ -482,12 +485,14 @@ section('按需激活')
 const activateTool = registeredTools.find((t) => t.name === 'kix_tool_activate')
 const deactivateTool = registeredTools.find((t) => t.name === 'kix_tool_deactivate')
 await ok('activate/deactivate 工具已注册', activateTool !== undefined && deactivateTool !== undefined)
-await ok('ACTIVATABLE_TOOLS 仅含 workflow/goal/低频档位，常驻成员不重复注册', (() => {
-  return ['workflow', 'goal', 'subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork']
+await ok('ACTIVATABLE_TOOLS 仅含 goal/低频档位/browser，常驻成员不重复注册', (() => {
+  return ['goal', 'subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork']
     .every((n) => I.ACTIVATABLE_TOOLS[n] && I.ACTIVATABLE_TOOLS[n].package)
-    && ['subagent_reviewer', 'subagent_qa', 'subagent_dev', 'ralph', 'jobs', 'web_search']
+    && ['workflow', 'subagent_reviewer', 'subagent_qa', 'subagent_dev', 'ralph', 'jobs', 'web_search']
       .every((n) => I.ACTIVATABLE_TOOLS[n] === undefined)
 })())
+await ok('workflow 死激活键已移除（realm 依赖：动态挂载解析不到 workflowEngine，2026-10-02 审计收口；启用=取消行 disabled 重启）',
+  I.ACTIVATABLE_TOOLS.workflow === undefined)
 await ok('web_search 恢复常驻（三分法回滚：cordis tool-web 行已恢复）', I.ACTIVATABLE_TOOLS.web_search === undefined)
 await ok('所有动态 subagent 档位 maxDepth=2', (() => {
   return ['subagent_lite', 'subagent_thinker', 'subagent_vision', 'subagent_fork']
@@ -527,23 +532,25 @@ await ok('subagent_lite 激活配置含 toolName/toolFilter', (() => {
   return c.toolName === 'subagent_lite' && Array.isArray(c.toolFilter.allow) && c.agentOptions.maxTokens === 8192
 })())
 await ok('jobs 已移出可激活清单（2026-08-17 常驻化，动态挂载会冲突）', I.ACTIVATABLE_TOOLS.jobs === undefined)
-await ok('activationNote 文本引导 deactivate', I.activationNote('workflow').includes('kix_tool_deactivate'))
+await ok('activationNote 文本引导 deactivate', I.activationNote('goal').includes('kix_tool_deactivate'))
 await ok('激活未知工具 → 报错', (async () => {
   const r = await activateTool.execute({ tool: 'nonexistent' })
   return r.ok === false && String(r.error).includes('不可按需激活')
 })())
-await ok('激活 workflow → ctx.plugin 挂载', (async () => {
+// 2026-10-02 载具更换：workflow 激活键已移除（realm 依赖死路径），生命周期
+// 用例载具从 workflow 换成 goal（同为 {package, config:{}} 简形条目）。
+await ok('激活 goal → ctx.plugin 挂载', (async () => {
   pluginCalls.length = 0
   const before = effectCalls.length
-  const r = await activateTool.execute({ tool: 'workflow' })
-  return r.ok === true && r.tool === 'workflow'
+  const r = await activateTool.execute({ tool: 'goal' })
+  return r.ok === true && r.tool === 'goal'
     && pluginCalls.length === 1 && pluginCalls[0].cfg && pluginCalls[0].cfg.subagentProvider === undefined
     && effectCalls.length === before // 回归防线：激活不得注册自动清理 effect
 })())
 await ok('激活 fiber 非 ACTIVE(PENDING,依赖服务不可达) → 回滚并报错', (async () => {
   fiberStateOverride = 0 // PENDING
   const beforeDispose = disposeCalls
-  // 用尚未激活的 subagent_lite（workflow 已在上个用例激活，会命中"已激活"分支）
+  // 用尚未激活的 subagent_lite（goal 已在上个用例激活，会命中"已激活"分支）
   const r = await activateTool.execute({ tool: 'subagent_lite' })
   fiberStateOverride = null
   return r.ok === false && String(r.error).includes('未生效')
@@ -551,11 +558,12 @@ await ok('激活 fiber 非 ACTIVE(PENDING,依赖服务不可达) → 回滚并�
     && r.tool === 'subagent_lite'
 })())
 await ok('重复激活 → 拒绝', (async () => {
-  const r = await activateTool.execute({ tool: 'workflow' })
+  const r = await activateTool.execute({ tool: 'goal' })
   return r.ok === false && String(r.error).includes('已激活')
 })())
 await ok('deactivate 未激活的工具 → 报错', (async () => {
-  const r = await deactivateTool.execute({ tool: 'goal' })
+  // 2026-10-02 载具更换：goal 在上方用例已激活，改用从未激活的 fork
+  const r = await deactivateTool.execute({ tool: 'subagent_fork' })
   return r.ok === false && String(r.error).includes('未激活')
 })())
 // v5.10 延迟卸载（㉔ 机制化）：deactivate 入队不立即 dispose；回合边界统一执行。
@@ -564,29 +572,29 @@ async function flushTurn() {
 }
 await ok('deactivate 已激活 → 延迟（立即不 dispose，返回 deferred）', (async () => {
   const before = disposeCalls
-  const r = await deactivateTool.execute({ tool: 'workflow' })
+  const r = await deactivateTool.execute({ tool: 'goal' })
   return r.ok === true && r.deferred === true && disposeCalls === before
 })())
 await ok('待卸载期间重新激活 → 取消卸载、复用 fiber（不重复挂载）', (async () => {
   pluginCalls.length = 0
-  const r = await activateTool.execute({ tool: 'workflow' })
+  const r = await activateTool.execute({ tool: 'goal' })
   return r.ok === true && pluginCalls.length === 0 && String(r.note).includes('卸载已取消')
 })())
 await ok('deactivate → 回合边界 flush 才真正 dispose', (async () => {
   const before = disposeCalls
-  await deactivateTool.execute({ tool: 'workflow' })
+  await deactivateTool.execute({ tool: 'goal' })
   const mid = disposeCalls
   await flushTurn()
   return mid === before && disposeCalls === before + 1
 })())
 await ok('flush 后重新激活 → 全新挂载', (async () => {
   pluginCalls.length = 0
-  const r = await activateTool.execute({ tool: 'workflow' })
+  const r = await activateTool.execute({ tool: 'goal' })
   return r.ok === true && pluginCalls.length === 1
 })())
-await ok('激活 goal → 正常挂载', (async () => {
+await ok('激活 subagent_vision → 正常挂载（第二键型覆盖：goal 之外档位条目）', (async () => {
   pluginCalls.length = 0
-  const r = await activateTool.execute({ tool: 'goal' })
+  const r = await activateTool.execute({ tool: 'subagent_vision' })
   return r.ok === true && pluginCalls.length === 1
 })())
 
@@ -626,7 +634,7 @@ await ok('activationKeyFor：goal 工具名 → goal 激活键（工具名≠激
     && I.activationKeyFor('get_goal') === 'goal'
     && I.activationKeyFor('subagent_qa') === null
     && I.activationKeyFor('subagent_thinker') === 'subagent_thinker'
-    && I.activationKeyFor('workflow') === 'workflow'
+    && I.activationKeyFor('workflow') === null // 2026-10-02 死激活键移除（realm 依赖）
     && I.activationKeyFor('job_output') === null
     && I.activationKeyFor('nonexistent') === null
 })())
