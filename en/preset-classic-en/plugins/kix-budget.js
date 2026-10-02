@@ -456,6 +456,10 @@ module.exports = {
         }
       }
     })
+    // ⚠️ effect 回调注册即执行（cordis 语义），必须返回卸载钩子：花括号体
+    // `() => { states.clear(); … }` 返回 undefined → 注册瞬间清空 + 未注册任何
+    // disposer（卸载时会话 Map 泄漏）。正确形态是表达式体返回清理函数
+    // （2026-09-08 独立 QA 取证 P4；与 kix-browser.js 同根因修复）。
     ctx.effect(() => () => { states.clear(); transitionByCall.clear() })
 
     // ── agent/pre-step：步计数、动态预算边界与结果急剪 ────────────────────
@@ -548,7 +552,12 @@ module.exports = {
       if (!session) return next()
       const st = stateFor(session.id)
       const args = exec && (exec.arguments ?? exec.args)
-      if (isReadOnlyTool(exec && exec.name, args)) st.streak += 1
+      // L3 verify-subsidy (2026-08-19): verification executions reset the read-only
+      // streak like any mutation does — probing behavior is never what the
+      // marathon-handoff advice should punish.
+      const _nm = String(exec && exec.name || '').toLowerCase()
+      if (_nm === 'probe' || _nm === 'run_code') st.streak = 0
+      else if (isReadOnlyTool(exec && exec.name, args)) st.streak += 1
       else st.streak = 0
 
       const transition = transitionToolOf(exec)

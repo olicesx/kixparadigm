@@ -69,7 +69,7 @@ kixparadigm/
 └── install.ps1 / install.sh / INSTALL.md / CHANGELOG.md
 ```
 
-> **唯一事实源约定**：`dsh/preset/` 是事实源，`~/.dsh/.agent-presets/kixparadigm/` 只是安装副本（维护 = 改 preset 后跑 `scripts/sync-dsh-preset.ps1 -Force`）；根目录 `skills/` 等是 Copilot 分发版，与 DSH 版刻意不同，不互相覆盖。
+> **唯一事实源约定**：`dsh/preset/` 是事实源，`~/.dsh/.agent-presets/kixparadigm/` 只是安装副本（维护 = 改 preset 后跑 `scripts/sync-dsh-preset.ps1 -Force`）；DSH 0.2.0+ 还会从同一份源物化 `~/.dsh/profiles/kix-presets/<id>/`——0.2.0 的 preset 正文必须落在 profiles 树内的真实目录，否则宿主只为 profiles 树内的导入者装 `@deepseek-ai/*` 解析拦截层，正文会被静默禁用（见 [dsh/README-DSH.md](dsh/README-DSH.md)）。根目录 `skills/` 等是 Copilot 分发版，与 DSH 版刻意不同，不互相覆盖。
 
 ## 开发与验证
 

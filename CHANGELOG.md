@@ -1,5 +1,71 @@
 # Changelog
 
+## v1.3.23（2026-10-02）融入审计哲学闭环：双源契约判据 / 簇漂移收敛 / 判决补齐（C1-C6 + A 表全落地）
+
+**背景**：双路独立审计（全包清单 149 包 README + 范式对抗审查，三方交叉）发现融入面的缺口集中在**元层**：契约双源矛盾（三连踩旧伤）、变体簇漂移、承载层指针朽坏、判决过期/缺失。本版按范式自身教义逐项闭环——机械承诺给机械承载、语义承诺给单源契约、决策给留痕与可证伪，不新增未经复杂度论证的机制（无新插件、无新检测器）。
+
+**修法与落位**（rationale 全文见各文件行内注记与 `kix-discipline/philosophy-selfcheck-v1323.md`）：
+
+- **C1 契约双源（reviewer/qa/dev）**：判据确立为「`agent.cordis.yml` 成员行 persona = 生效契约唯一事实源；`agents/*.agent.md` = Copilot 时代参考档，冲突以 yml 为准」（verification-lessons ⑮「改权威文件≠改生效副本」三连踩的机械解）。reviewer .md 增加 DSH 语境修订（epoch 下递归 probe 授权 vs Copilot 无冻结禁令的语境区分）+ 三层义务真实出处（`kixpower-review.prompt.md` v5.4）。zh/en 货架三档同步。
+- **C2 budget 簇漂移**：两簇分叉系修复未移植（非有意变体，无出生/死亡证明）——2026-08-19 verify-subsidy + 2026-09-08 effect 回调修复同步至 classic/classic-en（null 本已同步），`consistency-lib.cjs` 身份组并簇（四副本字节一致，后续漂移机械报红）；yml 头部「L3 补贴驻 classic」方向性错误注释修正（同步后语义为真）。
+- **C3 承载层指针 + 注释收敛**：compaction 注释的 `docs/`、`scripts/` 相对路径在部署树不存在 → 改为源仓相对 + 部署面绝对双上下文指向；v5.10 toolFilter 注释块 8×17=136 行逐字复制（md5 全同 ×8）→ 收敛为首块权威 + 7 处指针（三 zh 变体各 -105 行，结构性消灭漂移面，不加检测器）；workflow/browser 死亡条款补「复核触发=每次发版按 kix-task-log 口径审计使用计数」（判据量有明确复核时点）。
+- **C4 SKILL.md 孤儿锚点**：「架构三问本体见 persona『架构级感知』」指向 disabled persona → 三问本体收编进 SKILL.md 本节（技能=按需展开层，persona 保持最小），头部定位段同步改指活跃激励面。
+- **C5 reviewer 防护**：核实 orchestration 已有树级 sha256 digest + reverify marker（`kix-orchestration.js:518-529,:733`）——「审查不可改被审物」由 prompt 防护（预防）+ digest 比对（检测）双层承载，不新增 toolFilter allow（会误伤合法 artifact_root 外临时复现，且无实证摩擦）。
+- **C6 打包**：persona 死块补墓志 + text/prefix 双键同锚约定注（text 键供 consistency 预算提取，非死键——extractPersona 正则消费在档）；`preset-null.yml` 删除（EXP 命名史，引用零，git 历史可回溯）；配置轴清单七轴对齐三处（qa 快照补「& 实现选择」、verification-lessons 正典补全并声明单源）；jobs hint shell 名按 `process.platform` 取（Linux 不再串味 pwsh）；kix-stalled 悬置收口（维持启用，用户全开裁决有效，晋级条件入档地图）。
+- **A 判决补齐（地图 §6.8）**：`dsh-mcp-resources`/`dsh-compaction-image-offload` 过期判决更正（rc.2 base 已挂载，前者菜单误分类同步修复——三工具入 RESIDENT_TOOLS）；`dsh-goal-round-driver` 判保持（arm 门控+session-start disarm=用户意图门控，反例条件在档）；`dsh-hooks-*` 判不用（双源门禁）；`dsh-file-reference` 已融入注记；tmux/time-context/message|command-feedback/session-title 正交；session-query 用法入考古节（优先服务检索，zstdcat 降兜底）；session-reference 备案；workspace-dependencies/output-retention 候选不实施（无实证摩擦）；§6.7 行号漂移三处更正（maxActiveSubagents、SCHEDULED_MESSAGE_FRAMING:1387、agent-team transact :140/:561）；kix-webhook 静默待用事实入档。
+- **kix-focus**：ACTIVATABLE_TOOLS 移除 workflow 死激活键（realm 依赖，动态挂载解析不到 workflowEngine——2026-08-16 实测在档；行常驻时条目不可达，行 disabled 时唯一启用路径=取消 disabled 重启）；生命周期测试载具 workflow→goal/fork/vision（149 断言全绿）；`pentest-360-evasion-lessons.md` 回源（原仅存于 `.agent-presets` 陈旧安装副本，活跃 preset 不可见——kix-mem 动态扫描即生效）。
+- **二轮（独立 reviewer 结算后）**：en 树补齐——yml qa/dev 行权威方向矛盾修正（原「快照从属于 .md」与 .md 新注记互指权威，系一轮单侧更新引入）、reviewer 行补 precedence 注、v5.10 ×8 块收敛（-91 行）、compaction 双上下文指向；classic/null reviewer 行旧句头统一；SKILL.md 同类孤儿锚点 ×3（:10/:108/:121）改指活跃激励面；profiles 树 `preset-null.yml` 残留删除（一轮 rsync 退出码 23 短路 `&& rm` 所致）；en/scripts 版本锚动态化同轮落地。**挂账**：en `install-lib.test.js` 9 fail 预存于 HEAD（11 fail），属未提交 v1.3.21/22 面，非本闭环范围。
+
+**验证**：`kix-focus.test.js` 149 passed / 0 failed（四变体根各跑）；`kix-budget.test.js` 124 passed / 0 failed；`check-dsh-consistency.cjs` CONSISTENCY OK（budget 四副本并簇后全等、persona 预算 3518/4500 内不变、zh/en 版本对 1.3.23）；受影响 JS 21 文件 `node --check` 通过；yml 仅注释/文案级改动（persona 文本仅 qa 快照 +22 chars）。**独立复核**：subagent_reviewer 只读结算（重跑全部测试+md5+diff 抽查+对抗 grep+部署 cmp），一轮 3 项 FAIL 已二轮修复并复测（见上）。**部署生效**：preset 文件已同步 `~/.dsh/profiles/kix-presets/` 与 `.agent-presets`（cmp 逐文件核同），`preset-null.yml` 已从 profiles 与 .agent-presets 双面删除；宿主重启后生效。**未验证项**（诚实清单）：F12 动态激活报错行为未实测（依据 yml 行注释 2026-08-16 实测记录）；`text` 键被 zod strip 为推断（schema+行生效反证）；classic 会话实跑未做（无 classic 活跃会话面）；en install-lib 预存红测（挂账，见二轮条目）。
+
+## v1.3.22（2026-09-29）DSH 0.2.0 桌面发行版落地修复：preset 正文必须落在 profiles 树内（静默空转根因）
+
+**背景**：桌面发行版（`DeepSeek Harness.exe` = DSH 0.2.0-rc.2，包与代码封在只读 `app.asar`）上「迁移不完整」的实测形态是**静默空转**：`profiles/desktop/cordis.patch.yml` 里 `preset-kixparadigm` 声明存在、Loader 行 `include:preset-kixparadigm` 状态 `active`，但该 preset 的会话只有 **23 个工具、无 persona、无 kix 工具**（只有宿主 MCP + `load_workspace_dependencies`），宿主随后把新会话落到 `cordis`。
+
+**根因（读宿主源码 + 启动 stderr 双证）**：
+
+- `cordis:include` 把子树的模块解析基准改成**被 include 文件的目录**；`dsh-app-boot` 的 `@deepseek-ai/*` 解析拦截层**只对「在 profiles 树内」的导入者生效**（`findInterceptionLayer`）。正文放在 `$DSH_HOME/.agent-presets/<id>/`（树外）→ 退回裸 Node 解析 → 沿目录向上命中 `C:\Users\<user>\node_modules\@deepseek-ai\*`——本机那是**另一份 0.1.0-rc.6**。
+- 兼容性 preflight 里的 `includedConflicts` 读 include 文件后用 `realpathSync` **重新定基准**（`check(rows, pathToFileURL(realpathSync(file)))`），因此「把 profile 内的链接指回 `.agent-presets`」同样会被打回树外。
+- 结果：preflight 以 `its included file … reaches an incompatible plugin` **禁用整条 include 行**；而 `disabled` 行被激活审计跳过（registry `if (entry.disabled) continue`），于是 preset「挂载成功但 0 条正文」——这正是宿主文档里记的唯一静默失败模式。启动 stderr 实测 **55 行** `disabling profile plugin row …`。
+
+**修法**：
+
+- 安装器物化 **profiles 树内真实副本** `$DSH_HOME/profiles/kix-presets/<id>/`（同一份仓库源，含默认档货架），声明改指向它；副本缺失即抛错，不写会整棵失败的声明。链接与 `.agent-presets` 都不可用（realpath 会打回树外），必须复制。
+- profile 名单由硬编码 `['web','headless']` 改为**枚举** `profiles/*` 中有 manifest 且声明非空 `dsh.profile.bundles` 的目录（registry 面判定不变）——desktop 此前完全不被管理：声明既不刷新也不校验。
+- 运行时探测新增桌面发行版：读 `$DSH_HOME/dsh-runtimes/<id>/runtime.json` 的 `desktopVersion`；标记 `sealed` 的运行时**跳过**压缩上限与会话 8 条 hunk 并**显式告警**（Windows 上 `which`-based 探测本就不可用，此前安装器直接判「解析不到运行时」→ 只复制目录、不写声明）。doctor 对 sealed 运行时把补丁记为信息项。
+- vision-bridge 由硬编码 `profiles/web` 改为**所有 web 面 profile**（desktop + web）：桌面 GUI 此前拿不到识图桥。
+
+**验证**：隔离 profile 用 0.2.0 运行时启动，stderr 由 55 行 preflight 禁用 → **只剩 Node `DEP0180` 弃用告警**（0 禁用 / 0 `agent preset …` 挂载诊断），web profile 与 desktop profile 内容克隆各自实测；`kixparadigm install` / `doctor` 全绿（doctor 新增「profile 树内正文就位且非链接」判据）。宿主事实一条：preset 选择在会话创建时落地，**改完 profile patch 必须重启 DSH 进程**才对新会话生效。硬限一条：桌面发行版的包在只读归档内，压缩上限与会话 hunk 在本发行版上不可应用（已告警 + 文档化，不伪造已打）。
+
+**落位**（2 脚本 + 2 文档 + 2 版本号）：`scripts/install-lib.js` 与 `en/scripts/install-lib.js`（字节一致，门禁锁）新增 `profileDirs/initializedProfiles/presetPatchProfiles/bridgeProfiles/profilePresetRoot/copyPresetVariant/materializeProfilePresets/desktopRuntime/compareVersions/isSealedRuntime`；`dsh/README-DSH.md` 重写 0.2.0 节（含「为什么正文必须落在 profiles 树内」与桌面发行版实测）；根 `README.md` 唯一事实源约定补 profiles 树内副本。
+
+**同一轮修掉的第二个拦截点（同源验证发现，属同一缺陷的另一半）**：`dsh-compaction-basic` 在**构造器**里跑 `validateKeys`，`unknown key "…"` 直接 throw；而本包 cap 补丁才加的 `maxThresholdTokens`/`maxRetainTokens` 在未打补丁的宿主上就是未知键。该行属于 preset 组成 → **三份 preset 全部挂不上**（即使 include 修好也白搭）。`schemastery` 的 `z.object` 不严（未声明键照原样透传），所以键会一路到达构造器——这正是 `validateKeys` 存在的理由。真机实测（真 Cordis Context + 真插件，直接走构造器）：repo 原样配置 `THREW -> BasicCompactionConfig: unknown key "maxThresholdTokens"`；裁掉两个键后 `CONSTRUCTED ok (engine=BasicCompactionEngine)`。
+
+修法：安装器按宿主能力裁剪安装副本——`PATCHED_HOST_CONFIG_KEYS` 声明「本包补丁才认识的宿主键」，sealed（或宿主无 compaction 包）时 `stripPatchedHostConfigKeys()` 逐行状态机只在 `name: @deepseek-ai/dsh-compaction-basic` 的块内删这些键（kix 自己插件里的同名键不动），插一行说明注释，并打印告警；ratio 原生键原样保留。`copyTree` 增 `transform` 选项（按**内容**比较被判改写的文件），因此裁剪后重跑 install 仍是「0 更新」，幂等未被破坏；`doctor` 新增「宿主未打 cap 补丁 → 副本已裁掉这两个键」状态项，反向（副本仍带键）判失败。代价写清在文档里：`T = min(200K, 0.8×W)` 退回 `T = min(0.8×W, 压力预算)`，大窗口触发点变晚。另：逐 hunk 审计了「运行时补丁能否插件原生化」（结论表见 `dsh/README-DSH.md`）——7 条会话 hunk 无插件原生替代，哨兵那条有代价不小的条件路线，cap 那条可做插件但需真会话验证。
+
+**资产盘点（同轮）**：清理了宿主机 `C:\Users\<user>\node_modules` 里那份**另一份旧 dsh**（0.1.0-rc.6，`@deepseek-ai` 190 个包）——它是 2026-08-13 某次在家目录 `npm install` 留下的孤儿树，正是「树外 preset 裸包名解析到错误版本」的污染源；同时把 `package.json`/`package-lock.json`（同名孤儿，其声明的依赖一个都没装）移入备份。该树被其它应用顺带借用（实测 `ZCode.exe` 从它加载 `koffi.node`），因此只删污染面 `@deepseek-ai`，其余保留。
+
+## v1.3.21（2026-09-29）agent-team 吸收裁决落档：多轮的正确轴是证据不是辩论（orchestration-lessons ⑭）
+
+**背景**：分析 DSH 0.2.0 实验性 agent-team（具名持久 teammate + peer 消息 + 共享任务板，"互相攻击式讨论"）与三通道的融合方式。起草 4 项吸收提案（P1 反证回流原攻击通道≤2 回合辩论 / P2 拒常驻具名 / P3 辩论收敛≠结论 / P4 拒基础设施整体采纳），两路 lens（机制债/认识论）跨厂商攻击独立裁决，承重反例经主线程逐项核验（文件行号 + 文献摘要级）后结算：**辩论机制不进口，纪律入档**。
+
+**裁决**（全文见 orchestration-lessons ⑭）：
+
+- **P1 kill 四条独立死因**：①文献方向相反——MAD 常打不过单 agent 基线、模型异质性才是普适解药（arXiv:2502.08788）；协作式普遍稳健于对抗式（M3MAD-Bench arXiv:2601.02854，ACMMM'26）；辩论可随轮次降准、模型为同意而放弃挑战缺陷推理（arXiv:2509.05396）——三条均经摘要级核验，kix 已有的跨厂商异质正是解药维度。②灌 rebuttal 给攻击者违反 persona 反灌注不变量（agent.cordis.yml:137）：被检验的是 finding 能否存活，不是攻击者能否辩护。③生效副本阶段 2.5 已有分歧程序（反证→解析契约→问作者→不得发布 major+），「无程序」是读旧副本假象——verification-lessons ⑤ 在作者自己身上重演。④prompt 认知规则层已证死 + 无摩擦不进场。
+- **多轮的既有正确形态点名**：T3 按新证据重派（orchestration-lessons ⑧）即正确多轮——回合数是新证据到达的结果不是原因；分歧终结轴必须落在 transcript 外（verification-lessons ⑦ 着陆点判据）。
+- **agent-team 拒绝理由修正**：patch 按 id 精确禁用 4 工具，kix 成员注册在 tool-subagent-reviewer/qa/dev 不受影响——「摧毁成员面」是假理由；真冲突=无 epoch 共享 checkout 对撞 review epoch / spawn_teammate fork 上下文灌论证 / 三套委派面菜单歧义。拒「常驻具名」的真正对象是**跨 dispatch 持久记忆**（上轮攻击留在上下文的批评者=辩护倾向机器化）。
+- **协用三纪律入档**（潜伏约束，触发=首次真实协用 agent-team 时升级机械 guard）：观察通道禁 fork 上下文；team 消息面下观察者不得互读论证；共享 checkout 下 review epoch/worktree 纪律不变。
+
+**落位**（3 文件收敛 + 2 版本号）：
+
+- orchestration-lessons.md 三副本（preset/classic/en）收敛至字节一致并追加 ⑭；双向漂移修复：preset 补「审查/语义任务吞机械岛→⑬」索引指针，classic/en 补 sleep 状态门候选条目（kix-orchestration v12 出生记录）——memories 无字节校验是漂移温床，本次顺手闭合。
+- 求助索引三面新增「想进口辩论/多轮对抗机制、agent-team 协用 → ⑭」。
+- package.json / en/package.json 1.3.20 → 1.3.21。
+
+**开放债务（待作者裁决，本次只呈现不收敛）**：5 份 kixpower-review.prompt.md md5 全异——生效副本（dsh/preset/prompts）已含新 2.5 与自证回路行；classic 仅缺自证回路行（v1.3.20「三面同步」实际只落了生效份）；preset-null 与 en 停在旧 2.5（Tri-Block 全仪式）；根 prompts/ 为 Copilot 原味但缺 v5.8/v5.9/自证回路等内容改进。逐对裁决建议与完整 diff 见 `tmp-analyze/agent-team-absorption/review-prompt-5copy-diff.md`。
+
+**验证**：npm test 全链通过（75 tests，0 fail，1 skip——installer/runtime-patch/zh-en 一致性/pressures/vision/preset 插件全量，与 v1.3.20 基线同轮廓）；orchestration-lessons 三副本 md5 一致（1a265755）；写入的文献引用全部经主线程摘要级核验，攻击者转述的逐模型数字未采信；机制事实行号（patch 4 id / 成员注册 id / :137）经亲自核验。
+
 ## v1.3.20（2026-09-29）跨厂商吸收评审收口：自证回路入盲点图谱 + 机制引入/退役对称门
 
 **背景**：分析第三方移植 [kixrlm](https://github.com/Kasugano-Soraa/kixrlm)（KIX+RLM 融合开源）产出 5 项吸收提案（memories 机械化 rationale/rollback/digest、门禁覆盖率清单、持久内核受控试点、锚点命中率退役、发布认识论）。三路不同 lens（机制债/规则自反/认识论）跨厂商攻击独立裁决：**5/6 被有效反例击中或降级**；三路收敛命中同一结构缺陷——自证回路（rationale 由写经验的同一模型生成、trusted-plane 由被审方自声明、命中率靠模型自述归因），该收敛模式对每日运行范式的作者自审不可见（三通道厂商轴的会话内实证）。

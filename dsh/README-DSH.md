@@ -13,7 +13,12 @@ v1.3.4 起安装器按 `package.json#kixparadigm.variants` 逐变体拷贝：
 - `dsh/preset/` → `~/.dsh/.agent-presets/kixparadigm/`（默认激励面）
 - `dsh/preset-classic/` → `~/.dsh/.agent-presets/kixparadigm-classic/`（经典模式）
 
-`dsh/preset-null/` 是消融对照，不随 npm 安装。重启 `dsh web` 后在模式列表选择。安装器源码见 `scripts/install-lib.js`；日常维护仍用下方同步脚本。
+v1.3.22 起，凡 bundle 含 `dsh-web-app` 的 profile（desktop / web）还会拿到同源的
+**profiles 树内真实副本** `~/.dsh/profiles/kix-presets/<id>/`——0.2.0 的 preset 正文必须在那里，
+理由见「为什么正文必须落在 profiles 树内」。`.agent-presets/` 仍是仓库之外的规范安装副本
+（描述元数据、货架物化、0.1.x 解析链接都以它为准）。
+
+`dsh/preset-null/` 是消融对照，不随 npm 安装。重启 DSH 后在模式列表选择。安装器源码见 `scripts/install-lib.js`；日常维护仍用下方同步脚本。
 
 ```
 kix-bundle/
@@ -47,9 +52,11 @@ pwsh -File .\scripts\sync-dsh-preset.ps1 -Force
    （GLM-4.6V 视觉偏好，`api/coding/paas/v4` 订阅端点）与 `zai-coding-cn`（GLM 跨厂商候选）。
    v5.9 起路由由 kix-route 自动解析：cross/thinker 不依赖钉值（有任一异厂商
    provider 即可），vision 缺 `zai-vision` 时自动找其他声明 image 输入的模型。
-2. **vision-bridge（UI 无缝发图）**：`~/.dsh/profiles/web/` 的 profile 插件，
-   与 preset 无关。恢复：`pwsh -File .\scripts\ensure-vision-bridge.ps1`（幂等自检自愈，
-   见根 README「无缝发图插件 dsh-vision-bridge」）。
+2. **vision-bridge（UI 无缝发图）**：profile 插件，与 preset 无关；装在**每个 web 面 profile**
+   （desktop + web）的 `profiles/<name>/plugins/dsh-vision-bridge/`，并由
+   `profiles/<name>/node_modules/dsh-vision-bridge` 链接加载。恢复：
+   `pwsh -File .\scripts\ensure-vision-bridge.ps1`（幂等自检自愈，见根 README
+   「无缝发图插件 dsh-vision-bridge」）；完整安装器会把 desktop 也补上。
 
 ## 日常同步
 
@@ -85,17 +92,81 @@ node --test dsh\vision-bridge\test.js           # vision-bridge 纯逻辑回归
 
 preset 挂载校验（roster `standingKeyFor`）在 DSH 会话内用 cordis 工具集执行。
 
-## DSH 0.2.0-rc.1 适配（2026-09-29 实测，preset 声明与模块解析根）
+## DSH 0.2.0 适配（2026-09-29 实测，preset 声明与模块解析基准）
 
-0.2.0-rc.1 把 agent preset 的**声明与解析契约**又改了一次：`.agent-presets/` 目录不再被扫描，
-preset 由 profile 的 `cordis.patch.yml` 里一行 `@deepseek-ai/dsh-agent-preset` 声明，再用
-`cordis:include` 指向 `$DSH_HOME/.agent-presets/<id>/agent.cordis.yml`。
+0.2.0 把 agent preset 的**声明与解析契约**又改了一次：`.agent-presets/` 目录不再被扫描，
+preset 由 profile 的 `cordis.patch.yml` 里一行 `@deepseek-ai/dsh-agent-preset` 声明，正文再用
+`cordis:include` 引入。
 
 | # | 变更 | 影响面 | 修法 |
 |---|---|---|---|
-| 1 | preset 必须声明才可见 | 目录扫描失效 | 安装器按 profile bundle 判定：含 `dsh-web-app` / `dsh-agent-preset-registry` 才写声明，headless 跳过 |
-| 2 | `cordis:include` 把模块解析基准改到 preset 目录 | preset 内每条 `@deepseek-ai/*` 导入失败，registry 报整棵 `never started`（同目录相对 `./plugins/*.js` 正常） | 安装器在 preset 目录建 `node_modules` 符号链接，指向 `presetResolutionRoot()` 选出的那层；一层都选不出就抛错，不写声明 |
+| 1 | preset 必须声明才可见 | 目录扫描失效 | 安装器枚举 `$DSH_HOME/profiles/*` 中有 manifest 且声明了非空 `dsh.profile.bundles` 的目录，其中 bundle 含 `dsh-web-app` / `dsh-agent-preset-registry` 才写声明（desktop / web 命中，headless 跳过）；不再硬编码 profile 名单 |
+| 2 | `cordis:include` 把子树模块解析基准改到**被 include 文件的 realpath 目录** | **位置错了就整棵静默空转**：preset 内每条 `@deepseek-ai/*` 解析到机器上另一份更老的 dsh（本机实测 `C:\Users\<user>\node_modules\@deepseek-ai` = 0.1.0-rc.6）；preflight 随即以 `its included file … reaches an incompatible plugin` **禁用整条 include 行**——`disabled` 行被激活审计跳过，于是 preset 挂载「成功」但只有 0 条正文：agent 只剩宿主工具面、无 persona、无 kix 工具。 | preset 正文必须是 **`profiles/` 树内的真实副本**：安装器物化 `$DSH_HOME/profiles/kix-presets/<id>/`，声明指向它。见下节 |
 | 3 | `settings.yaml` 启动时导入 profile 并改名 `.imported` | doctor 在 0.2.0 上误报「未配置」 | doctor 同时检查根文件、`.imported` 与各 profile 的 `cordis.patch.yml`（**剔除 YAML 注释行**后再匹配 provider 名，否则安装器自己写的 bridge 注释会让门禁恒真） |
+| 4 | 桌面发行版把 `@deepseek-ai/*` 封在只读 `app.asar` 里 | 磁盘上没有可补丁的宿主包树：压缩上限与会话 8 条 hunk 打不进去；`which`-based 运行时探测在 Windows 上也不可用 | 运行时探测优先读 `$DSH_HOME/dsh-runtimes/<id>/runtime.json` 的 `desktopVersion`（磁盘上唯一可靠的版本事实）；标记为 sealed 的运行时**跳过**补丁并**显式告警**（不静默），声明照写 |
+| 5 | vision-bridge 只挂在 `web` profile 时，桌面 GUI 拿不到识图桥 | desktop 是 web 面 profile，此前安装器完全不认它 | vision-bridge 改为遍历所有 bundle 含 `dsh-web-app` 的 profile（desktop + web） |
+| 6 | `dsh-compaction-basic` 在**构造器**里跑 `validateKeys`：`unknown key "…"` 直接 throw | 本包 cap 补丁才加的 `maxThresholdTokens` / `maxRetainTokens` 在未打补丁的宿主上就是未知键；该行属于 preset 组成 → **一条键让整份 preset 挂不上**（三份 preset 全中） | 安装副本按宿主能力裁掉这两个键（ratio 原生键原样保留，丢的只是两个绝对上限），打印告警并在副本里留一行说明；`doctor` 把它列为状态项 |
+
+### 为什么每个字都算数：`validateKeys` 在构造器里（v1.3.22 实测）
+
+```
+dsh-compaction-basic/lib/index.js（宿主 0.2.0-rc.2，从 app.asar 提取）
+:19-29  POLICY_CONFIG_KEYS = [thresholdRatio, headroomTokens, retainRatio, retainTokens,
+                              summarizationProvider, summarizationModel, maxTokens,
+                              compactionRetries, maxOverflowRetries]
+:31-35  BASIC_COMPACT_CONFIG_KEYS = new Set([...POLICY_CONFIG_KEYS, "modelPolicies", "auto"])
+:208    function validateKeys(config, keys, name) {
+:209      for (const key of Object.keys(config)) if (!keys.has(key)) throw new Error(`${name}: unknown key "${key}"`)
+:60     function resolveConfig(config = {}) { validateKeys(config, BASIC_COMPACT_CONFIG_KEYS, "BasicCompactionConfig"); ...
+:826    constructor(ctx, config = {}) { super(ctx); this.config = resolveConfig(config); ...
+```
+
+`schemastery` 的 `z.object` **不严**（未声明键照原样透传），所以键会一路到达构造器——这正是
+`validateKeys` 存在的理由。真机实测（真 Cordis Context + 真插件，直接走构造器）：
+
+```
+repo 原样配置 { thresholdRatio: 0.8, maxThresholdTokens: 200000, retainRatio: 0.044, maxRetainTokens: 64000, modelPolicies: [] }
+  -> THREW -> BasicCompactionConfig: unknown key "maxThresholdTokens"
+裁剪后配置    { thresholdRatio: 0.8, retainRatio: 0.044, modelPolicies: [] }
+  -> CONSTRUCTED ok (engine=BasicCompactionEngine)
+```
+
+裁剪的代价是明确的：`T = min(200K, 0.8×W)` 退回 `T = min(0.8×W, 压力预算)`——大窗口上压缩触发点比
+标定的 200K 晚（1M 窗口 = 800K）。`retainRatio: 0.044` 是宿主原生键，原样保留。要拿回绝对上限只有
+三条路：宿主包能被补丁（npm 安装的 0.1.x/0.2.x）、把 cap 做成插件（尚无现成实现，钩子见下）、
+或重打包 `app.asar`（本包不做：会被下次更新覆盖且有损坏风险）。
+
+**「能不能插件原生化」的边界**（2026-09-29 逐 hunk 审计，宿主 0.2.0-rc.2）：
+
+| 运行时补丁 | 作用 | 0.2.0-rc.2 现状 | 插件原生可行？ |
+|---|---|---|---|
+| `session-append-ignorable`（`dsh-session`） | 让 `append(type, data, { ignorable: true })` 真正写进事件信封 | 锚点在、补丁未打 | **否**：非 surface 事件在类型上根本没有 opts 形参，`ignorable` 只存在于持久化信封里 |
+| `persistence-admit-legacy-plugin-events` | 当前代读取路径放行 kix 早期写的 `web/glm-search-mcp-request` | 未打 | **否**（仅是未文档化的可变 `KNOWN_SESSION_EVENT_TYPES` Set，且 profile 插件拿到的是另一棵树上的影子副本）——上游明确否决了事件名注册 |
+| v0/v1/v2 迁移链放行（5 个 hunk） | 让**历史** kix 会话日志可读 | 未打 | **否**：`RELEASED_V0_EVENT_DISPOSITIONS` 是冻结的构建期清单，migration 是构建期静态单例，v0/v1 两道门连 `ignorable` 都不认 |
+| `v0-descriptor-v2-admission` / `v0-retired-inbox-forms` | 放行退役的 descriptor v2 与 inbox `form: gate`\|`debug` | 未打 | **否**（模块私有校验器；form 那条只能改写旧日志数据） |
+| `subagent-sentinel-preflight-skip`（`dsh-tool-subagent`） | 让 `model: kix-route:<tier>` 哨兵在**子代理创建前**的路由预检里存活 | 锚点在、补丁未打 | **条件可行**：`ctx.llm.registerAdapter(providers, adapter)` 是公开钩子，但要求三行委派工具同时钉 `provider: kix-route`——而 `cross` 档靠 `resolved.provider` 反推父厂商，得改成从父 agent 取，且合成 provider 会进入自身的候选序（需各处排除）。不是即插即用 |
+| `kix-compaction-cap-patch`（`dsh-compaction-basic`） | 给阈值/保留tail 加两个绝对上限 | 未打（且本机不可打） | **部分**：`ctx.compaction` 一个 realm 只许一个实现（要替换而非扩展）；较轻的路线是 `agent/pre-step` + `ctx.tokenMeter.measure(session)` + `ctx.compaction.compactRegion(start,end,agent,signal)` 自行选 tail，但瀑布顺序相对 compaction-basic 自己的 pre-step 处理器需实测，本仓无先例 |
+
+结论：**7 条会话 hunk 没有插件原生替代**（上游刻意把放行逻辑做成构建期静态），哨兵那条有代价不小的
+条件路线，cap 那条可以做成插件但需要真会话验证。所以「不打宿主补丁」在当前 DSH 上不等价可选。
+
+
+### 为什么正文必须落在 `profiles/` 树内（v1.3.22 根因）
+
+`dsh-app-boot` 给裸包名装了一层 resolver 拦截层，但**只对被判定为「在 profiles 树内」的导入者生效**
+（`findInterceptionLayer`：profiles 树 / 活动 profile / linked root）。`cordis:include` 会把子树基准
+改成被 include 文件的目录，于是：
+
+- 正文放 `$DSH_HOME/.agent-presets/<id>/`（树外）→ 不命中拦截层 → 退回裸 Node 解析 → 沿目录向上
+  走到 `C:\Users\<user>\node_modules\@deepseek-ai\*`（另一份更老的安装）→ 版本不符。
+- 正文放 `profiles/` 树内、但是**链接**指向树外 → `includedConflicts` 用 `realpathSync` 重新定基准
+  （`check(rows, pathToFileURL(realpathSync(file)))`）→ 又回到树外，同样失败。
+- 正文放 `profiles/` 树内的**真实副本** → preflight 与 loader 都按树内基准解析 → `packages.packageOf()`
+  命中安装域里那份 0.2.x 包 → 通过。
+
+`.agent-presets/<id>/node_modules` 解析链接是 **0.1.x 的解法**（那时没有拦截层，裸 Node 解析说了算），
+在 0.2.0 上既不够也不再需要：保留它只为 0.1.x 与既有测试，判定声明能否加载以 `profiles/kix-presets/<id>/`
+的存在为准（缺了就抛错，不写会整棵失败掉的声明）。
 
 根的选法不是「第一个含 `dsh-persona` 的 `node_modules`」：npm 可能因版本冲突把 persona 嵌进
 `@deepseek-ai/dsh/node_modules/`，那一层解析不到 preset 真正需要的其余 20+ 个包，选中它等于把
@@ -124,6 +195,14 @@ kix 的 preset 在 `$DSH_HOME` 下（树外）。差异来自**位置**，不是
 - 该实例上一轮真实模型回复：preset `kixparadigm`，system 9825 token / tools 6838 token，回复 `pong`，`toolMs=0`。
 - 补丁锚点：压缩上限 1 处 + 会话 8 条 hunk 在 0.2.0-rc.1 上**全部 applied**，无 anchor miss；会话格式仍为 **V4**，未新增 v4 hunk。
 - 正在运行的 0.1.5（`/usr/local/lib/dsh-0.1.5-rc.1`、`/root/.dsh`）全程未被修改。
+
+**v1.3.22 在桌面发行版（0.2.0-rc.2 / `app.asar`）上的实测证据**（隔离 profile 启动，读宿主 stderr）：
+
+- 修前：启动即 55 行 `dsh: disabling profile plugin row …`，末两行是
+  `row "kixparadigm-body": its included file …\.agent-presets\kixparadigm\agent.cordis.yml reaches an incompatible plugin`——即正文整棵被禁用。同机该 preset 会话实测：**23 个工具、无 persona**（只有宿主 MCP + `load_workspace_dependencies`）。
+- 修后（正文物化为 `profiles/kix-presets/<id>/`）：同一条启动路径 stderr **只剩 Node 的 `DEP0180` 弃用告警**——0 条 preflight 禁用、0 条 `agent preset …:` 挂载诊断。web profile 与 desktop profile 内容克隆各自实测同样干净。
+- 该发行版不可补丁：`dsh-runtimes/dsh-primary-runtime/runtime.json` 报 `desktopVersion 0.2.0-rc.2`，包与代码都在只读归档内，`ensureRuntimeAdapted` 被显式跳过并告警，doctor 把它记为信息项而非失败项。
+- 一处未消除的宿主事实：`agent-preset-registry` 的 preset 选择在会话创建时落地，**改完 profile patch 必须重启 DSH 进程**；重启前已存在的会话仍跑旧组成（`agent-preset/selected` 事件是既成事实）。
 
 回归门禁：`npm run test:installer`（已把 `scripts/dsh-runtime-resolve.test.js` 接进来）覆盖
 `installPreset links preset resolution for a flat npm install`（断言从 preset 目录解析与从 dsh 包解析**等价**，

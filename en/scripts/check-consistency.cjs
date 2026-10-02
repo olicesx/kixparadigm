@@ -11,7 +11,12 @@ const lib = require('../preset-classic-en/plugins/consistency-lib.cjs')
 
 const ROOT = path.join(__dirname, '..')
 
-const { failures, notes } = lib.runAllEn(ROOT, '1.3.16')
+// 2026-10-02 收口：版本期望从 en/package.json 动态读取（同 zh runAllZh 从
+// zh 包读取的模式），消灭手工锚漂移——原硬编码 '1.3.16' 自 v1.3.17 起一直
+// 过期，en npm test 链在 consistency 处长期误红。
+const expectedVersion = require('../package.json').version
+
+const { failures, notes } = lib.runAllEn(ROOT, expectedVersion)
 for (const n of notes) console.log('  ✔ ' + n)
 
 if (failures.length) {
